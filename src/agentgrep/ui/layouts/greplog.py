@@ -18,6 +18,7 @@ the HUD. Imported only from inside the app factory (and tests), never eagerly
 from __future__ import annotations
 
 import asyncio
+import functools
 import typing as t
 from collections import abc as cabc
 
@@ -76,6 +77,8 @@ class GrepLogLayout(LayoutScreen):
         self._generation = 0
         self._filter_generation = 0
         self._filter_matcher: CompiledRecordMatcher | None = None
+        self._filter_scanned_count = 0
+        self._filter_scan_generation: int | None = None
         self._search_done = False
         self._log: t.Any = None
         self._status: t.Any = None
@@ -173,6 +176,8 @@ class GrepLogLayout(LayoutScreen):
         self._records = []
         self._filter_matcher = None
         self._filter_generation += 1
+        self._filter_scanned_count = 0
+        self._filter_scan_generation = None
         self._search_done = False
         if self._log is not None:
             self._log.clear()
@@ -190,24 +195,49 @@ class GrepLogLayout(LayoutScreen):
     def filter_loaded(self, text: str) -> None:
         """Re-render the loaded log filtered in-memory by ``text`` (host surface).
 
-        The whole-buffer scan runs off the pump (NB-1) and the matching subset is
-        re-written in bounded chunks (NB-4).
+        A new filter scans the loaded buffer off the pump (NB-1) and rewrites
+        matches in bounded chunks (NB-4). Records that stream in afterward are
+        projected once as ordered tail segments instead of rescanning the prefix.
         """
         self._filter_matcher = self._build_matcher(text)
         self._refresh_filter_log(self._filter_matcher)
 
     def _refresh_filter_log(self, matcher: CompiledRecordMatcher | None) -> None:
-        """Schedule an off-pump repaint of the loaded log through ``matcher``."""
-        records = tuple(self._records)
+        """Start a fresh off-pump projection of the loaded log through ``matcher``."""
         self._filter_generation += 1
+        self._filter_scanned_count = 0
+        self._filter_scan_generation = None
+        self._continue_filter_projection(repaint=True, matcher=matcher)
+
+    def _continue_filter_projection(
+        self,
+        *,
+        repaint: bool = False,
+        matcher: CompiledRecordMatcher | None = None,
+    ) -> None:
+        """Scan only the records not yet projected by the active filter."""
         generation = self._filter_generation
+        if self._filter_scan_generation == generation:
+            return
+        start = 0 if repaint else self._filter_scanned_count
+        end = len(self._records)
+        if start >= end:
+            if repaint and self._log is not None:
+                self._log.clear()
+            self._filter_scanned_count = end
+            return
+        active_matcher = self._filter_matcher if matcher is None else matcher
+        records = tuple(self._records[start:end])
+        self._filter_scan_generation = generation
         self.run_worker(
-            lambda captured_generation=generation, captured_records=records, captured=matcher: (
-                self._run_log_filter(
-                    captured_generation,
-                    captured_records,
-                    captured,
-                )
+            functools.partial(
+                self._run_log_filter,
+                generation,
+                start,
+                end,
+                records,
+                active_matcher,
+                repaint,
             ),
             name="filter",
             group="filter",
@@ -220,6 +250,8 @@ class GrepLogLayout(LayoutScreen):
         self._records = []
         self._filter_matcher = None
         self._filter_generation += 1
+        self._filter_scanned_count = 0
+        self._filter_scan_generation = None
         self._search_done = True
         if self._log is not None:
             self._log.clear()
@@ -271,7 +303,7 @@ class GrepLogLayout(LayoutScreen):
         if isinstance(event, StreamingRecordsBatch):
             self._records.extend(event.records)
             if self._filter_matcher is not None:
-                self._refresh_filter_log(self._filter_matcher)
+                self._continue_filter_projection()
                 return
             await self._write_unfiltered_records(
                 generation,
@@ -323,7 +355,7 @@ class GrepLogLayout(LayoutScreen):
             if generation != self._generation or filter_generation != self._filter_generation:
                 return
             if self._filter_matcher is not None:
-                self._refresh_filter_log(self._filter_matcher)
+                self._continue_filter_projection()
                 return
             self._write_chunk(records[start : start + _APPLY_CHUNK_SIZE])
             if start + _APPLY_CHUNK_SIZE < len(records):
@@ -338,12 +370,41 @@ class GrepLogLayout(LayoutScreen):
     def _run_log_filter(
         self,
         generation: int,
+        start: int,
+        end: int,
         records: tuple[SearchRecord, ...],
         matcher: CompiledRecordMatcher | None,
+        repaint: bool,
     ) -> None:
-        """Filter a captured record snapshot, then re-render the matches."""
+        """Filter one captured record segment, then project its matches."""
         matching = records if matcher is None else tuple(r for r in records if matcher.matches(r))
-        self.app.call_from_thread(self._apply_log_filter, generation, matching)
+        self.app.call_from_thread(
+            self._apply_filter_segment,
+            generation,
+            start,
+            end,
+            matching,
+            repaint,
+        )
+
+    @_runtime.pump_only
+    async def _apply_filter_segment(
+        self,
+        generation: int,
+        start: int,
+        end: int,
+        matching: cabc.Sequence[SearchRecord],
+        repaint: bool,
+    ) -> None:
+        """Apply one ordered filter segment and schedule any newly arrived tail."""
+        if generation != self._filter_generation or start != self._filter_scanned_count:
+            return
+        await self._write_filter_projection(generation, matching, repaint=repaint)
+        if generation != self._filter_generation:
+            return
+        self._filter_scanned_count = end
+        self._filter_scan_generation = None
+        self._continue_filter_projection()
 
     @_runtime.pump_only
     async def _apply_log_filter(
@@ -352,11 +413,20 @@ class GrepLogLayout(LayoutScreen):
         matching: cabc.Sequence[SearchRecord],
     ) -> None:
         """Re-render the log from ``matching`` in bounded chunks (NB-4)."""
-        if generation != self._filter_generation:
+        await self._write_filter_projection(generation, matching, repaint=True)
+
+    async def _write_filter_projection(
+        self,
+        generation: int,
+        matching: cabc.Sequence[SearchRecord],
+        *,
+        repaint: bool,
+    ) -> None:
+        """Write one bounded filter projection while its generation stays live."""
+        if generation != self._filter_generation or self._log is None:
             return
-        if self._log is None:
-            return
-        self._log.clear()
+        if repaint:
+            self._log.clear()
 
         def write_chunk_if_live(chunk: cabc.Sequence[SearchRecord]) -> None:
             if generation == self._filter_generation:

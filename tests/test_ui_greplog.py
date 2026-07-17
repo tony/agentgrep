@@ -489,6 +489,48 @@ async def test_greplog_streaming_batches_respect_active_filter(
         assert len(layout.query_one("#greplog").lines) == case.expected_lines
 
 
+async def test_greplog_active_filter_scans_each_streamed_record_once(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An active filter projects new batches without rescanning its prefix."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    initial = [_record(tmp_path, index, f"needle {index}") for index in range(100)]
+    later = [_record(tmp_path, 100 + index, f"needle {100 + index}") for index in range(10)]
+
+    class CountingMatcher:
+        calls = 0
+
+        def matches(self, record: SearchRecord) -> bool:
+            self.calls += 1
+            return "needle" in record.text
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        matcher = CountingMatcher()
+        layout._records.extend(initial)
+        layout._filter_matcher = matcher
+        layout._refresh_filter_log(matcher)
+        for _ in range(100):
+            if len(layout.query_one("#greplog").lines) == len(initial):
+                break
+            await asyncio.sleep(0.01)
+
+        await layout._apply_event(
+            layout._generation,
+            StreamingRecordsBatch(records=tuple(later), total=len(initial) + len(later)),
+        )
+        for _ in range(100):
+            if len(layout.query_one("#greplog").lines) == len(initial) + len(later):
+                break
+            await asyncio.sleep(0.01)
+
+        expected = len(initial) + len(later)
+        assert len(layout.query_one("#greplog").lines) == expected
+        assert matcher.calls == expected
+
+
 class InterleavedFilterCase(t.NamedTuple):
     """A filter that lands while an unfiltered batch apply is yielding."""
 
