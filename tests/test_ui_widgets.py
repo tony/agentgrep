@@ -8,6 +8,7 @@ widgets directly (no ``run_test`` Pilot) and assert their pure behavior.
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import typing as t
 
@@ -729,6 +730,35 @@ async def test_results_line_cache_invalidates_render_inputs(
         _set_records(results, [_make_record("same row")])
         replaced = results.render_line(0)
         assert replaced is not resized
+
+
+async def test_results_caches_verify_record_identity_on_key_collision(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An identity-key collision cannot return another record's cached row."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+    from agentgrep.ui.widgets import results as results_module
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        old_record = dataclasses.replace(_make_record(), title="old cached row")
+        new_record = dataclasses.replace(_make_record(), title="new live row")
+        monkeypatch.setattr(results_module, "id", lambda _record: 1, raising=False)
+
+        _set_records(results, [old_record])
+        await pilot.pause()
+        old_strip = results.render_line(0)
+
+        _set_records(results, [new_record])
+        new_strip = results.render_line(0)
+
+        assert new_strip is not old_strip
+        assert "new live row" in new_strip.text
+        assert "old cached row" not in new_strip.text
 
 
 def test_detail_scroll_is_focusable_vertical_scroll() -> None:

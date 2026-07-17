@@ -92,11 +92,11 @@ class SearchResultsList(ScrollView, can_focus=True):
         # renderable per result in an arbitrarily large history store.
         self._render_cache: collections.OrderedDict[
             tuple[str, int],
-            rich_text.Text,
+            tuple[SearchRecord, rich_text.Text],
         ] = collections.OrderedDict()
         self._strip_cache: collections.OrderedDict[
             tuple[str, int, Style, int],
-            Strip,
+            tuple[SearchRecord, Strip],
         ] = collections.OrderedDict()
 
     @property
@@ -322,9 +322,9 @@ class SearchResultsList(ScrollView, can_focus=True):
         record = self._records[index]
         cache_key = (str(self.app.theme), width, style, id(record))
         cached = self._strip_cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and cached[0] is record:
             self._strip_cache.move_to_end(cache_key)
-            return cached
+            return cached[1]
         options = self.app.console.options.update(
             width=width,
             min_width=width,
@@ -351,7 +351,7 @@ class SearchResultsList(ScrollView, can_focus=True):
                 for segment in lines[0]
             ]
             strip = Strip(segments, width)
-        self._strip_cache[cache_key] = strip
+        self._strip_cache[cache_key] = (record, strip)
         self._strip_cache.move_to_end(cache_key)
         while len(self._strip_cache) > self._STRIP_CACHE_MAX:
             self._strip_cache.popitem(last=False)
@@ -361,11 +361,11 @@ class SearchResultsList(ScrollView, can_focus=True):
         """Return one rendered row from the bounded palette/identity LRU."""
         cache_key = (str(self.app.theme), id(record))
         cached = self._render_cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and cached[0] is record:
             self._render_cache.move_to_end(cache_key)
-            return cached
+            return cached[1]
         row = self._build_row(record)
-        self._render_cache[cache_key] = row
+        self._render_cache[cache_key] = (record, row)
         self._render_cache.move_to_end(cache_key)
         while len(self._render_cache) > self._RENDER_CACHE_MAX:
             self._render_cache.popitem(last=False)
