@@ -6450,6 +6450,46 @@ async def test_apply_records_batch_drops_stale_worker_projection(
         assert app.screen._results.option_count == 0
 
 
+async def test_stream_filter_worker_does_not_hold_message_dispatch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocked filter slice cannot hold keystrokes behind its pump callback."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _seed_records(agentgrep, tmp_path, 1)[0]
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    class BlockingMatcher:
+        def matches(self, _record: t.Any) -> bool:
+            worker_started.set()
+            assert release_worker.wait(timeout=2)
+            return True
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.screen._filter_matcher = BlockingMatcher()
+        app.screen._filter_generation += 1
+        batch = agentgrep.StreamingRecordsBatch(records=(record,), total=1)
+        apply_task = asyncio.create_task(
+            asyncio.to_thread(
+                app.call_from_thread,
+                app.screen._apply_streaming_event,
+                app.screen._chrome_generation,
+                batch,
+            ),
+        )
+        assert await asyncio.to_thread(worker_started.wait, 2)
+
+        try:
+            await asyncio.wait_for(pilot.press("a"), timeout=1)
+            assert app.screen._search_input.value == "a"
+        finally:
+            release_worker.set()
+            await apply_task
+
+
 async def test_set_records_majority_removal_clamps_cursor_once(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
