@@ -12,6 +12,7 @@ from agentgrep.ui import _terminal_compat
 from tests.test_agentgrep import _build_empty_ui_app
 
 _MALFORMED_REPORTS = ("\x1b[<32;NaN;NaNM", "\x1b[<35;NaN;NaNm")
+_TEXTUAL_MOUSE_PATTERN = xterm_parser._re_mouse_event
 
 
 def _parse_chunks(*chunks: str) -> list[object]:
@@ -28,8 +29,7 @@ def test_terminal_compat_consumes_fragmented_malformed_sgr(
     report: str,
 ) -> None:
     """Every driver-read split is consumed without leaking literal keys."""
-    original = xterm_parser._re_mouse_event
-    monkeypatch.setattr(xterm_parser, "_re_mouse_event", original)
+    monkeypatch.setattr(xterm_parser, "_re_mouse_event", _TEXTUAL_MOUSE_PATTERN)
 
     assert _terminal_compat.install_terminal_input_compat() is True
     assert _terminal_compat.install_terminal_input_compat() is False
@@ -43,8 +43,7 @@ def test_terminal_compat_preserves_mouse_keys_and_paste(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The compatibility classifier leaves valid input under Textual's parser."""
-    original = xterm_parser._re_mouse_event
-    monkeypatch.setattr(xterm_parser, "_re_mouse_event", original)
+    monkeypatch.setattr(xterm_parser, "_re_mouse_event", _TEXTUAL_MOUSE_PATTERN)
     _terminal_compat.install_terminal_input_compat()
 
     valid_mouse = _parse_chunks("\x1b[<0;5;5M")
