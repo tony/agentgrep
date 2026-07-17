@@ -231,7 +231,7 @@ async def test_inputs_bound_text_processed_on_the_pump() -> None:
             yield DetailFindInput(id="detail-find")
 
     app = InputHarness()
-    async with app.run_test():
+    async with app.run_test() as pilot:
         search = app.query_one("#search", SearchInput)
         filter_input = app.query_one("#filter", FilterInput)
         detail_find = app.query_one("#detail-find", DetailFindInput)
@@ -242,9 +242,12 @@ async def test_inputs_bound_text_processed_on_the_pump() -> None:
         assert detail_find.max_length == INPUT_MAX_LENGTH
 
         search.load_query(oversized)
+        detail_find.load_query("first")
         detail_find.load_query(oversized)
+        await pilot.pause()
         assert search.value == oversized[:INPUT_MAX_LENGTH]
         assert detail_find.value == oversized[:INPUT_MAX_LENGTH]
+        assert detail_find._debounce_timer is None
 
 
 async def test_history_filter_bounds_seed_text() -> None:

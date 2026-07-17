@@ -8,6 +8,7 @@ agentgrep`` stays free of Textual (ADR 0010).
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import typing as t
 
@@ -203,6 +204,7 @@ class DetailFindInput(Input):
             max_length=INPUT_MAX_LENGTH,
         )
         self._debounce_timer: Timer | None = None
+        self._suppressed_change_values: collections.deque[str] = collections.deque()
 
     def load_query(self, value: str) -> None:
         """Set the value without posting a :class:`DetailFindRequested`.
@@ -210,7 +212,10 @@ class DetailFindInput(Input):
         Used when restoring a record's remembered find query so the restore
         doesn't re-run the find (and reset the match cursor) via the debounce.
         """
-        self.value = value[:INPUT_MAX_LENGTH]
+        bounded = value[:INPUT_MAX_LENGTH]
+        if bounded != self.value:
+            self._suppressed_change_values.append(bounded)
+            self.value = bounded
         self.cancel_pending_request()
 
     def cancel_pending_request(self) -> None:
@@ -222,6 +227,9 @@ class DetailFindInput(Input):
     def on_input_changed(self, event: Input.Changed) -> None:
         """Arm a debounced find request after a public change event."""
         value = event.value
+        if self._suppressed_change_values and value == self._suppressed_change_values[0]:
+            self._suppressed_change_values.popleft()
+            return
         self.cancel_pending_request()
         self._debounce_timer = self.set_timer(
             self._DEBOUNCE_SECONDS,
