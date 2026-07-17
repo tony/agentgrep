@@ -242,10 +242,10 @@ class DetailFindInput(_BoundedInput):
     def on_input_changed(self, event: Input.Changed) -> None:
         """Arm a debounced find request after a public change event."""
         value = event.value
+        self.cancel_pending_request()
         if self._suppressed_change_values and value == self._suppressed_change_values[0]:
             self._suppressed_change_values.popleft()
             return
-        self.cancel_pending_request()
         self._debounce_timer = self.set_timer(
             self._DEBOUNCE_SECONDS,
             lambda: self.post_message(DetailFindRequested(text=value)),

@@ -26,6 +26,7 @@ from agentgrep.ui.format import phase_label
 from agentgrep.ui.widgets import (
     CompletionDropdown,
     DetailFindInput,
+    DetailFindRequested,
     DetailScroll,
     FilterCompleted,
     FilterHeader,
@@ -255,6 +256,29 @@ async def test_inputs_bound_text_processed_on_the_pump() -> None:
         await pilot.pause()
         assert search.value == oversized[:INPUT_MAX_LENGTH]
         assert detail_find.value == oversized[:INPUT_MAX_LENGTH]
+        assert detail_find._debounce_timer is None
+
+
+async def test_detail_find_restore_cancels_queued_user_request() -> None:
+    """A restored value cannot leave an earlier user debounce armed."""
+    seen: list[str] = []
+
+    class InputHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield DetailFindInput(id="detail-find")
+
+        def on_detail_find_requested(self, message: DetailFindRequested) -> None:
+            seen.append(message.text)
+
+    app = InputHarness()
+    async with app.run_test() as pilot:
+        detail_find = app.query_one("#detail-find", DetailFindInput)
+        detail_find.value = "typed-before-restore"
+        detail_find.load_query("restored")
+        await pilot.pause(DetailFindInput._DEBOUNCE_SECONDS * 2)
+
+        assert detail_find.value == "restored"
+        assert seen == []
         assert detail_find._debounce_timer is None
 
 
