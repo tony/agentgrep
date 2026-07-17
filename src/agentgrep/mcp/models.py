@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from agentgrep.mcp._library import (
     SERVER_VERSION,
     AgentSelector,
+    CatalogAgentSelector,
     FindRecordLike,
     SearchRecordLike,
     SearchScopeName,
@@ -344,7 +345,7 @@ class StoreDescriptorModel(AgentGrepModel):
 class ListStoresRequest(AgentGrepModel):
     """Validated list-stores request payload."""
 
-    agent: AgentSelector = "all"
+    agent: CatalogAgentSelector = "all"
     role_filter: str | None = None
     search_default_only: bool = False
 

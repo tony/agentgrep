@@ -1671,6 +1671,18 @@ async def test_mcp_list_stores_filters_by_agent() -> None:
     assert {s["agent"] for s in data["stores"]} == {"cursor-cli"}
 
 
+async def test_mcp_list_stores_filters_catalog_only_agent() -> None:
+    """Catalog filtering accepts an unsupported agent emitted by the catalog."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("list_stores", {"agent": "windsurf"})
+
+    data = tool_payload(result)
+    assert data["total"] >= 1
+    assert {store["agent"] for store in data["stores"]} == {"windsurf"}
+
+
 async def test_mcp_get_store_descriptor_known_and_unknown() -> None:
     """``get_store_descriptor`` returns one entry or raises for unknown ids."""
     from fastmcp.exceptions import ToolError

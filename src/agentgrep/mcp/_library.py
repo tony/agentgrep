@@ -40,6 +40,21 @@ AgentSelector = t.Literal[
     "vscode",
     "all",
 ]
+CatalogAgentSelector = t.Literal[
+    "codex",
+    "claude",
+    "cursor-cli",
+    "cursor-ide",
+    "gemini",
+    "antigravity-cli",
+    "antigravity-ide",
+    "grok",
+    "pi",
+    "opencode",
+    "windsurf",
+    "vscode",
+    "all",
+]
 SearchScopeName = t.Literal["prompts", "conversations", "all"]
 
 SERVER_VERSION = "0.1.0"

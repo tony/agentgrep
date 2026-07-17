@@ -15,6 +15,7 @@ from pydantic import Field
 
 from agentgrep.mcp import (
     AgentSelector,
+    CatalogAgentSelector,
     FindToolResponse,
     SearchScopeName,
     SearchToolResponse,
@@ -150,11 +151,14 @@ t.cast(t.Any, find).__fastmcp__ = types.SimpleNamespace(
 
 async def list_stores(
     agent: t.Annotated[
-        AgentSelector,
+        CatalogAgentSelector,
         Field(
             default="all",
-            description="Filter to one agent or 'all' for every catalog entry.",
-            examples=["all", "claude", "cursor-cli"],
+            description=(
+                "Filter to one catalog agent, including catalog-only agents, "
+                "or 'all'."
+            ),
+            examples=["all", "claude", "windsurf"],
         ),
     ] = "all",
     role_filter: t.Annotated[
