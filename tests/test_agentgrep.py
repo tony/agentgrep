@@ -4083,7 +4083,8 @@ async def test_large_markdown_detail_uses_plain_text_rendering(
     from agentgrep.ui.layouts import hud as hud_module
 
     app = _build_empty_ui_app(tmp_path, monkeypatch)
-    body = "# Heading\n\n" + "body\n" * 1000
+    body = "# Heading\n\n" + "x" * (2049 - len("# Heading\n\n"))
+    assert len(body) == 2049
     async with app.run_test() as pilot:
         await pilot.pause()
         renderable, source = app.screen._build_detail_body(body, ())

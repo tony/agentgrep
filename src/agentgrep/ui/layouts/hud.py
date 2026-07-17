@@ -106,7 +106,7 @@ class _DetailMatchStyles(t.NamedTuple):
 _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 _DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]]
 _DetailBody = tuple[object, str]
-_DETAIL_RICH_FORMAT_MAX_CHARS = 4096
+_DETAIL_RICH_FORMAT_MAX_CHARS = 2048
 _DETAIL_HIGHLIGHT_MAX_TERMS = 32
 _DETAIL_HIGHLIGHT_MAX_MATCHES = 256
 _DETAIL_HIGHLIGHT_MAX_TERM_CHARS = 256
