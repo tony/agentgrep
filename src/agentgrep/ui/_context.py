@@ -35,7 +35,8 @@ class UiContext:
     invoker : SearchInvoker
         The narrow engine seam (ADR 0012 RW-1); the only path to a search.
     query : SearchQuery
-        The launch query. Empty ``terms`` means browse mode.
+        The launch query. A plan with no terms, compiled predicate, or origin
+        filter opens in idle/browse mode.
     control : SearchControl
         The initial cooperative-cancel flag; a layout swaps in a fresh one
         per search, so this is only the seed.

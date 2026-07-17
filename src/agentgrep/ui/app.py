@@ -45,7 +45,8 @@ def run_ui(
     home : pathlib.Path
         User home directory, passed through to the search engine.
     query : SearchQuery
-        Search to run. Empty ``terms`` means "all records" (browse mode).
+        Search plan to run. A plan with no terms, compiled predicate, or origin
+        filter opens in idle/browse mode.
     control : SearchControl
         Shared cooperative-cancel flag seeding the first search.
     initial_search_text : str | None
@@ -89,7 +90,8 @@ def build_streaming_ui_app(
     home : pathlib.Path
         User home directory, passed through to the search engine.
     query : SearchQuery
-        Search to run. Empty ``terms`` means "all records" (browse mode).
+        Search plan to run. A plan with no terms, compiled predicate, or origin
+        filter opens in idle/browse mode.
     control : SearchControl
         Shared cooperative-cancel flag seeding the first search.
     initial_search_text : str | None

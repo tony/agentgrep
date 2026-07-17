@@ -26,9 +26,14 @@ class SearchWorkflow:
     BINDINGS: t.ClassVar[cabc.Sequence[object]] = ()
 
     def on_attach(self, host: WorkflowHost) -> None:
-        """Run the launch query if it has terms, else show the idle canvas."""
+        """Run a meaningful launch query, else show the idle canvas."""
         query = host.context.query
-        if query.terms:
+        origin_filter = query.origin_filter
+        if (
+            query.terms
+            or query.compiled is not None
+            or (origin_filter is not None and not origin_filter.is_empty())
+        ):
             host.run_search(query)
         else:
             host.reset_view()

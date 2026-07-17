@@ -188,6 +188,29 @@ def test_search_workflow_on_attach_seeds_initial_dispatch(case: OnAttachCase) ->
     assert host.kinds() == case.expected_kinds
 
 
+def test_search_workflow_on_attach_runs_compiled_only_query() -> None:
+    """A field-only launch query reaches the engine without literal terms."""
+    from agentgrep.query import build_query_from_input, default_registry
+
+    result = build_query_from_input("agent:codex", _query(), default_registry())
+    assert result.query is not None
+    assert result.query.terms == ()
+    host = _RecordingHost(result.query)
+    SearchWorkflow().on_attach(host)
+    assert host.kinds() == ("run_search",)
+
+
+def test_search_workflow_on_attach_runs_origin_only_query() -> None:
+    """An explicit project-origin launch filter reaches the engine."""
+    from agentgrep.records import RecordOrigin
+
+    query = _query()
+    query.origin_filter = RecordOrigin(repo="/workspace/project")
+    host = _RecordingHost(query)
+    SearchWorkflow().on_attach(host)
+    assert host.kinds() == ("run_search",)
+
+
 def test_search_workflow_metadata() -> None:
     """The workflow exposes a stable registry id and a one-line summary."""
     assert SearchWorkflow.name == "search"

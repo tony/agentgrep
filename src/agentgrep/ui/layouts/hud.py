@@ -534,7 +534,7 @@ class HudLayout(LayoutScreen):
         super().on_mount()
         # Focus the filter when a search is running, else the search box so the
         # user can start typing immediately.
-        if self.search_query.terms:
+        if not self._search_done:
             self._filter_input.focus()
         else:
             self._search_input.focus()
