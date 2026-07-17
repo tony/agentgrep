@@ -19,6 +19,7 @@
     'ColorMode',
     'ConsoleSearchProgress',
     'ContentFormat',
+    'DETAIL_BODY_MAX_CHARS',
     'DETAIL_BODY_MAX_LINES',
     'DiscoveryRoot',
     'DiscoverySpec',
