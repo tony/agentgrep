@@ -28,6 +28,7 @@ eager ``import agentgrep`` path.
 from __future__ import annotations
 
 import collections.abc as cabc
+import typing as t
 
 from textual.color import Color
 from textual.theme import Theme
@@ -40,6 +41,7 @@ __all__ = [
     "ag_variable_defaults",
     "agentgrep_dark",
     "agentgrep_light",
+    "detail_syntax_theme",
     "resolve",
 ]
 
@@ -259,6 +261,22 @@ def agentgrep_light() -> Theme:
         dark=False,
         variables={**_ag_variables(1), **_builtin_overrides(1)},
     )
+
+
+def detail_syntax_theme(*, dark: bool) -> t.Literal["ansi_dark", "ansi_light"]:
+    """Return the Rich syntax theme matching the active Textual mode.
+
+    Parameters
+    ----------
+    dark : bool
+        Whether the active Textual theme uses a dark canvas.
+
+    Returns
+    -------
+    typing.Literal["ansi_dark", "ansi_light"]
+        The matching built-in Rich syntax theme name.
+    """
+    return "ansi_dark" if dark else "ansi_light"
 
 
 def ag_variable_defaults() -> dict[str, str]:

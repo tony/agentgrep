@@ -1801,7 +1801,7 @@ class HudLayout(LayoutScreen):
         :func:`detect_content_format`:
 
         * Small JSON bodies are pretty-printed and rendered via
-          :class:`rich.syntax.Syntax` with ``ansi_dark`` theming.
+          :class:`rich.syntax.Syntax` with active light/dark theming.
         * Small Markdown bodies render via :class:`rich.markdown.Markdown`.
         * Larger formatted bodies and plain text use bounded ``Text``
           highlighting so search-term matches stay responsive.
@@ -1900,6 +1900,7 @@ class HudLayout(LayoutScreen):
             search=self._match_style("search"),
             filter=self._match_style("filter"),
         )
+        syntax_theme = ui_theme.detail_syntax_theme(dark=self.app.current_theme.dark)
         cached = self._cached_detail_body(record, cache_key)
         if cached is not None:
             self._present_detail(
@@ -1923,6 +1924,7 @@ class HudLayout(LayoutScreen):
                     case_sensitive=case_sensitive,
                     regex=regex,
                     filter_terms=filter_terms,
+                    syntax_theme=syntax_theme,
                 ),
                 query_terms,
                 generation=detail_generation,
@@ -1943,6 +1945,7 @@ class HudLayout(LayoutScreen):
                 body_truncated,
                 query_terms,
                 match_styles,
+                syntax_theme,
                 detail_generation,
                 cache_key,
                 case_sensitive,
@@ -1988,6 +1991,7 @@ class HudLayout(LayoutScreen):
         body_truncated: str,
         query_terms: cabc.Sequence[str],
         match_styles: _DetailMatchStyles,
+        syntax_theme: str,
         generation: int,
         cache_key: _DetailCacheKey | None,
         case_sensitive: bool,
@@ -2002,6 +2006,7 @@ class HudLayout(LayoutScreen):
             case_sensitive=case_sensitive,
             regex=regex,
             filter_terms=filter_terms,
+            syntax_theme=syntax_theme,
         )
         self.app.call_from_thread(
             functools.partial(
@@ -2172,6 +2177,7 @@ class HudLayout(LayoutScreen):
         case_sensitive: bool | None = None,
         regex: bool | None = None,
         filter_terms: cabc.Sequence[str] | None = None,
+        syntax_theme: str = "ansi_dark",
     ) -> _DetailBody:
         """Return ``(renderable, body_text_for_match_search)`` for ``body_text``.
 
@@ -2220,7 +2226,7 @@ class HudLayout(LayoutScreen):
                 renderable: object = _RichSyntax(
                     formatted,
                     "json",
-                    theme="ansi_dark",
+                    theme=syntax_theme,
                     word_wrap=True,
                     highlight_lines=highlight_lines,
                 )
@@ -2242,7 +2248,7 @@ class HudLayout(LayoutScreen):
             result = (renderable, formatted)
         elif fmt == "markdown":
             if len(body_text) <= _DETAIL_RICH_FORMAT_MAX_CHARS:
-                renderable = _RichMarkdown(body_text, code_theme="ansi_dark")
+                renderable = _RichMarkdown(body_text, code_theme=syntax_theme)
             else:
                 plain = Text(body_text, no_wrap=False)
                 _apply_bounded_literal_highlights(
@@ -2430,7 +2436,8 @@ class HudLayout(LayoutScreen):
         if cached is not None and self._detail_find_base_key == key:
             return cached
         if self._detail_find_json_syntax:
-            text = _RichSyntax(source, "json", theme="ansi_dark", word_wrap=True).highlight(source)
+            syntax_theme = ui_theme.detail_syntax_theme(dark=self.app.current_theme.dark)
+            text = _RichSyntax(source, "json", theme=syntax_theme, word_wrap=True).highlight(source)
             text.no_wrap = False
             self._apply_search_highlight(text)
         else:

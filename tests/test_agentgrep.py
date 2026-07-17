@@ -8288,6 +8288,54 @@ async def test_show_detail_renders_json_with_syntax(
         assert any(isinstance(item, rich_syntax.Syntax) for item in renderables)
 
 
+async def test_light_theme_selects_light_syntax_for_detail_renderers(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JSON, Markdown code, and JSON find share the light Rich syntax theme."""
+    from agentgrep.ui import theme as ui_theme
+    from agentgrep.ui.layouts import hud
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    json_record = _ui_record(agentgrep, tmp_path / "json.jsonl", '{"alpha": 1}', "json")
+    markdown_record = _ui_record(
+        agentgrep,
+        tmp_path / "markdown.jsonl",
+        "# Heading\n\n```json\n{}\n```\n",
+        "markdown",
+    )
+    syntax_themes: list[str] = []
+    markdown_themes: list[str] = []
+    real_syntax = hud._RichSyntax
+    real_markdown = hud._RichMarkdown
+
+    def recording_syntax(*args: t.Any, **kwargs: t.Any) -> t.Any:
+        syntax_themes.append(kwargs["theme"])
+        return real_syntax(*args, **kwargs)
+
+    def recording_markdown(*args: t.Any, **kwargs: t.Any) -> t.Any:
+        markdown_themes.append(kwargs["code_theme"])
+        return real_markdown(*args, **kwargs)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.theme = ui_theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        monkeypatch.setattr(hud, "_RichSyntax", recording_syntax)
+        monkeypatch.setattr(hud, "_RichMarkdown", recording_markdown)
+
+        app.screen.show_detail(json_record)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        app.screen._detail_find_base_for(app.screen._detail_find_source)
+        app.screen.show_detail(markdown_record)
+        await pilot.pause()
+
+    assert syntax_themes == ["ansi_light", "ansi_light"]
+    assert markdown_themes == ["ansi_light"]
+
+
 async def test_show_detail_renders_markdown_with_markdown(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
