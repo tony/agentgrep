@@ -1423,6 +1423,30 @@ async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> Non
         assert adapter_id in advertised_adapters, adapter_id
 
 
+def test_mcp_capabilities_hide_backend_executable_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Capability metadata exposes backend names without machine-local paths."""
+    import agentgrep
+    from agentgrep.mcp import resources
+
+    monkeypatch.setattr(
+        resources.agentgrep,
+        "select_backends",
+        lambda: agentgrep.BackendSelection(
+            find_tool="/private/tooling/fd",
+            grep_tool="/opt/tools/rg",
+            json_tool=None,
+        ),
+    )
+
+    backends = resources.build_capabilities().backends
+
+    assert backends.find_tool == "fd"
+    assert backends.grep_tool == "rg"
+    assert backends.json_tool is None
+
+
 async def test_mcp_prompt_guides_search() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
