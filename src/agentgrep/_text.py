@@ -294,7 +294,7 @@ SEARCH_DESCRIPTION = build_description(
                 "agentgrep search 'agent:codex migration'",
                 "agentgrep search '\"exact phrase\"'",
                 "agentgrep search 'timestamp:>2026-01-01 release'",
-                "agentgrep search 'model:gpt* caching'",
+                "agentgrep search 'scope:all model:gpt* caching'",
                 "agentgrep search 'cwd:~/work/django-project deploy'",
                 "agentgrep search 'project:docs branch:main deploy'",
                 "agentgrep search 'deploy -agent:cursor-cli'",
