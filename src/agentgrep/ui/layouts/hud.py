@@ -1332,15 +1332,16 @@ class HudLayout(LayoutScreen):
             self._filter_header.set_snapshot(snapshot)
 
     def _apply_responsive_layout(self) -> None:
-        """Flip the detail pane between right (wide) and bottom (narrow).
+        """Apply welcome compaction and wide/stacked detail geometry.
 
+        The welcome canvas sheds spacing at its width and height boundaries.
         Below :data:`_SPLIT_BREAKPOINT` cells the body stacks the panes
         (results on top, detail below) and the detail stays collapsed
         until the user selects a row — matching tig, which moves its
         diff view to the bottom on narrow screens and opens it on
-        selection. Wide statuslines keep the detail on the right and
-        always visible. Idempotent and cheap: only touches a class
-        when the target state changes.
+        selection. Wide statuslines keep the detail on the right and always
+        visible. Idempotent and cheap: only touches classes when their target
+        state changes.
         """
         if self._body is None or self._detail_column is None:
             return

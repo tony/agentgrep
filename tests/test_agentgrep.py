@@ -8031,8 +8031,8 @@ async def test_show_detail_caps_body_at_max_lines(
         await pilot.pause()
         app.screen.show_detail(record)
         await pilot.pause()
-        # ``Static.content`` is the original Group we passed to update().
-        # For this plain-text body, the body renderable is a ``Text``.
+        # The compatibility helper returns the Group passed to ``update()``;
+        # for this plain-text body, its body renderable is a ``Text``.
         group = _static_content(app.screen._detail)
         body_text = next(
             item
@@ -8317,7 +8317,7 @@ async def test_show_detail_keeps_text_highlighting_for_plain_body(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plain-text bodies still get ``highlight_regex`` spans for search matches."""
+    """Plain bodies still get bounded literal spans for search matches."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     rich_text_module = importlib.import_module("rich.text")
     home = tmp_path / "home"
