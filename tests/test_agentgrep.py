@@ -4188,6 +4188,8 @@ def test_scope_predicate_widening_does_not_persist(
 
     reverted = hud._build_search_query("bliss")
     assert reverted.scope == "prompts"
+    assert hud._build_search_query("scope:").scope == "prompts"
+    assert hud._build_search_query("agent:").scope == "prompts"
 
 
 @pytest.mark.parametrize("layout", ["hud", "greplog"])

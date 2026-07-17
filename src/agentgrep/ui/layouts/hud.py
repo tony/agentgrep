@@ -1028,7 +1028,7 @@ class HudLayout(LayoutScreen):
         terms = tuple(text.split()) if text else ()
         return SearchQuery(
             terms=terms,
-            scope=self.search_query.scope,
+            scope=self._user_scope,
             any_term=self.search_query.any_term,
             regex=self.search_query.regex,
             case_sensitive=self.search_query.case_sensitive,
