@@ -6266,7 +6266,7 @@ async def test_detail_statusline_shows_path_and_scroll_percent(
         agent="codex",
         store="codex.sessions",
         adapter_id="codex.sessions_jsonl.v1",
-        path=tmp_path / "session.jsonl",
+        path=pathlib.Path("[red]x[/red]"),
         text="hello",
     )
     async with app.run_test() as pilot:
@@ -6283,8 +6283,9 @@ async def test_detail_statusline_shows_path_and_scroll_percent(
         await pilot.pause()
         # Latest update should carry both the path's basename and a trailing ``%``.
         rendered = updates[-1] if updates else ""
-        assert "session.jsonl" in rendered
+        assert "[red]x[/red]" in rendered
         assert rendered.rstrip().endswith("%")
+        assert "[red]x[/red]" in str(app.screen._detail_statusline.render())
 
 
 async def test_results_scroll_changed_updates_status_right(

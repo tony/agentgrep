@@ -372,7 +372,7 @@ class HudLayout(LayoutScreen):
                 # Find-in-detail bar: hidden until `/` or ctrl+f opens it
                 # (only with a record loaded); separate from #search/#filter.
                 yield DetailFindInput(placeholder="Find in detail", id="detail-find")
-                yield Static("", id="detail-statusline")
+                yield Static("", id="detail-statusline", markup=False)
         yield Footer()
         # Transient gutter for the "press ctrl-c again to exit" confirm; a
         # flash-layer Static that overlays the footer only while shown.

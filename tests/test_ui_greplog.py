@@ -151,6 +151,22 @@ async def test_greplog_finished_sets_status_line(
         assert "5" in str(layout.query_one("#greplog-status").render())
 
 
+async def test_greplog_error_status_treats_markup_as_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bracketed backend error is displayed literally."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._apply_finished("error", 0, 1.2, "[red]backend[/red]")
+        await pilot.pause()
+        assert str(layout.query_one("#greplog-status").render()) == (
+            "grep failed: [red]backend[/red]"
+        )
+
+
 async def test_greplog_renders_lifecycle_and_heartbeat_progress(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

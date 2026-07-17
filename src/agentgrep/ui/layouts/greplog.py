@@ -91,7 +91,7 @@ class GrepLogLayout(LayoutScreen):
         yield SearchInput(value=initial, placeholder="grep prompts", id="search")
         yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
         yield RichLog(id="greplog", highlight=False, markup=False, wrap=False, max_lines=5000)
-        yield Static("", id="greplog-status")
+        yield Static("", id="greplog-status", markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
