@@ -286,6 +286,7 @@ class LayoutScreen(_SCREEN_BASE):
             ),
             name="screenshot",
             group="screenshot",
+            description="export screenshot",
             thread=True,
             exclusive=True,
         )

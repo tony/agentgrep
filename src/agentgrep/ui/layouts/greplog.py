@@ -241,6 +241,7 @@ class GrepLogLayout(LayoutScreen):
             ),
             name="filter",
             group="filter",
+            description="filter grep log",
             thread=True,
             exclusive=True,
         )

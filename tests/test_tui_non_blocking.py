@@ -477,6 +477,44 @@ def test_workers_are_thread_exclusive_and_grouped() -> None:
         assert isinstance(exclusive, ast.Constant) and exclusive.value is not non_supersedable
 
 
+def test_partial_workers_have_static_descriptions() -> None:
+    """Textual must not derive worker descriptions from data-bearing partial reprs."""
+    partial_count = 0
+    for tree in _UI_TREES:
+        imports = _import_map(tree)
+        for call in ast.walk(tree):
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "run_worker"
+            ):
+                continue
+            work = (
+                call.args[0]
+                if call.args
+                else next(
+                    (kw.value for kw in call.keywords if kw.arg == "work"),
+                    None,
+                )
+            )
+            if not isinstance(work, ast.Call):
+                continue
+            dotted = _dotted(work.func)
+            root, _, rest = dotted.partition(".")
+            canonical = imports.get(root, root) + ("." + rest if rest else "")
+            if canonical != "functools.partial":
+                continue
+            partial_count += 1
+            kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+            description = kwargs.get("description")
+            assert (
+                isinstance(description, ast.Constant)
+                and isinstance(description.value, str)
+                and description.value.strip()
+            ), "data-bearing partial worker needs a static description="
+    assert partial_count, "expected at least one partial worker"
+
+
 def test_results_widget_owns_filter_membership_without_hud_rescan() -> None:
     """Filter replacement reuses the results widget's existing ID delta set."""
     methods = {(method.cls, method.name): method.node for method in _all_methods()}

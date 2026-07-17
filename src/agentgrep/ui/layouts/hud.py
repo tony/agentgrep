@@ -953,6 +953,7 @@ class HudLayout(LayoutScreen):
             ),
             name="history",
             group="history",
+            description="write search history",
             thread=True,
             # Not exclusive: unlike search/filter/detail, a later submit
             # must not cancel an earlier append before it reaches disk.
@@ -1364,6 +1365,7 @@ class HudLayout(LayoutScreen):
             ),
             name="filter",
             group="filter",
+            description="filter loaded records",
             thread=True,
             exclusive=True,
         )
@@ -1768,6 +1770,7 @@ class HudLayout(LayoutScreen):
             ),
             name="detail",
             group="detail",
+            description="build detail body",
             thread=True,
             exclusive=True,
         )

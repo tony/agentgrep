@@ -6348,8 +6348,12 @@ async def test_apply_records_batch_filters_off_pump_in_bounded_chunks(
     pump_thread = threading.get_ident()
     match_threads: list[int] = []
     worker_chunks: list[int] = []
+    repr_error = "worker description rendered matcher data"
 
     class EvenMatcher:
+        def __repr__(self) -> t.NoReturn:
+            raise AssertionError(repr_error)
+
         def matches(self, record: t.Any) -> bool:
             match_threads.append(threading.get_ident())
             return int(record.path.stem.removeprefix("r")) % 2 == 0
@@ -6362,6 +6366,7 @@ async def test_apply_records_batch_filters_off_pump_in_bounded_chunks(
 
         def capture_worker(work: t.Any, **kwargs: t.Any) -> t.Any:
             if kwargs.get("group") == "stream-filter":
+                assert kwargs.get("description") == "match streamed records"
                 worker_chunks.append(len(work.args[-1]))
             return original_run_worker(work, **kwargs)
 
