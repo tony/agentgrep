@@ -140,6 +140,7 @@ class GrepArgs:
     style: GrepStyle = "default"
     compiled: CompiledQuery | None = None
     raw_query: str = ""
+    base_scope: SearchScope = "prompts"
 
 
 @dataclasses.dataclass(slots=True)
@@ -165,6 +166,7 @@ class SearchArgs:
     raw_query: str = ""
     origin_boost: RecordOrigin | None = None
     origin_filter: RecordOrigin | None = None
+    base_scope: SearchScope = "prompts"
 
 
 @dataclasses.dataclass(slots=True)
@@ -732,6 +734,12 @@ def _effective_search_scope(
     return "prompts"
 
 
+def _base_search_scope(namespace: argparse.Namespace) -> SearchScope:
+    """Return the interactive scope before query predicates widen discovery."""
+    explicit = t.cast("SearchScope | None", namespace.scope)
+    return "prompts" if explicit is None else explicit
+
+
 # Boolean keywords that engage the query parser when typed standalone and
 # uppercase. Lowercase ``or``/``and``/``not`` stay literal search terms — the
 # tokenizer treats them as terms, so the gate must agree.
@@ -1162,6 +1170,7 @@ def _build_grep_args(
         only_matching=t.cast("bool", namespace.only_matching),
         compiled=grep_compiled,
         raw_query=" ".join(patterns_list_raw),
+        base_scope=_base_search_scope(namespace),
         no_dedupe=t.cast("bool", namespace.no_dedupe),
         line_number=line_number,
         heading=heading,
@@ -1249,6 +1258,7 @@ def _build_search_args(
         raw_query=raw_query,
         origin_boost=origin_boost,
         origin_filter=origin_filter,
+        base_scope=_base_search_scope(namespace),
     )
 
 

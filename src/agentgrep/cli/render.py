@@ -52,7 +52,7 @@ from agentgrep.progress import (
     SearchProgress,
     noop_search_progress,
 )
-from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord
+from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord, SearchScope
 
 __all__ = [
     "GrepSummary",
@@ -87,6 +87,7 @@ def _launch_ui(
     query: SearchQuery,
     *,
     initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
 ) -> None:
     """Launch the UI and translate factory validation into a CLI diagnostic."""
     try:
@@ -95,6 +96,7 @@ def _launch_ui(
             query,
             control=SearchControl(),
             initial_search_text=initial_search_text,
+            base_scope=base_scope,
         )
     except ValueError as error:
         from agentgrep.ui.app import UiQueryTooLongError
@@ -233,7 +235,11 @@ def run_find_command(args: FindArgs) -> int:
             limit=args.limit,
             compiled=args.compiled,
         )
-        _launch_ui(query, initial_search_text=args.raw_query or None)
+        _launch_ui(
+            query,
+            initial_search_text=args.raw_query or None,
+            base_scope="all",
+        )
         return 0
 
     if not _find_path_is_eager(args):
@@ -286,7 +292,11 @@ def run_ui_command(args: UIArgs) -> int:
         base,
         terms=tuple(args.initial_query.split()),
     )
-    _launch_ui(query, initial_search_text=args.initial_query or None)
+    _launch_ui(
+        query,
+        initial_search_text=args.initial_query or None,
+        base_scope="prompts",
+    )
     return 0
 
 
@@ -319,7 +329,11 @@ def run_search_command(args: SearchArgs) -> int:
         origin_filter=args.origin_filter,
     )
     if args.output_mode == "ui":
-        _launch_ui(query, initial_search_text=args.raw_query or None)
+        _launch_ui(
+            query,
+            initial_search_text=args.raw_query or None,
+            base_scope=args.base_scope,
+        )
         return 0
     if args.output_mode in ("json", "ndjson"):
         return _run_search_eager(args, query)
@@ -647,7 +661,11 @@ def run_grep_command(args: GrepArgs) -> int:
         raise SystemExit(msg)
     query = build_grep_query(args)
     if args.output_mode == "ui":
-        _launch_ui(query, initial_search_text=args.raw_query or None)
+        _launch_ui(
+            query,
+            initial_search_text=args.raw_query or None,
+            base_scope=args.base_scope,
+        )
         return 0
     if not _grep_path_is_eager(args):
         return stream_grep_results(args)

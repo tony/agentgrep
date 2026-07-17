@@ -264,7 +264,7 @@ class HudLayout(LayoutScreen):
         # widens the per-search scope to "all"; this stable base is what
         # a search without a ``scope:`` predicate reverts to, so the
         # widening never persists across searches.
-        self._user_scope = ctx.query.scope
+        self._user_scope = ctx.base_scope
         self.control = ctx.control
         self._invoker = ctx.invoker
         self.initial_search_text: str | None = ctx.initial_search_text

@@ -17,7 +17,7 @@ if t.TYPE_CHECKING:
     import pathlib
 
     from agentgrep.progress import SearchControl
-    from agentgrep.records import SearchQuery
+    from agentgrep.records import SearchQuery, SearchScope
     from agentgrep.ui._history import HistoryEntry
     from agentgrep.ui._seams import SearchInvoker
 
@@ -40,6 +40,10 @@ class UiContext:
     control : SearchControl
         The initial cooperative-cancel flag; a layout swaps in a fresh one
         per search, so this is only the seed.
+    base_scope : SearchScope
+        Discovery scope that an interactive query without a ``scope:``
+        predicate returns to. This can differ from the launch query's
+        effective scope.
     initial_search_text : str | None, optional
         Initial value of a layout's primary input. ``None`` defaults to the
         space-joined ``query.terms``.
@@ -53,6 +57,7 @@ class UiContext:
     invoker: SearchInvoker
     query: SearchQuery
     control: SearchControl
+    base_scope: SearchScope
     initial_search_text: str | None = None
     history: tuple[HistoryEntry, ...] = ()
     history_disabled: bool = False

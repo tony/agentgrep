@@ -4152,6 +4152,48 @@ def test_scope_predicate_widening_does_not_persist(
     assert reverted.scope == "prompts"
 
 
+@pytest.mark.parametrize("layout", ["hud", "greplog"])
+def test_launch_scope_predicate_preserves_base_scope(
+    layout: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A compiled launch predicate cannot become the layout's plain-query scope."""
+    from agentgrep.query import build_query_from_input, default_registry
+
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    base = agentgrep.SearchQuery(
+        terms=(),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    result = build_query_from_input(
+        "scope:conversations bliss",
+        base,
+        default_registry(),
+    )
+    assert result.query is not None
+    assert result.query.scope == "all"
+    app = agentgrep.build_streaming_ui_app(
+        home,
+        result.query,
+        control=agentgrep.SearchControl(),
+        initial_search_text="scope:conversations bliss",
+        base_scope="prompts",
+        layout=layout,
+    )
+    screen = app.get_default_screen()
+
+    assert screen.build_query("plain").scope == "prompts"
+
+
 def test_streaming_ui_app_passes_runtime_to_search_worker(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

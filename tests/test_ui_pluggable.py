@@ -379,6 +379,7 @@ async def test_explorer_app_composition_selects_initial_pair(
             invoker=_NoopInvoker(),
             query=query,
             control=SearchControl(),
+            base_scope=query.scope,
         ),
         composition=registry._UiComposition(
             layout_type=layout_spec.loader(),

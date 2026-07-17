@@ -20,7 +20,7 @@ from agentgrep.ui._context import UiContext
 if t.TYPE_CHECKING:
     from agentgrep._types import RunnableAppLike
     from agentgrep.progress import SearchControl
-    from agentgrep.records import SearchQuery
+    from agentgrep.records import SearchQuery, SearchScope
 
 __all__ = ["build_streaming_ui_app", "run_ui"]
 
@@ -35,6 +35,7 @@ def run_ui(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
     layout: str = registry.DEFAULT_LAYOUT,
     workflow: str = registry.DEFAULT_WORKFLOW,
 ) -> None:
@@ -56,6 +57,9 @@ def run_ui(
     initial_search_text : str | None
         Initial value of the layout's primary input. When ``None``, defaults to
         the space-joined ``query.terms``.
+    base_scope : SearchScope | None
+        Scope used by later plain interactive queries. ``None`` preserves the
+        launch query's scope.
     layout : str
         The layout to launch into (see :data:`agentgrep.ui.registry.LAYOUTS`).
     workflow : str
@@ -66,6 +70,7 @@ def run_ui(
         query,
         control=control,
         initial_search_text=initial_search_text,
+        base_scope=base_scope,
         layout=layout,
         workflow=workflow,
     )
@@ -78,6 +83,7 @@ def build_streaming_ui_app(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
     layout: str = registry.DEFAULT_LAYOUT,
     workflow: str = registry.DEFAULT_WORKFLOW,
 ) -> object:
@@ -101,6 +107,9 @@ def build_streaming_ui_app(
     initial_search_text : str | None
         Initial value of the layout's primary input; defaults to the
         space-joined ``query.terms`` when ``None``.
+    base_scope : SearchScope | None
+        Scope used by later plain interactive queries. ``None`` preserves the
+        launch query's scope.
     layout : str
         The layout to launch into; validated against the registry.
     workflow : str
@@ -157,6 +166,7 @@ def build_streaming_ui_app(
         invoker=EngineSearchInvoker(home),
         query=query,
         control=control,
+        base_scope=query.scope if base_scope is None else base_scope,
         initial_search_text=initial_search_text,
         history=history,
         history_disabled=history_disabled,

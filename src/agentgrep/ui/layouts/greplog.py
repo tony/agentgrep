@@ -70,7 +70,7 @@ class GrepLogLayout(LayoutScreen):
     def __init__(self, ctx: UiContext, workflow: Workflow) -> None:
         super().__init__(ctx, workflow)
         self.search_query = ctx.query
-        self._user_scope = ctx.query.scope
+        self._user_scope = ctx.base_scope
         self.control = ctx.control
         self._records: list[SearchRecord] = []
         self._search_emit: cabc.Callable[[object], None] | None = None

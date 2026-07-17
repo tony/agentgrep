@@ -60,6 +60,7 @@ class _RecordingHost:
             invoker=_NoopInvoker(),
             query=query,
             control=SearchControl(),
+            base_scope=query.scope,
         )
         self.calls: list[tuple[str, object]] = []
 
@@ -119,6 +120,7 @@ class _WorkflowSwapLayout(LayoutScreen):
             invoker=_NoopInvoker(),
             query=_query("seed"),
             control=SearchControl(),
+            base_scope="prompts",
         )
         super().__init__(ctx, _RecordingWorkflow(calls))
         self._calls = calls

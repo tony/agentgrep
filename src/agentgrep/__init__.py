@@ -422,6 +422,7 @@ def run_ui(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
     layout: str | None = None,
     workflow: str | None = None,
 ) -> None:
@@ -437,6 +438,10 @@ def run_ui(
     to the space-joined ``query.terms`` for compatibility with the
     pre-query-language callers. ``layout`` / ``workflow`` select the
     pluggable surface; ``None`` uses the registry defaults.
+
+    ``base_scope`` preserves the discovery scope that later interactive
+    queries without a ``scope:`` predicate return to. ``None`` uses the
+    effective launch-query scope.
     """
     from agentgrep.ui.app import run_ui as _run_ui
 
@@ -450,6 +455,7 @@ def run_ui(
         query,
         control=control,
         initial_search_text=initial_search_text,
+        base_scope=base_scope,
         **selection,
     )
 
@@ -460,6 +466,7 @@ def build_streaming_ui_app(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
     layout: str | None = None,
     workflow: str | None = None,
 ) -> object:
@@ -482,6 +489,7 @@ def build_streaming_ui_app(
         query,
         control=control,
         initial_search_text=initial_search_text,
+        base_scope=base_scope,
         **selection,
     )
 

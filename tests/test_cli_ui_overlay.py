@@ -25,6 +25,7 @@ from agentgrep.cli import render as _r_render
 def _capture_run_ui(
     monkeypatch: pytest.MonkeyPatch,
     initial_texts: list[str | None] | None = None,
+    base_scopes: list[agentgrep.SearchScope | None] | None = None,
 ) -> list[agentgrep.SearchQuery]:
     """Replace the renderer's ``run_ui`` with a recorder; return captured calls."""
     captured: list[agentgrep.SearchQuery] = []
@@ -35,10 +36,13 @@ def _capture_run_ui(
         *,
         control: object,
         initial_search_text: str | None = None,
+        base_scope: agentgrep.SearchScope | None = None,
     ) -> None:
         captured.append(query)
         if initial_texts is not None:
             initial_texts.append(initial_search_text)
+        if base_scopes is not None:
+            base_scopes.append(base_scope)
 
     monkeypatch.setattr(_r_render, "run_ui", _record)
     return captured
@@ -145,6 +149,40 @@ def test_ui_subcommand_preserves_quoted_phrase(monkeypatch: pytest.MonkeyPatch) 
     assert agentgrep.main(["ui", '"serene bliss"']) == 0
 
     assert captured[0].terms == ("serene bliss",)
+
+
+def test_ui_subcommand_preserves_base_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A launch-only scope predicate cannot widen later plain searches."""
+    base_scopes: list[agentgrep.SearchScope | None] = []
+    captured = _capture_run_ui(monkeypatch, base_scopes=base_scopes)
+
+    assert agentgrep.main(["ui", "scope:conversations"]) == 0
+
+    assert captured[0].scope == "all"
+    assert base_scopes == ["prompts"]
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_base_scope"),
+    [
+        (("search", "--ui", "scope:conversations", "bliss"), "prompts"),
+        (("grep", "--ui", "scope:conversations", "bliss"), "prompts"),
+        (("search", "--ui", "--scope", "conversations", "bliss"), "conversations"),
+        (("find", "--ui", "bliss"), "all"),
+    ],
+)
+def test_ui_overlays_preserve_base_scope(
+    argv: tuple[str, ...],
+    expected_base_scope: agentgrep.SearchScope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each overlay passes its pre-predicate discovery scope to the TUI."""
+    base_scopes: list[agentgrep.SearchScope | None] = []
+    _capture_run_ui(monkeypatch, base_scopes=base_scopes)
+
+    assert agentgrep.main(list(argv)) == 0
+
+    assert base_scopes == [expected_base_scope]
 
 
 def test_ui_overlay_reports_oversized_query_without_traceback() -> None:
