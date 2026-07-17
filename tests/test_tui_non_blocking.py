@@ -81,14 +81,14 @@ _PUMP_EXACT = {
 
 # Calls that hand a callable to the pump thread; their target methods run there
 # even though their names match no prefix (NB-1/NB-8).
-_SCHEDULER_FUNCS = {
-    "set_timer",
-    "set_interval",
-    "call_later",
-    "call_next",
-    "call_after_refresh",
-    "call_from_thread",
-    "subscribe",
+_SCHEDULER_CALLBACK_POSITIONS = {
+    "set_timer": (1,),
+    "set_interval": (1,),
+    "call_later": (0,),
+    "call_next": (0,),
+    "call_after_refresh": (0,),
+    "call_from_thread": (0,),
+    "subscribe": (1,),
 }
 
 # Blocking calls forbidden in a pump-thread body (NB-1). JSON parsing is checked
@@ -163,9 +163,15 @@ def _scheduled_pump_names(trees: t.Iterable[ast.AST] = _UI_TREES) -> frozenset[s
         for call in ast.walk(tree):
             if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
                 continue
-            if call.func.attr not in _SCHEDULER_FUNCS:
+            positions = _SCHEDULER_CALLBACK_POSITIONS.get(call.func.attr)
+            if positions is None:
                 continue
-            candidates = [*call.args, *(keyword.value for keyword in call.keywords)]
+            candidates = [
+                argument for index, argument in enumerate(call.args) if index in positions
+            ]
+            candidates.extend(
+                keyword.value for keyword in call.keywords if keyword.arg == "callback"
+            )
             for arg in candidates:
                 # Seed only ``self.method`` targets: the data args passed
                 # alongside the callable are bare names, and a lambda/partial
@@ -454,6 +460,10 @@ def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
         "self.set_timer(delay=0.1, callback=self._keyword_callback)",
     )
     assert _scheduled_pump_names([keyword_tree]) == {"_keyword_callback"}
+    data_keyword_tree = ast.parse(
+        "self.call_from_thread(self._apply, value=self.record)",
+    )
+    assert _scheduled_pump_names([data_keyword_tree]) == {"_apply"}
     node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
     assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
     assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
