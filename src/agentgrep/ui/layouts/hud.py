@@ -890,8 +890,7 @@ class HudLayout(LayoutScreen):
         if not query or self._search_input is None:
             return
         target = t.cast("t.Any", self._search_input)
-        target.value = query
-        target.cursor_position = len(query)
+        target.load_query(query)
         target.focus()
 
     def _build_search_query(self, text: str) -> SearchQuery:

@@ -30,6 +30,7 @@ from textual.widgets.option_list import Option
 
 from agentgrep.ui import theme as ui_theme
 from agentgrep.ui.format import format_relative_time
+from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -94,7 +95,7 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
     ) -> None:
         super().__init__(id=id)
         self._entries = list(entries)
-        self._seed = seed
+        self._seed = seed[:INPUT_MAX_LENGTH]
         self._matches: list[HistoryEntry] = []
         self._now = int(time.time())
         # Content.stylize takes a style string; reverse-video by default,
@@ -109,7 +110,11 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
                 yield OptionList(id="history-list", markup=False)
                 with VerticalScroll(id="history-preview-scroll"):
                     yield Static("", id="history-preview")
-            yield Input(placeholder="Search history", id="history-filter")
+            yield Input(
+                placeholder="Search history",
+                id="history-filter",
+                max_length=INPUT_MAX_LENGTH,
+            )
             yield Static(
                 "↑/↓ to navigate · Enter to use · Esc to cancel",
                 id="history-footer",

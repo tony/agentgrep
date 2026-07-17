@@ -15,14 +15,17 @@ import typing as t
 import pytest
 from rich.cells import cell_len
 from rich.style import Style
+from textual.app import App, ComposeResult
 from textual.scroll_view import ScrollView
 from textual.widgets import Input, OptionList, Static
 
 from agentgrep.progress import FilterRequestedPayload, ProgressSnapshot
 from agentgrep.records import SearchQuery, SearchRecord
+from agentgrep.ui._history import HistoryEntry
 from agentgrep.ui.format import phase_label
 from agentgrep.ui.widgets import (
     CompletionDropdown,
+    DetailFindInput,
     DetailScroll,
     FilterCompleted,
     FilterHeader,
@@ -38,6 +41,8 @@ from agentgrep.ui.widgets import (
     SearchResultsList,
     SpinnerWidget,
 )
+from agentgrep.ui.widgets.history import HistoryRecall
+from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
 
 def _make_record(text: str = "bliss") -> SearchRecord:
@@ -203,6 +208,48 @@ def test_inputs_are_input_subclasses() -> None:
     assert issubclass(FilterInput, Input)
     assert issubclass(SearchInput, Input)
     assert FilterInput._DEBOUNCE_SECONDS == 0.15
+
+
+async def test_inputs_bound_text_processed_on_the_pump() -> None:
+    """Typed, initial, and restored input text share one finite budget."""
+    oversized = "x" * (INPUT_MAX_LENGTH + 1)
+
+    class InputHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield SearchInput(value=oversized, id="search")
+            yield FilterInput(id="filter")
+            yield DetailFindInput(id="detail-find")
+
+    app = InputHarness()
+    async with app.run_test():
+        search = app.query_one("#search", SearchInput)
+        filter_input = app.query_one("#filter", FilterInput)
+        detail_find = app.query_one("#detail-find", DetailFindInput)
+
+        assert search.max_length == INPUT_MAX_LENGTH
+        assert search.value == oversized[:INPUT_MAX_LENGTH]
+        assert filter_input.max_length == INPUT_MAX_LENGTH
+        assert detail_find.max_length == INPUT_MAX_LENGTH
+
+        search.load_query(oversized)
+        detail_find.load_query(oversized)
+        assert search.value == oversized[:INPUT_MAX_LENGTH]
+        assert detail_find.value == oversized[:INPUT_MAX_LENGTH]
+
+
+async def test_history_filter_bounds_seed_text() -> None:
+    """History filtering cannot restore an unbounded query onto the pump."""
+    oversized = "x" * (INPUT_MAX_LENGTH + 1)
+    app = App[None]()
+
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            HistoryRecall([HistoryEntry(oversized, 1.0)], seed=oversized),
+        )
+        await pilot.pause()
+        history_filter = app.screen.query_one("#history-filter", Input)
+        assert history_filter.max_length == INPUT_MAX_LENGTH
+        assert history_filter.value == oversized[:INPUT_MAX_LENGTH]
 
 
 def test_format_relative_time_units() -> None:

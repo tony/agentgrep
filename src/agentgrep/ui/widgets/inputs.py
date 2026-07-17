@@ -24,7 +24,10 @@ from agentgrep.ui.widgets.messages import (
     SearchRequested,
 )
 
-__all__ = ["DetailFindInput", "FilterInput", "SearchInput"]
+__all__ = ["INPUT_MAX_LENGTH", "DetailFindInput", "FilterInput", "SearchInput"]
+
+INPUT_MAX_LENGTH = 4096
+"""Maximum text processed by an interactive input on the message pump."""
 
 
 def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:
@@ -84,6 +87,7 @@ class FilterInput(Input):
         super().__init__(
             placeholder=placeholder,
             id=id,
+            max_length=INPUT_MAX_LENGTH,
             suggester=suggester,
             highlighter=highlighter,
         )
@@ -190,7 +194,11 @@ class DetailFindInput(Input):
         placeholder: str = "",
         id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
     ) -> None:
-        super().__init__(placeholder=placeholder, id=id)
+        super().__init__(
+            placeholder=placeholder,
+            id=id,
+            max_length=INPUT_MAX_LENGTH,
+        )
         self._debounce_timer: Timer | None = None
 
     def load_query(self, value: str) -> None:
@@ -199,7 +207,7 @@ class DetailFindInput(Input):
         Used when restoring a record's remembered find query so the restore
         doesn't re-run the find (and reset the match cursor) via the debounce.
         """
-        self.value = value
+        self.value = value[:INPUT_MAX_LENGTH]
         self.cancel_pending_request()
 
     def cancel_pending_request(self) -> None:
@@ -269,13 +277,19 @@ class SearchInput(Input):
         label: str | None = None,
     ) -> None:
         super().__init__(
-            value=value,
+            value=value[:INPUT_MAX_LENGTH],
             placeholder=placeholder,
             id=id,
+            max_length=INPUT_MAX_LENGTH,
             suggester=suggester,
             highlighter=highlighter,
         )
         self._label = label
+
+    def load_query(self, value: str) -> None:
+        """Load a bounded query and place the cursor at its end."""
+        self.value = value[:INPUT_MAX_LENGTH]
+        self.cursor_position = len(self.value)
 
     def on_mount(self) -> None:
         """Paint ``label`` into the top rule as the pi label-in-the-rule.
