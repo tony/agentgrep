@@ -2,7 +2,8 @@
 
 ``ExplorerApp`` owns *only* App-lifecycle concerns: pi-lite theme registration,
 native ANSI-background mode, the non-blocking pump bind / heartbeat watchdog /
-audit hook (ADR 0011), and which :class:`~agentgrep.ui.layouts._base.LayoutScreen` and
+audit hook (ADR 0011), and which
+:class:`~agentgrep.ui.layouts._base.LayoutScreen` and
 :class:`~agentgrep.ui.workflows.Workflow` to mount. The validated pair is
 injected as one immutable shell composition, which the shell never replaces.
 All bindings and presentation belong to the layout, not here.
@@ -53,9 +54,9 @@ class ExplorerApp(App[None]):
         self.register_theme(ui_theme.agentgrep_dark())
         self.register_theme(ui_theme.agentgrep_light())
         self.theme = ui_theme.DARK_THEME_NAME
-        # Native ANSI background handling so the structural panes can use
-        # ``ansi_default`` (the terminal's own background, SGR 49) like
-        # pi/claude-code instead of a painted color.
+        # Native ANSI handling lets the dark theme use the terminal background.
+        # The semantic canvas token paints light themes explicitly, avoiding a
+        # Textual 3.2 ANSI-conversion bug on dim surfaces.
         self.ansi_color = True
         self._ctx = ctx
         self._composition = composition
@@ -88,11 +89,20 @@ class ExplorerApp(App[None]):
         the layouts only carry ``@pump_only`` / ``@offload`` callables.
         """
         _runtime.bind_pump_thread()
+        self.theme_changed_signal.subscribe(self, self._on_theme_changed)
         if _runtime.watchdog_enabled():
             self.set_interval(_runtime.HEARTBEAT_INTERVAL, _runtime.record_heartbeat)
             _runtime.start_pump_watchdog()
         if _runtime.audit_hook_enabled():
             _runtime.arm_pump_audit()
+
+    @_runtime.pump_only
+    def _on_theme_changed(self, _selected_theme: object) -> None:
+        """Keep native ANSI enabled after Textual 3.2 changes the theme."""
+        if self.ansi_color is True:
+            return
+        self.ansi_color = True
+        self.refresh_css(animate=False)
 
     def on_unmount(self) -> None:
         """Release the pump-thread binding and stop the watchdog on teardown."""

@@ -49,7 +49,7 @@ class SearchResultsList(ScrollView, can_focus=True):
     }
     DEFAULT_CSS = """
     SearchResultsList {
-        background: ansi_default;
+        background: $ag-canvas;
         padding: 0 1;
         scrollbar-size: 0 0;
     }

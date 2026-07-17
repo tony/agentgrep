@@ -85,7 +85,7 @@ Every notable capability of [pi-tui](https://github.com/earendil-works/pi/blob/v
 | Focus traversal + modal trap | pi overlay model | Textual focus chain + `ModalScreen` auto trap/restore | small | CORE — deliverable is the documented focus graph + Pilot tests |
 | Spinner / progress chrome | pi [`loader.ts`](https://github.com/earendil-works/pi/blob/v0.80.2/packages/tui/src/components/loader.ts) | `SpinnerWidget(Static)` driven by `set_interval`; snapshots into `SearchingPanel`/`MeterWidget` | builtin | CORE |
 | Cancellation / supersede | pi keybindings | {class}`~agentgrep.SearchControl` polled in worker loops; `run_worker(exclusive=True)` (NB-6/NB-7) | builtin | CORE |
-| Terminal-transparent aesthetic | pi themes | `App.ansi_color=True` + ansi-default tokens in `theme.py`; pi-lite rules in `styles.tcss` | builtin | CORE |
+| Terminal-transparent aesthetic | pi themes | Native ANSI + semantic canvas tokens: terminal-default dark mode, painted light mode | builtin | CORE |
 | Streaming-markdown transcript | [`markdown.ts`](https://github.com/earendil-works/pi/blob/v0.80.2/packages/tui/src/components/markdown.ts) | Static `MarkdownRecordDetail`; full parse off-thread, no per-token path | medium | OPTIONAL — no live token producer |
 | Emacs kill-ring editor | [`editor.ts`](https://github.com/earendil-works/pi/blob/v0.80.2/packages/tui/src/components/editor.ts) | `KillRingTextArea(TextArea)` | medium | OPTIONAL/CUT — single-line box; `Input` already covers editing |
 | Full conversation browsing | pi session view | `ConversationScrollbackLog(RichLog)` for `scope=conversations` | medium | OPTIONAL — needs an engine incremental-detail fetch behind its own ADR |

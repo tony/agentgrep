@@ -13,6 +13,7 @@ import pathlib
 import typing as t
 
 import pytest
+from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 from textual.color import Color
@@ -107,6 +108,7 @@ def test_every_ag_token_present_and_parseable(case: ThemeCase) -> None:
         set(theme.AGENT_TOKEN_BY_NAME.values())
         | set(theme.KIND_TOKEN_BY_NAME.values())
         | {"ag-muted", "ag-dim", "ag-faint", "ag-model"}
+        | {"ag-canvas", "ag-canvas-text"}
         | {f"ag-state-{name}-bg" for name in ("user", "pending", "success", "error", "selected")}
         | {f"ag-on-{name}" for name in ("user", "pending", "success", "error", "selected")}
         | {"ag-match-search", "ag-match-filter-bg", "ag-match-filter-fg"}
@@ -264,6 +266,72 @@ async def test_theme_switch_recolors_shared_query_highlighting(
         await pilot.pause()
         assert any("#006b75" in str(span.style) for span in search._value.spans)
         assert not any("color(79)" in str(span.style) for span in search._value.spans)
+
+
+async def test_themes_composite_queries_against_matching_canvases(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Light paints its canvas while dark restores the terminal background."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.animation_level = "none"
+
+    async with app.run_test(size=(60, 22)) as pilot:
+        await pilot.pause()
+        search = app.screen._search_input
+        search.value = "/theme light"
+        search.focus()
+        await pilot.press("enter")
+        search.value = "agent:claude"
+        await pilot.pause()
+
+        def rendered_query_segments() -> list[Segment]:
+            update = app.screen._compositor.render_full_update()
+            return [
+                segment
+                for y, strips in enumerate(update.strips)
+                if search.region.y <= y < search.region.bottom
+                for item in strips
+                for segment in ((item,) if isinstance(item, Segment) else item)
+                if segment.text.strip() in {"agent", ":", "claude"}
+            ]
+
+        assert app.theme == theme.LIGHT_THEME_NAME
+        assert app.ansi_color is True
+        query_segments = rendered_query_segments()
+        assert query_segments
+        for segment in query_segments:
+            assert segment.style is not None
+            foreground = segment.style.color
+            background = segment.style.bgcolor
+            assert foreground is not None
+            assert background is not None
+            foreground_rgb = foreground.get_truecolor()
+            background_rgb = background.get_truecolor()
+            foreground_hex = (
+                f"#{foreground_rgb.red:02x}{foreground_rgb.green:02x}{foreground_rgb.blue:02x}"
+            )
+            background_hex = (
+                f"#{background_rgb.red:02x}{background_rgb.green:02x}{background_rgb.blue:02x}"
+            )
+            assert _contrast_ratio(foreground_hex, background_hex) >= 4.5
+
+        search.value = "/theme dark"
+        await pilot.press("enter")
+        search.value = "agent:claude"
+        await pilot.pause()
+
+        assert app.theme == theme.DARK_THEME_NAME
+        assert app.ansi_color is True
+        dark_segments = rendered_query_segments()
+        assert dark_segments
+        assert all(
+            segment.style is not None
+            and segment.style.bgcolor is not None
+            and segment.style.bgcolor.is_default
+            for segment in dark_segments
+        )
 
 
 @pytest.mark.parametrize(

@@ -13,11 +13,12 @@ each background via :meth:`textual.color.Color.get_contrast_text`, so a tinted
 badge or selected row stays readable in both themes by construction rather than
 by a hand-picked guess.
 
-The ``$ag-*`` variables hold concrete ``#rrggbb`` literals (never ``$token``
-references) because the results list and detail header paint Rich renderables
-outside the stylesheet's reach: :func:`resolve` reads
-:attr:`textual.app.App.theme_variables` to feed those Rich spans, while the
-stylesheet consumes the same tokens directly.
+Rich-facing ``$ag-*`` variables hold concrete ``#rrggbb`` literals (never
+``$token`` references) because the results list and detail header paint Rich
+renderables outside the stylesheet's reach: :func:`resolve` reads
+:attr:`textual.app.App.theme_variables` to feed those Rich spans. The
+stylesheet-only canvas pair is the deliberate exception: dark mode uses
+``ansi_default`` while light mode paints its page and foreground explicitly.
 
 This module imports Textual at import time and is reached only through
 :func:`agentgrep.ui.app.build_streaming_ui_app` (and the theme tests), never the
@@ -92,6 +93,14 @@ _BRAND_SHINE_HUES: tuple[tuple[str, str], ...] = (
     ("#ffd166", "#765f00"),
 )
 
+# Page colors are stylesheet-only. Dark mode deliberately inherits the
+# terminal canvas; light mode must paint both sides of the contrast pair so its
+# legibility never depends on a dark terminal's defaults.
+_CANVAS_COLORS: tuple[tuple[str, str], tuple[str, str]] = (
+    ("ansi_default", "ansi_default"),
+    ("#f8f8f8", "#1f2328"),
+)
+
 # Subtle state-tint backgrounds (pi's message/tool background family).
 _STATE_BG_HUES: dict[str, tuple[str, str]] = {
     "user": ("#343541", "#e8e8e8"),
@@ -145,9 +154,11 @@ def _ag_variables(mode: int) -> dict[str, str]:
     Returns
     -------
     dict[str, str]
-        Variable name (without ``$``) to concrete ``#rrggbb`` literal.
+        Variable name (without ``$``) to a concrete Textual color literal.
     """
     variables: dict[str, str] = {}
+    variables["ag-canvas"] = _CANVAS_COLORS[mode][0]
+    variables["ag-canvas-text"] = _CANVAS_COLORS[mode][1]
     for name, hexes in _AGENT_HUES.items():
         variables[f"ag-agent-{name}"] = hexes[mode]
     for name, hexes in _KIND_HUES.items():
