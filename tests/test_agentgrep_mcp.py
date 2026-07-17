@@ -1868,6 +1868,20 @@ async def test_mcp_validate_query_validates_query_language() -> None:
     assert "agent" in (bad_data["error_message"] or "")
 
 
+async def test_mcp_validate_query_empty_returns_guidance() -> None:
+    """An empty validation request returns a structured usage diagnostic."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("validate_query", {})
+
+    data = tool_payload(result)
+    assert data["matches"] is False
+    assert data["regex_valid"] is True
+    assert data["query_valid"] is None
+    assert data["error_message"] == "provide terms, query, or both"
+
+
 async def test_mcp_query_language_resource_lists_every_field() -> None:
     """The query-language resource lists each registry field and operators."""
     from agentgrep.query import default_registry

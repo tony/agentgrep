@@ -9,7 +9,11 @@ import typing as t
 from pydantic import Field
 
 from agentgrep.mcp._library import READONLY_TAGS, TOOL_ANNOTATIONS, agentgrep
-from agentgrep.mcp.models import ValidateQueryRequest, ValidateQueryResponse
+from agentgrep.mcp.models import (
+    VALIDATE_QUERY_INPUT_ERROR,
+    ValidateQueryRequest,
+    ValidateQueryResponse,
+)
 
 if t.TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -110,6 +114,12 @@ def register(mcp: FastMCP) -> None:
             Field(description="Perform case-sensitive matching."),
         ] = False,
     ) -> ValidateQueryResponse:
+        if not terms and query is None:
+            return ValidateQueryResponse(
+                matches=False,
+                regex_valid=True,
+                error_message=VALIDATE_QUERY_INPUT_ERROR,
+            )
         request = ValidateQueryRequest(
             terms=terms,
             query=query,
