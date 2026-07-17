@@ -5233,9 +5233,11 @@ async def test_empty_filter_completion_clears_detail_find_selection(
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     record = _ui_record(agentgrep, tmp_path / "excluded.jsonl", "needle body", "excluded")
-    async with app.run_test(size=(120, 30)) as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         await _open_detail_with_find(app, record, pilot)
+        app.screen._detail_opened = True
+        app.screen._apply_responsive_layout()
         app.screen._detail_find_input.load_query("needle")
         app.screen._run_detail_find("needle", reset_cursor=True)
         app.screen._search_done = True
@@ -5254,6 +5256,8 @@ async def test_empty_filter_completion_clears_detail_find_selection(
         assert app.screen._detail_find_matches == []
         assert str(app.screen._detail_statusline.render()) == ""
         assert getattr(app.focused, "id", None) == "filter"
+        assert app.screen._detail_opened is False
+        assert app.screen._detail_column.has_class("-collapsed")
 
         app.screen._detail_find_step(1)
 

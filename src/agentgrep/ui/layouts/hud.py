@@ -1547,6 +1547,7 @@ class HudLayout(LayoutScreen):
                 self._detail_build_generation += 1
                 self._reset_detail_find_state()
                 self._current_detail_record = None
+                self._detail_opened = False
                 self._presented_detail_cache_key = None
                 self._detail_body_text = ""
                 self._detail_header_text = None
