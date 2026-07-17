@@ -29,6 +29,7 @@ from textual.widgets import Footer, Static
 
 from agentgrep._engine.orchestration import clear_haystack_cache
 from agentgrep._text import (
+    DETAIL_BODY_MAX_CHARS,
     DETAIL_BODY_MAX_LINES,
     detect_content_format,
     find_first_match_line,
@@ -1461,9 +1462,10 @@ class HudLayout(LayoutScreen):
     def show_detail(self, record: SearchRecord) -> None:
         """Render ``record`` with colored labels + format-aware body + scroll-to-match.
 
-        The body is truncated to :data:`DETAIL_BODY_MAX_LINES` lines (the
-        ``VerticalScroll`` wrapper handles letting the user scroll within
-        the visible window). The body renderable is chosen by
+        The body is truncated to :data:`DETAIL_BODY_MAX_CHARS` characters and
+        :data:`DETAIL_BODY_MAX_LINES` lines (the ``VerticalScroll`` wrapper
+        handles letting the user scroll within the visible window). The body
+        renderable is chosen by
         :func:`detect_content_format`:
 
         * JSON bodies are pretty-printed and rendered via
@@ -1544,7 +1546,11 @@ class HudLayout(LayoutScreen):
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
         header.append("\n")
-        body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
+        body_truncated = truncate_lines(
+            record.text,
+            DETAIL_BODY_MAX_LINES,
+            max_chars=DETAIL_BODY_MAX_CHARS,
+        )
         query_terms = list(self.search_query.terms)
         # Keep the header + body text so find-in-detail can re-highlight the
         # body (without rebuilding the header) and scroll to matches.

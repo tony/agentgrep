@@ -7350,6 +7350,44 @@ def test_truncate_lines_appends_overflow_marker() -> None:
     assert "(+45 more lines)" in result
 
 
+def test_truncate_lines_caps_single_line_by_characters() -> None:
+    """A newline-free body cannot bypass the detail rendering budget."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    cap = agentgrep.DETAIL_BODY_MAX_CHARS
+    text = "x" * (cap + 1000)
+    result = agentgrep.truncate_lines(
+        text,
+        max_lines=agentgrep.DETAIL_BODY_MAX_LINES,
+        max_chars=cap,
+    )
+    assert result.startswith("x" * cap)
+    assert result.endswith("… (more content)")
+    assert len(result) < len(text)
+
+
+async def test_show_detail_caps_single_line_at_max_chars(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``show_detail`` bounds one huge line before any Rich rendering."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    cap = agentgrep.DETAIL_BODY_MAX_CHARS
+    record = agentgrep.SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.sessions",
+        adapter_id="codex.sessions_jsonl.v1",
+        path=tmp_path / "a.jsonl",
+        text="x" * (cap + 1000),
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen.show_detail(record)
+        assert app.screen._detail_body_text.endswith("… (more content)")
+        assert len(app.screen._detail_body_text) < len(record.text)
+
+
 async def test_show_detail_caps_body_at_max_lines(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
