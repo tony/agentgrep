@@ -867,7 +867,7 @@ class HudLayout(LayoutScreen):
         else:
             new_value = apply_word_choice(text, values[index])
         target_input.value = new_value
-        target_input.cursor_position = len(new_value)
+        target_input.cursor_position = len(target_input.value)
         dropdown.display = False
         target_input.focus()
 

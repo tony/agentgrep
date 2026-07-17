@@ -3785,6 +3785,44 @@ async def test_dropdown_accept_leaves_cursor_at_end_without_selecting(
         assert search.selection.is_empty
 
 
+def test_dropdown_accept_uses_validated_value_length(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Completion places the cursor after any input-side value clamping."""
+
+    class ClampedInput:
+        def __init__(self) -> None:
+            self._value = "a"
+            self.cursor_position = 0
+            self.focused = False
+
+        @property
+        def value(self) -> str:
+            return self._value
+
+        @value.setter
+        def value(self, value: str) -> None:
+            self._value = value[:5]
+
+        def focus(self) -> None:
+            self.focused = True
+
+    class Dropdown:
+        display = True
+
+    target = ClampedInput()
+    dropdown = Dropdown()
+    hud = _build_empty_ui_app(tmp_path, monkeypatch).get_default_screen()
+
+    hud._accept_dropdown_choice(target, dropdown, ("abcdef",), 0)
+
+    assert target.value == "abcde"
+    assert target.cursor_position == len(target.value)
+    assert dropdown.display is False
+    assert target.focused is True
+
+
 async def test_detail_pane_highlights_filter_terms_distinctly(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
