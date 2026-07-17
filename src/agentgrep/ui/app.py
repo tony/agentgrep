@@ -137,6 +137,9 @@ def build_streaming_ui_app(
             raise
         msg = "Textual is required for --ui. Install with `uv pip install --editable .`."
         raise RuntimeError(msg) from error
+    from agentgrep.ui import _terminal_compat
+
+    _terminal_compat.install_terminal_input_compat()
     layout_type = layout_spec.loader()
     workflow_type = workflow_spec.loader()
     composition = registry._UiComposition(
