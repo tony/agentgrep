@@ -27,6 +27,7 @@ from rich.text import Text
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Static
+from textual.worker import Worker, WorkerCancelled
 
 from agentgrep._engine.orchestration import clear_haystack_cache
 from agentgrep._text import (
@@ -91,6 +92,7 @@ from agentgrep.ui.widgets import (
 )
 
 if t.TYPE_CHECKING:
+    from agentgrep._engine.matching import CompiledRecordMatcher
     from agentgrep.ui.workflows import Workflow
 
 
@@ -109,6 +111,7 @@ _DETAIL_HIGHLIGHT_MAX_TERMS = 32
 _DETAIL_HIGHLIGHT_MAX_MATCHES = 256
 _DETAIL_HIGHLIGHT_MAX_TERM_CHARS = 256
 _DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS = 2048
+_STREAM_FILTER_MAX_TEXT_CHARS = 2 << 20
 _RichSyntaxType = _RichSyntax
 
 
@@ -135,6 +138,27 @@ def _bounded_literal_terms(
         if len(result) >= _DETAIL_HIGHLIGHT_MAX_TERMS:
             break
     return tuple(result)
+
+
+def _stream_filter_chunks(
+    records: cabc.Sequence[SearchRecord],
+    *,
+    max_records: int,
+    max_chars: int,
+) -> cabc.Iterator[tuple[SearchRecord, ...]]:
+    """Yield record slices bounded by count and projected body characters."""
+    chunk: list[SearchRecord] = []
+    chunk_chars = 0
+    for record in records:
+        record_chars = min(len(record.text), max_chars)
+        if chunk and (len(chunk) >= max_records or chunk_chars + record_chars > max_chars):
+            yield tuple(chunk)
+            chunk = []
+            chunk_chars = 0
+        chunk.append(record)
+        chunk_chars += record_chars
+    if chunk:
+        yield tuple(chunk)
 
 
 def _apply_bounded_literal_highlights(
@@ -279,7 +303,7 @@ class HudLayout(LayoutScreen):
         self._filter_dropdown_values: tuple[str, ...] = ()
         # Compiled record matcher for the current (query-aware) filter
         # text; ``None`` means no active filter (all records pass).
-        self._filter_matcher: t.Any = None
+        self._filter_matcher: CompiledRecordMatcher | None = None
         self._filter_generation = 0
         self._records_generation = 0
         self._resize_debounce_timer: object | None = None
@@ -1031,6 +1055,7 @@ class HudLayout(LayoutScreen):
         of a single apply (NB-4).
         """
         filter_generation = self._filter_generation
+        filter_matcher = self._filter_matcher
         if records:
             self.all_records.extend(records)
             self._records_generation += 1
@@ -1038,8 +1063,7 @@ class HudLayout(LayoutScreen):
         # the results list (idempotent; a batch driven directly, e.g. in
         # tests, switches here too).
         self._set_results_view("results")
-        matching = [record for record in records if self._matches_filter(record)]
-        if matching and self._results is not None:
+        if records and self._results is not None:
             results = self._results
 
             def _append_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
@@ -1049,12 +1073,55 @@ class HudLayout(LayoutScreen):
                 if not results.uses_records(self.filtered_records):
                     self.filtered_records.extend(chunk)
 
-            await _runtime.stream_apply(
-                matching,
-                _append_chunk,
-                chunk_size=self._APPLY_CHUNK_SIZE,
-            )
+            if filter_matcher is None:
+                await _runtime.stream_apply(
+                    records,
+                    _append_chunk,
+                    chunk_size=self._APPLY_CHUNK_SIZE,
+                )
+            else:
+                streaming = t.cast("StreamingAppLike", t.cast("object", self))
+                for record_chunk in _stream_filter_chunks(
+                    records,
+                    max_records=self._APPLY_CHUNK_SIZE,
+                    max_chars=_STREAM_FILTER_MAX_TEXT_CHARS,
+                ):
+                    worker = t.cast(
+                        "Worker[tuple[SearchRecord, ...]]",
+                        streaming.run_worker(
+                            functools.partial(
+                                self._match_stream_chunk,
+                                filter_matcher,
+                                record_chunk,
+                            ),
+                            name="stream filter",
+                            group="stream-filter",
+                            description="match streamed records",
+                            thread=True,
+                            exclusive=True,
+                        ),
+                    )
+                    try:
+                        matching = await worker.wait()
+                    except WorkerCancelled:
+                        return
+                    if filter_generation != self._filter_generation:
+                        return
+                    await _runtime.stream_apply(
+                        matching,
+                        _append_chunk,
+                        chunk_size=self._APPLY_CHUNK_SIZE,
+                    )
         self._refresh_results_status_right()
+
+    @_runtime.offload
+    def _match_stream_chunk(
+        self,
+        matcher: CompiledRecordMatcher,
+        records: tuple[SearchRecord, ...],
+    ) -> tuple[SearchRecord, ...]:
+        """Project one bounded streaming slice through an active filter."""
+        return tuple(record for record in records if matcher.matches(record))
 
     @_runtime.pump_only
     def _apply_source_progress(self, event: UiProgressSnapshot) -> None:
@@ -1301,7 +1368,7 @@ class HudLayout(LayoutScreen):
             exclusive=True,
         )
 
-    def _build_filter_matcher(self, text: str) -> t.Any:
+    def _build_filter_matcher(self, text: str) -> CompiledRecordMatcher | None:
         """Compile a record matcher for the filter text, or ``None`` if empty.
 
         The filter accepts the same query language as search, applied
@@ -1343,7 +1410,7 @@ class HudLayout(LayoutScreen):
     def _run_filter_worker(
         self,
         text: str,
-        matcher: t.Any,
+        matcher: CompiledRecordMatcher | None,
         records: tuple[SearchRecord, ...],
         generation: int,
         records_generation: int,
@@ -2530,9 +2597,3 @@ class HudLayout(LayoutScreen):
         """
         if not self._search_done:
             self.control.request_answer_now()
-
-    def _matches_filter(self, record: SearchRecord) -> bool:
-        matcher = self._filter_matcher
-        if matcher is None:
-            return True
-        return bool(matcher.matches(record))

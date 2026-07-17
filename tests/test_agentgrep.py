@@ -6337,6 +6337,114 @@ async def test_apply_records_batch_yields_between_chunks(
         assert len(app.screen._results._records) == record_count
 
 
+async def test_apply_records_batch_filters_off_pump_in_bounded_chunks(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streaming filter projection stays off-pump, bounded, and ordered."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = _seed_records(agentgrep, tmp_path, 401)
+    pump_thread = threading.get_ident()
+    match_threads: list[int] = []
+    worker_chunks: list[int] = []
+
+    class EvenMatcher:
+        def matches(self, record: t.Any) -> bool:
+            match_threads.append(threading.get_ident())
+            return int(record.path.stem.removeprefix("r")) % 2 == 0
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.screen._filter_matcher = EvenMatcher()
+        app.screen._filter_generation += 1
+        original_run_worker = app.screen.run_worker
+
+        def capture_worker(work: t.Any, **kwargs: t.Any) -> t.Any:
+            if kwargs.get("group") == "stream-filter":
+                worker_chunks.append(len(work.args[-1]))
+            return original_run_worker(work, **kwargs)
+
+        monkeypatch.setattr(app.screen, "run_worker", capture_worker)
+        await app.screen._apply_records_batch(records, total=len(records))
+
+        expected = records[::2]
+        assert worker_chunks == [200, 200, 1]
+        assert match_threads
+        assert all(thread_id != pump_thread for thread_id in match_threads)
+        assert app.screen.filtered_records == expected
+        assert app.screen._results._records == expected
+
+
+def test_stream_filter_chunks_bound_body_work(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Worker slices also cap projected body characters, not only rows."""
+    from agentgrep.ui.layouts.hud import (
+        _STREAM_FILTER_MAX_TEXT_CHARS,
+        _stream_filter_chunks,
+    )
+
+    records = tuple(
+        _agentgrep_module.SearchRecord(
+            kind="prompt",
+            agent="codex",
+            store="codex.sessions",
+            adapter_id="codex.sessions_jsonl.v1",
+            path=tmp_path / f"r{index}",
+            text=text,
+        )
+        for index, text in enumerate(
+            ("x" * _STREAM_FILTER_MAX_TEXT_CHARS, "y", ""),
+        )
+    )
+
+    chunks = tuple(
+        _stream_filter_chunks(
+            records,
+            max_records=200,
+            max_chars=_STREAM_FILTER_MAX_TEXT_CHARS,
+        ),
+    )
+
+    assert tuple(map(len, chunks)) == (1, 2)
+
+
+async def test_apply_records_batch_drops_stale_worker_projection(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A filter change cannot publish a worker slice from the old matcher."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _seed_records(agentgrep, tmp_path, 1)[0]
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    class BlockingMatcher:
+        def matches(self, _record: t.Any) -> bool:
+            worker_started.set()
+            assert release_worker.wait(timeout=2)
+            return True
+
+    async with app.run_test(size=(120, 24)):
+        app.screen._filter_matcher = BlockingMatcher()
+        app.screen._filter_generation += 1
+        apply_task = asyncio.create_task(
+            app.screen._apply_records_batch((record,), total=1),
+        )
+        assert await asyncio.to_thread(worker_started.wait, 2)
+
+        app.screen._filter_generation += 1
+        app.screen._filter_matcher = None
+        release_worker.set()
+        await apply_task
+
+        assert app.screen.all_records == [record]
+        assert app.screen.filtered_records == []
+        assert app.screen._results.option_count == 0
+
+
 async def test_set_records_majority_removal_clamps_cursor_once(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
