@@ -241,6 +241,14 @@ async def test_inputs_bound_text_processed_on_the_pump() -> None:
         assert filter_input.max_length == INPUT_MAX_LENGTH
         assert detail_find.max_length == INPUT_MAX_LENGTH
 
+        search.value = oversized
+        filter_input.value = oversized
+        detail_find.value = oversized
+        await pilot.pause()
+        assert search.value == oversized[:INPUT_MAX_LENGTH]
+        assert filter_input.value == oversized[:INPUT_MAX_LENGTH]
+        assert detail_find.value == oversized[:INPUT_MAX_LENGTH]
+
         search.load_query(oversized)
         detail_find.load_query("first")
         detail_find.load_query(oversized)

@@ -20,6 +20,7 @@ from textual.timer import Timer
 from textual.widgets import Input
 
 from agentgrep.progress import FilterRequestedPayload, SearchRequestedPayload
+from agentgrep.ui import _runtime
 from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
 from agentgrep.ui.widgets.messages import (
     DetailFindRequested,
@@ -65,7 +66,16 @@ def _disarm_confirm_exit(widget: Input) -> None:
     t.cast("t.Any", widget.screen)._disarm_confirm_exit()
 
 
-class FilterInput(Input):
+class _BoundedInput(Input):
+    """Input whose reactive value invariant also covers programmatic writes."""
+
+    @_runtime.pump_only
+    def validate_value(self, value: str) -> str:
+        """Clamp every reactive assignment to the interactive text budget."""
+        return value[:INPUT_MAX_LENGTH]
+
+
+class FilterInput(_BoundedInput):
     """``Input`` subclass with debounced filter + cursor-or-focus arrows.
 
     The base ``Input.Changed`` event still fires immediately on each
@@ -179,7 +189,7 @@ class FilterInput(Input):
         self.app.action_focus_next()
 
 
-class DetailFindInput(Input):
+class DetailFindInput(_BoundedInput):
     """``Input`` for find-in-detail, docked at the bottom of the detail pane.
 
     Separate from the search and filter inputs: typing posts a debounced
@@ -259,7 +269,7 @@ class DetailFindInput(Input):
             return
 
 
-class SearchInput(Input):
+class SearchInput(_BoundedInput):
     """``Input`` subclass that fires :class:`SearchRequested` on Enter.
 
     Keystrokes update the input text immediately so the cursor stays

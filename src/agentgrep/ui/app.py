@@ -103,7 +103,8 @@ def build_streaming_ui_app(
     Raises
     ------
     ValueError
-        If ``layout`` or ``workflow`` names an unregistered component.
+        If ``layout`` or ``workflow`` names an unregistered component, or the
+        launch query cannot fit in the interactive input.
     """
     layout_spec = registry.layout_spec(layout)
     if layout_spec is None:
@@ -112,6 +113,13 @@ def build_streaming_ui_app(
     workflow_spec = registry.workflow_spec(workflow)
     if workflow_spec is None:
         msg = f"unknown workflow {workflow!r}; choose from {', '.join(registry.workflow_names())}"
+        raise ValueError(msg)
+    launch_text = " ".join(query.terms)
+    if len(launch_text) > _history.QUERY_TEXT_MAX_CHARS:
+        msg = f"launch query exceeds {_history.QUERY_TEXT_MAX_CHARS} characters"
+        raise ValueError(msg)
+    if initial_search_text is not None and len(initial_search_text) > _history.QUERY_TEXT_MAX_CHARS:
+        msg = f"initial search text exceeds {_history.QUERY_TEXT_MAX_CHARS} characters"
         raise ValueError(msg)
     try:
         from agentgrep.ui._seams import EngineSearchInvoker

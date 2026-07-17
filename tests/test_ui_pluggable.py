@@ -148,6 +148,39 @@ def test_build_streaming_ui_app_validates_selection(tmp_path: pathlib.Path) -> N
         )
 
 
+def test_build_streaming_ui_app_rejects_unrepresentable_launch_query(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The launch search cannot exceed what its primary input can display."""
+    from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
+
+    oversized = "x" * (QUERY_TEXT_MAX_CHARS + 1)
+    query = agentgrep.SearchQuery(
+        terms=(oversized,),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
+    with pytest.raises(ValueError, match="launch query exceeds"):
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+        )
+
+    query.terms = ("shown",)
+    with pytest.raises(ValueError, match="initial search text exceeds"):
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+            initial_search_text=oversized,
+        )
+
+
 def test_factory_resolves_components_and_history_before_run(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
