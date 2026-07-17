@@ -1925,13 +1925,20 @@ class HudLayout(LayoutScreen):
         self._detail_find_source = body_for_scroll
         self._detail_find_json_syntax = isinstance(body_renderable, _RichSyntaxType)
         if isinstance(body_renderable, Text):
+            if cache_key is None:
+                highlight_state = (
+                    tuple(query_terms),
+                    self.search_query.case_sensitive,
+                    self.search_query.regex,
+                    self._filter_terms,
+                )
+            else:
+                _, terms, case_sensitive, regex, filter_terms = cache_key
+                highlight_state = (terms, case_sensitive, regex, filter_terms)
             self._detail_find_base = body_renderable
             self._detail_find_base_key = (
                 body_for_scroll,
-                tuple(query_terms),
-                self.search_query.case_sensitive,
-                self.search_query.regex,
-                self._filter_terms,
+                *highlight_state,
             )
         else:
             self._detail_find_base = None

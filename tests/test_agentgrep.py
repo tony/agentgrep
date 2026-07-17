@@ -3991,6 +3991,31 @@ async def test_present_detail_rejects_stale_same_record_generation(
         assert app.screen._detail_body_cache[cache_key][0] is record
 
 
+async def test_present_detail_retains_captured_highlight_key(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed detail build cannot label stale spans with live filter state."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    source = "before needle after"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        record = _ui_record(agentgrep, tmp_path / "race.jsonl", source, "race")
+        app.screen._current_detail_record = record
+        app.screen._filter_terms = ("before",)
+        cache_key = app.screen._detail_cache_key((), record)
+        assert cache_key is not None
+        body = app.screen._build_detail_body(source, (), filter_terms=("before",))
+
+        app.screen._filter_terms = ("after",)
+        app.screen._present_detail(record, "HEADER", body, (), cache_key=cache_key)
+
+        assert app.screen._detail_find_base_key is not None
+        assert app.screen._detail_find_base_key[-1] == ("before",)
+        assert app.screen._detail_find_base_for(source) is not body[0]
+
+
 async def test_detail_body_builder_does_not_mutate_shared_cache(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
