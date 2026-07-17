@@ -97,8 +97,8 @@ async def test_welcome_example_click_loads_without_searching(
 
 @pytest.mark.parametrize(
     "size",
-    [(24, 20), (30, 12), (16, 20)],
-    ids=["narrow-width", "short-height", "compact-both"],
+    [(24, 20), (30, 12), (20, 18), (16, 20)],
+    ids=["narrow-width", "short-height", "boundary", "compact-both"],
 )
 async def test_welcome_examples_fit_and_click_at_compact_sizes(
     tmp_path: pathlib.Path,
@@ -140,6 +140,7 @@ async def test_welcome_compact_classes_follow_live_resize(
 
         for width, height, compact_class in (
             (30, 12, "-compact-height"),
+            (20, 18, "-compact-height"),
             (16, 20, "-compact-width"),
         ):
             await pilot.resize_terminal(width, height)

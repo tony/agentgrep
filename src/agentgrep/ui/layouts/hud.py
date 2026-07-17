@@ -1247,8 +1247,8 @@ class HudLayout(LayoutScreen):
         # collapsed it. ``self.size`` is known from the driver at mount.
         width = int(getattr(self.size, "width", 0) or 0)
         height = int(getattr(self.size, "height", 0) or 0)
-        self.set_class(0 < width < self._WELCOME_COMPACT_WIDTH, "-compact-width")
-        self.set_class(0 < height < self._WELCOME_COMPACT_HEIGHT, "-compact-height")
+        self.set_class(0 < width <= self._WELCOME_COMPACT_WIDTH, "-compact-width")
+        self.set_class(0 < height <= self._WELCOME_COMPACT_HEIGHT, "-compact-height")
         stacked = 0 < width < self._SPLIT_BREAKPOINT
         self._stacked = stacked
         body = t.cast("t.Any", self._body)
