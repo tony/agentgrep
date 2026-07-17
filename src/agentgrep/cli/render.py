@@ -82,6 +82,27 @@ __all__ = [
 ]
 
 
+def _launch_ui(
+    query: SearchQuery,
+    *,
+    initial_search_text: str | None = None,
+) -> None:
+    """Launch the UI and translate factory validation into a CLI diagnostic."""
+    try:
+        run_ui(
+            pathlib.Path.home(),
+            query,
+            control=SearchControl(),
+            initial_search_text=initial_search_text,
+        )
+    except ValueError as error:
+        from agentgrep.ui.app import UiQueryTooLongError
+
+        if not isinstance(error, UiQueryTooLongError):
+            raise
+        raise SystemExit(str(error)) from None
+
+
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
     """Emit find results in the requested format.
 
@@ -211,12 +232,7 @@ def run_find_command(args: FindArgs) -> int:
             limit=args.limit,
             compiled=args.compiled,
         )
-        run_ui(
-            pathlib.Path.home(),
-            query,
-            control=SearchControl(),
-            initial_search_text=args.raw_query or None,
-        )
+        _launch_ui(query, initial_search_text=args.raw_query or None)
         return 0
 
     if not _find_path_is_eager(args):
@@ -263,11 +279,7 @@ def run_ui_command(args: UIArgs) -> int:
         agents=AGENT_CHOICES,
         limit=None,
     )
-    run_ui(
-        pathlib.Path.home(),
-        query,
-        control=SearchControl(),
-    )
+    _launch_ui(query)
     return 0
 
 
@@ -300,12 +312,7 @@ def run_search_command(args: SearchArgs) -> int:
         origin_filter=args.origin_filter,
     )
     if args.output_mode == "ui":
-        run_ui(
-            pathlib.Path.home(),
-            query,
-            control=SearchControl(),
-            initial_search_text=args.raw_query or None,
-        )
+        _launch_ui(query, initial_search_text=args.raw_query or None)
         return 0
     if args.output_mode in ("json", "ndjson"):
         return _run_search_eager(args, query)
@@ -633,12 +640,7 @@ def run_grep_command(args: GrepArgs) -> int:
         raise SystemExit(msg)
     query = build_grep_query(args)
     if args.output_mode == "ui":
-        run_ui(
-            pathlib.Path.home(),
-            query,
-            control=SearchControl(),
-            initial_search_text=args.raw_query or None,
-        )
+        _launch_ui(query, initial_search_text=args.raw_query or None)
         return 0
     if not _grep_path_is_eager(args):
         return stream_grep_results(args)

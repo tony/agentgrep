@@ -180,6 +180,17 @@ def test_build_streaming_ui_app_rejects_unrepresentable_launch_query(
             initial_search_text=oversized,
         )
 
+    query.terms = ("x" * QUERY_TEXT_MAX_CHARS,)
+    app = t.cast(
+        "t.Any",
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+        ),
+    )
+    assert len(app._ctx.query.terms[0]) == QUERY_TEXT_MAX_CHARS
+
 
 def test_factory_resolves_components_and_history_before_run(
     tmp_path: pathlib.Path,

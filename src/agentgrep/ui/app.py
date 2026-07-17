@@ -25,6 +25,10 @@ if t.TYPE_CHECKING:
 __all__ = ["build_streaming_ui_app", "run_ui"]
 
 
+class UiQueryTooLongError(ValueError):
+    """Raised when a launch expression cannot fit in the TUI input."""
+
+
 def run_ui(
     home: pathlib.Path,
     query: SearchQuery,
@@ -119,10 +123,10 @@ def build_streaming_ui_app(
     launch_text = " ".join(query.terms)
     if len(launch_text) > _history.QUERY_TEXT_MAX_CHARS:
         msg = f"launch query exceeds {_history.QUERY_TEXT_MAX_CHARS} characters"
-        raise ValueError(msg)
+        raise UiQueryTooLongError(msg)
     if initial_search_text is not None and len(initial_search_text) > _history.QUERY_TEXT_MAX_CHARS:
         msg = f"initial search text exceeds {_history.QUERY_TEXT_MAX_CHARS} characters"
-        raise ValueError(msg)
+        raise UiQueryTooLongError(msg)
     try:
         from agentgrep.ui._seams import EngineSearchInvoker
         from agentgrep.ui._shell import ExplorerApp

@@ -22,7 +22,10 @@ import agentgrep
 from agentgrep.cli import render as _r_render
 
 
-def _capture_run_ui(monkeypatch: pytest.MonkeyPatch) -> list[agentgrep.SearchQuery]:
+def _capture_run_ui(
+    monkeypatch: pytest.MonkeyPatch,
+    initial_texts: list[str | None] | None = None,
+) -> list[agentgrep.SearchQuery]:
     """Replace the renderer's ``run_ui`` with a recorder; return captured calls."""
     captured: list[agentgrep.SearchQuery] = []
 
@@ -33,8 +36,9 @@ def _capture_run_ui(monkeypatch: pytest.MonkeyPatch) -> list[agentgrep.SearchQue
         control: object,
         initial_search_text: str | None = None,
     ) -> None:
-        del initial_search_text  # accepted for signature compat; not asserted here
         captured.append(query)
+        if initial_texts is not None:
+            initial_texts.append(initial_search_text)
 
     monkeypatch.setattr(_r_render, "run_ui", _record)
     return captured
@@ -112,3 +116,35 @@ def test_find_ui_overlay_passes_agents(monkeypatch: pytest.MonkeyPatch) -> None:
     exit_code = agentgrep.main(["find", "--ui", "--agent", "codex", "anything"])
     assert exit_code == 0
     assert captured[0].agents == ("codex",)
+
+
+def test_search_ui_overlay_passes_raw_query_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The UI receives the expression users expect to see and edit."""
+    initial_texts: list[str | None] = []
+    _capture_run_ui(monkeypatch, initial_texts)
+    assert agentgrep.main(["search", "--ui", "agent:codex"]) == 0
+    assert initial_texts == ["agent:codex"]
+
+
+def test_ui_overlay_reports_oversized_query_without_traceback() -> None:
+    """A UI-only query budget error becomes a concise CLI diagnostic."""
+    from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
+
+    oversized = "x" * (QUERY_TEXT_MAX_CHARS + 1)
+    with pytest.raises(SystemExit, match="launch query exceeds 4096 characters"):
+        agentgrep.main(["search", "--ui", oversized])
+
+
+def test_ui_overlay_preserves_unexpected_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An internal runtime defect is not mislabeled as an input diagnostic."""
+    message = "sentinel runtime defect"
+
+    def fail_run_ui(*args: object, **kwargs: object) -> t.NoReturn:
+        del args, kwargs
+        raise ValueError(message)
+
+    monkeypatch.setattr(_r_render, "run_ui", fail_run_ui)
+    with pytest.raises(ValueError, match=message):
+        agentgrep.main(["search", "--ui", "bliss"])
