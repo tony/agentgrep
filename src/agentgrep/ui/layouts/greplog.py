@@ -302,7 +302,10 @@ class GrepLogLayout(LayoutScreen):
             return
         if isinstance(event, StreamingRecordsBatch):
             self._records.extend(event.records)
-            if self._filter_matcher is not None:
+            if (
+                self._filter_matcher is not None
+                or self._filter_scan_generation == self._filter_generation
+            ):
                 self._continue_filter_projection()
                 return
             await self._write_unfiltered_records(
@@ -354,7 +357,10 @@ class GrepLogLayout(LayoutScreen):
         for start in range(0, len(records), _APPLY_CHUNK_SIZE):
             if generation != self._generation or filter_generation != self._filter_generation:
                 return
-            if self._filter_matcher is not None:
+            if (
+                self._filter_matcher is not None
+                or self._filter_scan_generation == self._filter_generation
+            ):
                 self._continue_filter_projection()
                 return
             self._write_chunk(records[start : start + _APPLY_CHUNK_SIZE])

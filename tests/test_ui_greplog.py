@@ -531,6 +531,56 @@ async def test_greplog_active_filter_scans_each_streamed_record_once(
         assert matcher.calls == expected
 
 
+async def test_greplog_clear_filter_does_not_duplicate_streamed_tail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch arriving during an unfiltered repaint is projected only once."""
+    from agentgrep.ui import _runtime
+    from agentgrep.ui.layouts import greplog as greplog_mod
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    entered_yield = asyncio.Event()
+    release_yield = asyncio.Event()
+
+    async def pause_between_chunks() -> None:
+        entered_yield.set()
+        await release_yield.wait()
+
+    monkeypatch.setattr(_runtime, "_sleep_zero", pause_between_chunks)
+    initial = [
+        _record(tmp_path, index, f"initial {index}")
+        for index in range(greplog_mod._APPLY_CHUNK_SIZE * 2 + 1)
+    ]
+    tail = [_record(tmp_path, len(initial) + index, f"tail {index}") for index in range(2)]
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._records.extend(initial)
+        layout.filter_loaded("")
+        await asyncio.wait_for(entered_yield.wait(), timeout=2)
+
+        await layout._apply_event(
+            layout._generation,
+            StreamingRecordsBatch(records=tuple(tail), total=len(initial) + len(tail)),
+        )
+        release_yield.set()
+        for _ in range(200):
+            if layout._filter_scan_generation is None and layout._filter_scanned_count == len(
+                initial
+            ) + len(tail):
+                break
+            await asyncio.sleep(0.01)
+
+        lines = tuple(line.text for line in layout.query_one("#greplog").lines)
+        assert len(lines) == len(initial) + len(tail)
+        assert [index for index, line in enumerate(lines) if "tail " in line] == [
+            len(initial),
+            len(initial) + 1,
+        ]
+
+
 class InterleavedFilterCase(t.NamedTuple):
     """A filter that lands while an unfiltered batch apply is yielding."""
 
