@@ -15,6 +15,7 @@ import typing as t
 from rich.highlighter import Highlighter
 from textual import events
 from textual.binding import Binding, BindingType
+from textual.content import Content
 from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Input
@@ -32,6 +33,8 @@ __all__ = ["INPUT_MAX_LENGTH", "DetailFindInput", "FilterInput", "SearchInput"]
 
 INPUT_MAX_LENGTH = QUERY_TEXT_MAX_CHARS
 """Maximum text processed by an interactive input on the message pump."""
+
+_SUBMIT_HINT = Content.assemble("Press ", ("Enter", "bold $accent"), " ↵")
 
 _HIDDEN_EDITING_ALIASES = (
     Binding("shift+backspace", "delete_left", "Delete character left", show=False),
@@ -315,6 +318,10 @@ class SearchInput(_BoundedInput):
         self.value = value[:INPUT_MAX_LENGTH]
         self.cursor_position = len(self.value)
 
+    def _sync_submit_hint(self, value: str) -> None:
+        """Show the submit affordance only while a nonblank query is ready."""
+        self.border_subtitle = _SUBMIT_HINT if value.strip() else None
+
     @_runtime.pump_only
     def on_mount(self) -> None:
         """Paint ``label`` into the top rule as the pi label-in-the-rule.
@@ -330,6 +337,12 @@ class SearchInput(_BoundedInput):
         """
         if self._label is not None:
             self.border_title = self._label
+        self._sync_submit_hint(self.value)
+
+    @_runtime.pump_only
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Keep the border submit affordance synchronized with query text."""
+        self._sync_submit_hint(event.value)
 
     @_runtime.pump_only
     def on_input_submitted(self, event: object) -> None:

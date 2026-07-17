@@ -309,6 +309,8 @@ Screen {
 }
 #search {
     height: 3;
+    border-subtitle-align: right;
+    border-subtitle-color: $ag-muted;
 }
 /* The top search prompt carries NO border label (it's the primary entry, kept
    bare); its rule instead acts as a live search-state indicator. Dynamic

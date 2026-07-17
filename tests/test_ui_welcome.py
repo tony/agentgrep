@@ -117,6 +117,16 @@ async def test_welcome_example_click_loads_without_searching(
         assert app.focused is layout._search_input
         assert layout._body.has_class("-empty")
         assert spawned == []
+        assert layout._search_input.border_subtitle == (
+            "Press [bold $accent]Enter[/bold $accent] ↵"
+        )
+
+        await pilot.press("enter")
+        await pilot.pause()
+        search_workers = [
+            args for args in spawned if getattr(args[0], "__name__", "") == "_run_search"
+        ]
+        assert len(search_workers) == 1
 
 
 @pytest.mark.parametrize(

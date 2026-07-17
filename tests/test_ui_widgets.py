@@ -216,9 +216,69 @@ def test_interactive_widgets_use_public_textual_handlers() -> None:
     for widget_type in (CompletionDropdown, DetailFindInput, FilterInput, SearchInput):
         assert "_on_key" not in widget_type.__dict__
         assert "on_key" in widget_type.__dict__
-    for widget_type in (DetailFindInput, FilterInput):
+    for widget_type in (DetailFindInput, FilterInput, SearchInput):
         assert "_watch_value" not in widget_type.__dict__
         assert "on_input_changed" in widget_type.__dict__
+
+
+async def test_search_input_submit_hint_tracks_nonblank_value() -> None:
+    """The border affordance follows initial, typed, and loaded query text."""
+
+    class InputHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield SearchInput(id="search")
+            yield SearchInput(value="ready", id="initial")
+
+    app = InputHarness()
+    async with app.run_test(size=(40, 8)) as pilot:
+        search = app.query_one("#search", SearchInput)
+        initial = app.query_one("#initial", SearchInput)
+
+        assert not search.border_subtitle
+        assert initial.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+
+        search.value = "agent:claude"
+        await pilot.pause()
+        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+
+        search.value = "   "
+        await pilot.pause()
+        assert not search.border_subtitle
+
+        search.load_query("role:user")
+        await pilot.pause()
+        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+
+
+async def test_search_input_submit_hint_fits_supported_minimum_width() -> None:
+    """The full hint fits the existing 16-column compact boundary."""
+
+    class InputHarness(App[None]):
+        CSS = """
+        Input {
+            border: none;
+            border-top: solid red;
+            border-bottom: solid red;
+            border-subtitle-align: right;
+            padding: 0 1;
+        }
+        """
+
+        def compose(self) -> ComposeResult:
+            yield SearchInput(value="query", id="search")
+
+    app = InputHarness()
+    async with app.run_test(size=(16, 4)) as pilot:
+        await pilot.pause()
+        search = app.query_one("#search", SearchInput)
+        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+        search.load_query("x" * INPUT_MAX_LENGTH)
+        await pilot.pause()
+        assert search.cursor_position == INPUT_MAX_LENGTH
+        assert 0 <= search.cursor_screen_offset.x < 16
+        update = app.screen._compositor.render_full_update()
+        bottom_rule = "".join(strip.text for strip in update.strips[2])
+        assert bottom_rule == "──Press Enter ↵─"
 
 
 async def test_inputs_bound_text_processed_on_the_pump() -> None:
