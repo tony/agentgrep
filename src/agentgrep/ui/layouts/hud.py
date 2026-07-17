@@ -25,7 +25,9 @@ from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical
+from textual.containers import Center, Horizontal, Vertical
+from textual.content import Content
+from textual.style import Style
 from textual.widgets import Footer, Static
 from textual.worker import Worker, WorkerCancelled
 
@@ -69,6 +71,7 @@ from agentgrep.ui.format import scroll_percent
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import (
+    WELCOME_QUERY_INDEX_META,
     CompletionDropdown,
     DetailFindInput,
     DetailFindRequested,
@@ -89,6 +92,8 @@ from agentgrep.ui.widgets import (
     SearchRequested,
     SearchResultsList,
     SlowSourceDiagnosticsRow,
+    WelcomeExamples,
+    WelcomeQuerySelected,
 )
 
 if t.TYPE_CHECKING:
@@ -113,6 +118,43 @@ _DETAIL_HIGHLIGHT_MAX_TERM_CHARS = 256
 _DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS = 2048
 _STREAM_FILTER_MAX_TEXT_CHARS = 2 << 20
 _RichSyntaxType = _RichSyntax
+
+_WELCOME_QUERIES = (
+    "agent:claude",
+    "model:gpt*",
+    "role:user",
+    "timestamp:>2026-01-01",
+    '"exact phrase"',
+)
+_WELCOME_QUERY_ROWS = ((0, 1, 2), (3, 4))
+
+
+def _welcome_query_examples() -> Content:
+    """Build syntax-colored examples with bounded click actions."""
+    examples = Text()
+    click_ranges: list[tuple[int, int, int]] = []
+    highlighter = QueryHighlighter()
+    for row_number, row in enumerate(_WELCOME_QUERY_ROWS):
+        if row_number:
+            examples.append("\n")
+        for column, index in enumerate(row):
+            if column:
+                examples.append("   ")
+            query = _WELCOME_QUERIES[index]
+            hint = Text(query)
+            highlighter.highlight(hint)
+            start = len(examples)
+            examples.append_text(hint)
+            click_ranges.append((start, len(examples), index))
+
+    content = Content.from_rich_text(examples)
+    for start, end, index in click_ranges:
+        content = content.stylize(
+            Style.from_meta({WELCOME_QUERY_INDEX_META: index}),
+            start,
+            end,
+        )
+    return content
 
 
 def _bounded_literal_terms(
@@ -458,12 +500,23 @@ class HudLayout(LayoutScreen):
                 # Shown only in the pre-search bare-canvas state (CSS hides
                 # it otherwise); a dim, centered hint teaching the query
                 # language at the moment of highest intent.
-                yield Static(
-                    "try a search to begin\n\n"
-                    "agent:claude   model:gpt*   role:user\n"
-                    'timestamp:>2026-01-01   "exact phrase"',
-                    id="empty-hint",
-                )
+                with Vertical(id="empty-hint"):
+                    with Center():
+                        yield Static(
+                            Content.assemble(
+                                "Welcome to ",
+                                ("agentgrep", "bold $accent"),
+                            ),
+                            id="empty-welcome",
+                        )
+                    with Center():
+                        yield Static("try a search to begin", id="empty-lead")
+                    with Center():
+                        yield WelcomeExamples(
+                            _welcome_query_examples(),
+                            id="empty-examples",
+                            markup=False,
+                        )
                 # Shown only while a search runs before its first result
                 # (CSS hides it otherwise): a centered spinner + phase verb
                 # + counts + elapsed, collapsed to the results list the
@@ -573,6 +626,14 @@ class HudLayout(LayoutScreen):
         ``searching`` view.
         """
         self._set_results_view("empty" if empty else "results")
+
+    @_runtime.pump_only
+    def on_welcome_query_selected(self, message: WelcomeQuerySelected) -> None:
+        """Load and focus one fixed welcome query without submitting it."""
+        if self._search_input is None or not (0 <= message.index < len(_WELCOME_QUERIES)):
+            return
+        self._search_input.load_query(_WELCOME_QUERIES[message.index])
+        self._search_input.focus()
 
     def _set_results_view(self, view: str) -> None:
         """Switch the results region between empty / searching / results.

@@ -32,6 +32,7 @@ __all__ = [
     "ResultHighlighted",
     "ResultsScrollChanged",
     "SearchRequested",
+    "WelcomeQuerySelected",
 ]
 
 
@@ -85,6 +86,14 @@ class SearchRequested(Message):
     def __init__(self, payload: SearchRequestedPayload) -> None:
         super().__init__()
         self.payload = payload
+
+
+class WelcomeQuerySelected(Message):
+    """A fixed query example was clicked on the idle welcome canvas."""
+
+    def __init__(self, index: int) -> None:
+        super().__init__()
+        self.index = index
 
 
 class ResultHighlighted(Message):

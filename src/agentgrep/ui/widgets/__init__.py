@@ -24,6 +24,7 @@ from agentgrep.ui.widgets.messages import (
     ResultHighlighted,
     ResultsScrollChanged,
     SearchRequested,
+    WelcomeQuerySelected,
 )
 from agentgrep.ui.widgets.results import SearchResultsList
 from agentgrep.ui.widgets.status import (
@@ -35,10 +36,12 @@ from agentgrep.ui.widgets.status import (
     SlowSourceDiagnosticsRow,
     SpinnerWidget,
 )
+from agentgrep.ui.widgets.welcome import WELCOME_QUERY_INDEX_META, WelcomeExamples
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
+    "WELCOME_QUERY_INDEX_META",
     "CompletionDropdown",
     "DetailFindInput",
     "DetailFindRequested",
@@ -61,4 +64,6 @@ __all__ = [
     "SearchingPanel",
     "SlowSourceDiagnosticsRow",
     "SpinnerWidget",
+    "WelcomeExamples",
+    "WelcomeQuerySelected",
 ]
