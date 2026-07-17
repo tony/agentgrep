@@ -295,6 +295,7 @@ async def test_slash_screenshot_serializes_svg_off_pump(
 ) -> None:
     """Screenshot capture owns the compositor; SVG serialization does not."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.animation_level = "none"
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         layout = app.screen

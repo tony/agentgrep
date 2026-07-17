@@ -108,6 +108,7 @@ async def test_welcome_wordmark_animates_only_on_empty_canvas(
 ) -> None:
     """The warm shine pauses off-canvas and resumes with the welcome state."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.animation_level = "full"
 
     async with app.run_test(size=(100, 28)) as pilot:
         await pilot.pause()
@@ -134,6 +135,7 @@ async def test_welcome_wordmark_pauses_under_a_covering_screen(
 ) -> None:
     """A covered welcome canvas does not spend idle repaint budget."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.animation_level = "full"
 
     async with app.run_test(size=(100, 28)) as pilot:
         await pilot.pause()
