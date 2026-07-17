@@ -146,11 +146,11 @@ t.cast(t.Any, find).__fastmcp__ = types.SimpleNamespace(
 
 async def list_stores(
     agent: t.Annotated[
-        str,
+        AgentSelector,
         Field(
             default="all",
             description="Filter to one agent or 'all' for every catalog entry.",
-            examples=["all", "claude", "cursor"],
+            examples=["all", "claude", "cursor-cli"],
         ),
     ] = "all",
     role_filter: t.Annotated[

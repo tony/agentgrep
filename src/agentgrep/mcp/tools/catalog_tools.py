@@ -13,6 +13,7 @@ from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
+    AgentSelector,
     agentgrep,
 )
 from agentgrep.mcp.models import (
@@ -206,7 +207,7 @@ def register(mcp: FastMCP) -> None:
     )
     async def list_stores_tool(
         agent: t.Annotated[
-            str,
+            AgentSelector,
             Field(
                 default="all",
                 description="Filter to one agent or 'all' for every catalog entry.",

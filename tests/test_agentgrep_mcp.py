@@ -1901,6 +1901,20 @@ async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
         ), live_tool.name
 
 
+async def test_docs_list_stores_agent_examples_are_valid_selectors() -> None:
+    """Documented agent examples stay inside the MCP selector enum."""
+    from docs._ext import agentgrep_fastmcp as docs_tools
+
+    docs_server = FastMCP("agentgrep docs examples")
+    docs_server.tool(name="list_stores")(docs_tools.list_stores)
+    async with Client(docs_server) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    schema = t.cast("dict[str, t.Any]", t.cast("t.Any", tools[0]).inputSchema)
+    agent_schema = t.cast("dict[str, t.Any]", schema["properties"]["agent"])
+    assert set(agent_schema["examples"]) <= set(agent_schema["enum"])
+
+
 async def test_mcp_recent_sessions_filters_by_mtime(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
