@@ -3564,6 +3564,46 @@ async def test_apply_recalled_query_fills_box_without_running(
         assert app.screen.all_records == []
 
 
+@pytest.mark.parametrize("input_id", ("search", "filter", "detail-find"))
+@pytest.mark.parametrize(
+    ("key", "cursor", "expected"),
+    (("shift+backspace", 3, "ab"), ("shift+delete", 1, "ac")),
+)
+async def test_shift_delete_aliases_edit_all_inputs(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    input_id: str,
+    key: str,
+    cursor: int,
+    expected: str,
+) -> None:
+    """Shift-modified delete keys retain their ordinary editing behavior."""
+    from textual.widgets import Input
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        if input_id == "detail-find":
+            app.screen.show_detail(
+                _agentgrep_module.SearchRecord(
+                    kind="prompt",
+                    agent="codex",
+                    store="codex.sessions",
+                    adapter_id="codex.sessions_jsonl.v1",
+                    path=tmp_path / "a.jsonl",
+                    text="detail",
+                ),
+            )
+            app.screen.action_open_detail_find()
+            await pilot.pause()
+        input_widget = app.screen.query_one(f"#{input_id}", Input)
+        input_widget.value = "abc"
+        input_widget.cursor_position = cursor
+        input_widget.focus()
+        await pilot.press(key)
+        assert input_widget.value == expected
+
+
 async def test_streaming_ui_result_row_title_not_always_bold(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

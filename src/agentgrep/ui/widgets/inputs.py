@@ -13,6 +13,7 @@ import typing as t
 
 from rich.highlighter import Highlighter
 from textual import events
+from textual.binding import Binding
 from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Input
@@ -28,6 +29,11 @@ __all__ = ["INPUT_MAX_LENGTH", "DetailFindInput", "FilterInput", "SearchInput"]
 
 INPUT_MAX_LENGTH = 4096
 """Maximum text processed by an interactive input on the message pump."""
+
+_HIDDEN_EDITING_ALIASES = (
+    Binding("shift+backspace", "delete_left", "Delete character left", show=False),
+    Binding("shift+delete", "delete_right", "Delete character right", show=False),
+)
 
 
 def _consume_key(event: events.Key) -> None:
@@ -76,7 +82,8 @@ class FilterInput(Input):
 
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
 
-    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: t.ClassVar[list[t.Any]] = [
+        *_HIDDEN_EDITING_ALIASES,
         ("down", "release_down", "Results"),
     ]
 
@@ -182,6 +189,7 @@ class DetailFindInput(Input):
     """
 
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.12
+    BINDINGS: t.ClassVar[list[t.Any]] = [*_HIDDEN_EDITING_ALIASES]
 
     def __init__(
         self,
@@ -253,7 +261,8 @@ class SearchInput(Input):
     worker before spawning a fresh one.
     """
 
-    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: t.ClassVar[list[t.Any]] = [
+        *_HIDDEN_EDITING_ALIASES,
         ("down", "release_down", "Filter"),
     ]
 
