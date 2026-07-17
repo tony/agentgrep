@@ -36,7 +36,6 @@ from agentgrep._text import (
     find_first_match_line,
     format_compact_path,
     format_display_path,
-    highlight_matches,
     truncate_lines,
 )
 from agentgrep._types import (
@@ -105,6 +104,57 @@ class _DetailMatchStyles(t.NamedTuple):
 _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 _DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]]
 _DetailBody = tuple[object, str]
+_DETAIL_RICH_FORMAT_MAX_CHARS = 4096
+_DETAIL_HIGHLIGHT_MAX_TERMS = 32
+_DETAIL_HIGHLIGHT_MAX_MATCHES = 256
+_DETAIL_HIGHLIGHT_MAX_TERM_CHARS = 256
+_DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS = 2048
+_RichSyntaxType = _RichSyntax
+
+
+def _bounded_literal_terms(
+    terms: cabc.Sequence[str],
+    *,
+    case_sensitive: bool,
+) -> tuple[str, ...]:
+    """Deduplicate decorative literal terms within a fixed presentation budget."""
+    result: list[str] = []
+    seen: set[str] = set()
+    total_chars = 0
+    for term in terms:
+        if not term or len(term) > _DETAIL_HIGHLIGHT_MAX_TERM_CHARS:
+            continue
+        key = term if case_sensitive else term.casefold()
+        if key in seen:
+            continue
+        if total_chars + len(term) > _DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS:
+            break
+        seen.add(key)
+        result.append(term)
+        total_chars += len(term)
+        if len(result) >= _DETAIL_HIGHLIGHT_MAX_TERMS:
+            break
+    return tuple(result)
+
+
+def _apply_bounded_literal_highlights(
+    text: Text,
+    source: str,
+    terms: cabc.Sequence[str],
+    *,
+    case_sensitive: bool,
+    style: str,
+) -> None:
+    """Apply a bounded number of literal match spans to ``text``."""
+    flags = 0 if case_sensitive else re.IGNORECASE
+    remaining = _DETAIL_HIGHLIGHT_MAX_MATCHES
+    for term in _bounded_literal_terms(terms, case_sensitive=case_sensitive):
+        compiled = re.compile(re.escape(term), flags)
+        for match in compiled.finditer(source):
+            text.stylize(style, match.start(), match.end())
+            remaining -= 1
+            if remaining == 0:
+                return
 
 
 def _json_pretty_print_is_bounded(text: str) -> bool:
@@ -282,6 +332,7 @@ class HudLayout(LayoutScreen):
         # printed JSON for json bodies, the raw body otherwise. Find matches
         # and scroll work against this so offsets line up with what is shown.
         self._detail_find_source: str = ""
+        self._detail_find_json_syntax = False
         # Cached syntax+search+filter find body; the find-match overlay changes
         # per keystroke but this base does not, so it is built once per
         # highlight state and copied (invalidated in _present_detail).
@@ -1594,6 +1645,7 @@ class HudLayout(LayoutScreen):
         self._detail_header_text = header
         self._detail_body_text = body_truncated
         self._detail_find_source = ""
+        self._detail_find_json_syntax = False
         match_styles = _DetailMatchStyles(
             search=self._match_style("search"),
             filter=self._match_style("filter"),
@@ -1744,6 +1796,7 @@ class HudLayout(LayoutScreen):
         # The displayed text find searches/scrolls against — formatted JSON
         # for json bodies, the raw body otherwise.
         self._detail_find_source = body_for_scroll
+        self._detail_find_json_syntax = isinstance(body_renderable, _RichSyntaxType)
         self._detail_find_base = None  # a fresh body invalidates the find base
         self._detail_find_base_key = None
         self._detail.update(_RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable)))
@@ -1832,14 +1885,14 @@ class HudLayout(LayoutScreen):
         too; field predicates contribute no literal terms.
         """
         style = style if style is not None else self._match_style("filter")
-        for term in self._filter_terms if terms is None else terms:
-            if not term:
-                continue
-            try:
-                compiled = re.compile(re.escape(term), re.IGNORECASE)
-            except re.error:
-                continue
-            text.highlight_regex(compiled, style=style)
+        source = str(getattr(text, "plain", ""))
+        _apply_bounded_literal_highlights(
+            text,
+            source,
+            self._filter_terms if terms is None else terms,
+            case_sensitive=False,
+            style=style,
+        )
 
     def _build_detail_body(
         self,
@@ -1863,7 +1916,14 @@ class HudLayout(LayoutScreen):
             self.search_query.case_sensitive if case_sensitive is None else case_sensitive
         )
         effective_regex = self.search_query.regex if regex is None else regex
-        safe_query_terms = () if effective_regex else query_terms
+        safe_query_terms = (
+            ()
+            if effective_regex
+            else _bounded_literal_terms(
+                query_terms,
+                case_sensitive=effective_case_sensitive,
+            )
+        )
         fmt = detect_content_format(body_text)
         result: _DetailBody
         if fmt == "json":
@@ -1887,25 +1947,56 @@ class HudLayout(LayoutScreen):
                 regex=False,
             )
             highlight_lines = {match_line + 1} if match_line is not None else None
-            syntax = _RichSyntax(
-                formatted,
-                "json",
-                theme="ansi_dark",
-                word_wrap=True,
-                highlight_lines=highlight_lines,
-            )
-            result = (syntax, formatted)
+            if len(formatted) <= _DETAIL_RICH_FORMAT_MAX_CHARS:
+                renderable: object = _RichSyntax(
+                    formatted,
+                    "json",
+                    theme="ansi_dark",
+                    word_wrap=True,
+                    highlight_lines=highlight_lines,
+                )
+            else:
+                plain = Text(formatted, no_wrap=False)
+                _apply_bounded_literal_highlights(
+                    plain,
+                    formatted,
+                    safe_query_terms,
+                    case_sensitive=effective_case_sensitive,
+                    style=match_styles.search if match_styles else self._match_style("search"),
+                )
+                self._apply_filter_highlight(
+                    plain,
+                    match_styles.filter if match_styles else None,
+                    terms=filter_terms,
+                )
+                renderable = plain
+            result = (renderable, formatted)
         elif fmt == "markdown":
-            result = (
-                _RichMarkdown(body_text, code_theme="ansi_dark"),
-                body_text,
-            )
+            if len(body_text) <= _DETAIL_RICH_FORMAT_MAX_CHARS:
+                renderable = _RichMarkdown(body_text, code_theme="ansi_dark")
+            else:
+                plain = Text(body_text, no_wrap=False)
+                _apply_bounded_literal_highlights(
+                    plain,
+                    body_text,
+                    safe_query_terms,
+                    case_sensitive=effective_case_sensitive,
+                    style=match_styles.search if match_styles else self._match_style("search"),
+                )
+                self._apply_filter_highlight(
+                    plain,
+                    match_styles.filter if match_styles else None,
+                    terms=filter_terms,
+                )
+                renderable = plain
+            result = (renderable, body_text)
         else:
-            highlighted = highlight_matches(
+            highlighted = Text(body_text, no_wrap=False)
+            _apply_bounded_literal_highlights(
+                highlighted,
                 body_text,
                 safe_query_terms,
                 case_sensitive=effective_case_sensitive,
-                regex=False,
                 style=match_styles.search if match_styles else self._match_style("search"),
             )
             self._apply_filter_highlight(
@@ -2069,17 +2160,17 @@ class HudLayout(LayoutScreen):
         cached = self._detail_find_base
         if cached is not None and self._detail_find_base_key == key:
             return cached
-        query_terms = () if self.search_query.regex else self.search_query.terms
-        if detect_content_format(source) == "json":
+        if self._detail_find_json_syntax:
             text = _RichSyntax(source, "json", theme="ansi_dark", word_wrap=True).highlight(source)
             text.no_wrap = False
             self._apply_search_highlight(text)
         else:
-            text = highlight_matches(
+            text = Text(source, no_wrap=False)
+            _apply_bounded_literal_highlights(
+                text,
                 source,
-                query_terms,
+                () if self.search_query.regex else self.search_query.terms,
                 case_sensitive=self.search_query.case_sensitive,
-                regex=False,
                 style=self._match_style("search"),
             )
         self._apply_filter_highlight(text)
@@ -2097,17 +2188,13 @@ class HudLayout(LayoutScreen):
         """
         if self.search_query.regex:
             return
-        style = self._match_style("search")
-        for term in self.search_query.terms:
-            if not term:
-                continue
-            try:
-                flags = 0 if self.search_query.case_sensitive else re.IGNORECASE
-                pattern = re.escape(term)
-                compiled = re.compile(pattern, flags)
-            except re.error:
-                continue
-            text.highlight_regex(compiled, style=style)
+        _apply_bounded_literal_highlights(
+            text,
+            str(getattr(text, "plain", "")),
+            self.search_query.terms,
+            case_sensitive=self.search_query.case_sensitive,
+            style=self._match_style("search"),
+        )
 
     def _scroll_to_current_match(self) -> None:
         """Scroll the detail pane so the current find match is near the top.

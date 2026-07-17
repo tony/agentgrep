@@ -4010,30 +4010,47 @@ async def test_regex_detail_omits_untrusted_pattern_highlighting(
             terms=(pattern,),
             regex=True,
         )
-        calls: list[tuple[str, ...]] = []
-        real_highlight = hud_module.highlight_matches
+        renderable, _source = app.screen._build_detail_body("a" * 23 + "!", (pattern,))
+        assert isinstance(renderable, hud_module.Text)
+        assert renderable.spans == []
 
-        def guarded_highlight(
-            text: str,
-            terms: cabc.Sequence[str],
-            *,
-            case_sensitive: bool = False,
-            regex: bool = False,
-            style: str = "bold yellow",
-        ) -> object:
-            calls.append(tuple(terms))
-            assert not terms
-            return real_highlight(
-                text,
-                terms,
-                case_sensitive=case_sensitive,
-                regex=regex,
-                style=style,
+
+async def test_detail_highlight_spans_have_fixed_budget(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated literal matches cannot create an unbounded Rich span list."""
+    from agentgrep.ui.layouts import hud as hud_module
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        renderable, _source = app.screen._build_detail_body("a" * 19_000, ("a",))
+        assert isinstance(renderable, hud_module.Text)
+        assert len(renderable.spans) == hud_module._DETAIL_HIGHLIGHT_MAX_MATCHES
+        assert (
+            hud_module._bounded_literal_terms(
+                ("x" * (hud_module._DETAIL_HIGHLIGHT_MAX_TERM_CHARS + 1),),
+                case_sensitive=False,
             )
+            == ()
+        )
 
-        monkeypatch.setattr(hud_module, "highlight_matches", guarded_highlight)
-        app.screen._build_detail_body("a" * 23 + "!", (pattern,))
-        assert calls == [()]
+
+async def test_large_markdown_detail_uses_plain_text_rendering(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long Markdown avoids Rich's lazy syntax work on the message pump."""
+    from agentgrep.ui.layouts import hud as hud_module
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    body = "# Heading\n\n" + "body\n" * 1000
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        renderable, source = app.screen._build_detail_body(body, ())
+        assert isinstance(renderable, hud_module.Text)
+        assert source == body
 
 
 async def test_dropdown_dismissal_keys_close_without_accepting(
