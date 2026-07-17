@@ -15,13 +15,14 @@ from textual.app import App
 from textual.widgets import Input, OptionList, Static
 
 from agentgrep.ui._history import HistoryEntry
-from agentgrep.ui.widgets.history import HistoryRecall
+from agentgrep.ui.widgets.history import _ROW_TEXT_MAX_CHARS, HistoryRecall
+from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
 
 def _preview_text(app: App[None]) -> str:
     """Read the plain text currently shown in the modal's preview pane."""
     preview = app.screen.query_one("#history-preview", Static)
-    content = getattr(preview, "_Static__content", "")  # the VisualType last passed to update()
+    content = preview.render()
     return getattr(content, "plain", str(content))
 
 
@@ -66,6 +67,16 @@ def test_row_includes_relative_time_and_text() -> None:
     row = modal._row(entry, Matcher("mcp"))
     assert "study the mcp server" in row.plain
     assert "ago" in row.plain  # the relative-time prefix
+
+
+def test_modal_bounds_foreign_entries_and_row_projection() -> None:
+    """Injected entries are bounded, while each list row stays compact."""
+    modal = HistoryRecall([HistoryEntry(text="x" * 10_000, ts=0)])
+    [entry] = modal._entries
+    assert len(entry.text) == INPUT_MAX_LENGTH
+    row = modal._row(entry, None)
+    assert len(row.plain) <= _ROW_TEXT_MAX_CHARS + 10
+    assert row.plain.endswith("…")
 
 
 async def test_modal_enter_accepts_highlighted_query() -> None:

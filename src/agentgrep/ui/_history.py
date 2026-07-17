@@ -28,6 +28,7 @@ import typing as t
 __all__ = [
     "DISK_CAP",
     "DISPLAY_LIMIT",
+    "QUERY_TEXT_MAX_CHARS",
     "HistoryEntry",
     "append_query",
     "history_disabled",
@@ -37,6 +38,9 @@ __all__ = [
 
 DISPLAY_LIMIT = 200
 """Maximum number of (deduplicated) rows the recall modal shows."""
+
+QUERY_TEXT_MAX_CHARS = 4096
+"""Maximum query characters admitted to persistence and recall."""
 
 DISK_CAP = 1000
 """Soft ceiling: a load that finds more raw lines rewrites to the last N."""
@@ -87,8 +91,9 @@ def append_query(
     it holds the user's typed queries) and all filesystem errors are swallowed
     so a read-only or unwritable home never breaks the session.
     """
-    stripped = text.strip()
-    if not stripped or stripped == dedup_last:
+    stripped = text.strip()[:QUERY_TEXT_MAX_CHARS]
+    bounded_last = dedup_last.strip()[:QUERY_TEXT_MAX_CHARS]
+    if not stripped or stripped == bounded_last:
         return False
     line = json.dumps(
         {"text": stripped, "ts": time.time() if now is None else now, "scope": scope},
@@ -160,6 +165,7 @@ def _parse_line(line: str) -> HistoryEntry | None:
     text = obj.get("text")
     if not isinstance(text, str) or not text:
         return None
+    text = text[:QUERY_TEXT_MAX_CHARS]
     raw_ts = obj.get("ts", 0)
     ts = 0.0
     if isinstance(raw_ts, (int, float)) and not isinstance(raw_ts, bool):

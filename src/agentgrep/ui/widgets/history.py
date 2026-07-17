@@ -29,6 +29,7 @@ from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from agentgrep.ui import theme as ui_theme
+from agentgrep.ui._history import DISPLAY_LIMIT
 from agentgrep.ui.format import format_relative_time
 from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
@@ -41,6 +42,9 @@ __all__ = ["HistoryRecall"]
 
 _AGE_WIDTH = 9
 """Fixed width of the relative-time prefix column so query text aligns."""
+
+_ROW_TEXT_MAX_CHARS = 160
+"""Maximum query characters projected into one list row."""
 
 
 class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual generic base needs a runtime subscript
@@ -94,7 +98,9 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
         id: str | None = None,  # noqa: A002 -- Textual ``id`` kwarg
     ) -> None:
         super().__init__(id=id)
-        self._entries = list(entries)
+        self._entries = [
+            entry._replace(text=entry.text[:INPUT_MAX_LENGTH]) for entry in entries[:DISPLAY_LIMIT]
+        ]
         self._seed = seed[:INPUT_MAX_LENGTH]
         self._matches: list[HistoryEntry] = []
         self._now = int(time.time())
@@ -167,11 +173,16 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
     def _row(self, entry: HistoryEntry, matcher: Matcher | None) -> Content:
         """Compose a list row: a dim relative-time prefix + the (highlighted) query."""
         prefix = f"{format_relative_time(entry.ts, self._now):<{_AGE_WIDTH}}"
-        content = Content(entry.text)
+        first_line, separator, _rest = entry.text.partition("\n")
+        truncated = bool(separator) or len(first_line) > _ROW_TEXT_MAX_CHARS
+        row_text = first_line[: _ROW_TEXT_MAX_CHARS - int(truncated)]
+        if truncated:
+            row_text += "…"
+        content = Content(row_text)
         if matcher is not None:
-            _score, offsets = matcher.fuzzy_search.match(matcher.query, entry.text)
+            _score, offsets = matcher.fuzzy_search.match(matcher.query, row_text)
             for offset in offsets:
-                if 0 <= offset < len(entry.text) and not entry.text[offset].isspace():
+                if 0 <= offset < len(row_text) and not row_text[offset].isspace():
                     content = content.stylize(self._match_style, offset, offset + 1)
         return Content.assemble((prefix, "dim"), content)
 

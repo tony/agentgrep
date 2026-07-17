@@ -20,6 +20,7 @@ from textual.timer import Timer
 from textual.widgets import Input
 
 from agentgrep.progress import FilterRequestedPayload, SearchRequestedPayload
+from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
 from agentgrep.ui.widgets.messages import (
     DetailFindRequested,
     FilterRequested,
@@ -28,7 +29,7 @@ from agentgrep.ui.widgets.messages import (
 
 __all__ = ["INPUT_MAX_LENGTH", "DetailFindInput", "FilterInput", "SearchInput"]
 
-INPUT_MAX_LENGTH = 4096
+INPUT_MAX_LENGTH = QUERY_TEXT_MAX_CHARS
 """Maximum text processed by an interactive input on the message pump."""
 
 _HIDDEN_EDITING_ALIASES = (
