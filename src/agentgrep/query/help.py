@@ -76,7 +76,7 @@ _OPERATORS: tuple[OperatorDoc, ...] = (
     OperatorDoc(
         syntax="field:*",
         description="Field is present and non-empty.",
-        example="model:*",
+        example="agent:*",
     ),
     OperatorDoc(
         syntax="field:glob*",

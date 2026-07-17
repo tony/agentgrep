@@ -1914,7 +1914,7 @@ async def test_mcp_validate_query_empty_returns_guidance() -> None:
 
 async def test_mcp_query_language_resource_lists_every_field() -> None:
     """The query-language resource lists each registry field and operators."""
-    from agentgrep.query import default_registry
+    from agentgrep.query import default_registry, parse_query, scope_widened_for_ast
 
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -1924,7 +1924,10 @@ async def test_mcp_query_language_resource_lists_every_field() -> None:
     payload = t.cast("dict[str, t.Any]", json.loads(extract_resource_text(contents)))
     field_names = {field["name"] for field in payload["fields"]}
     assert field_names == set(default_registry().known_names())
-    assert any(op["syntax"] == "field:*" for op in payload["operators"])
+    exists = next(op for op in payload["operators"] if op["syntax"] == "field:*")
+    exists_ast = parse_query(exists["example"], default_registry())
+    assert exists["example"] == "agent:*"
+    assert scope_widened_for_ast(exists_ast, "prompts") == "prompts"
     wildcard = next(op for op in payload["operators"] if op["syntax"] == "field:glob*")
     assert wildcard["example"] == "scope:all model:gpt*"
     assert payload["summary"]
