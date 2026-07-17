@@ -59,8 +59,25 @@ _UI_TREES = _ui_source_trees()
 # handlers, render/compose, the input key/value overrides, @on-decorated
 # handlers (any name), the callables handed to a scheduler/cross-thread/signal
 # site (see _SCHEDULED_PUMP_NAMES), plus anything explicitly tagged @pump_only.
-_PUMP_PREFIXES = ("on_", "action_", "watch_", "compute_", "_watch_")
-_PUMP_EXACT = {"render", "compose", "get_default_screen"}
+_PUMP_PREFIXES = (
+    "on_",
+    "_on_",
+    "action_",
+    "_action_",
+    "watch_",
+    "_watch_",
+    "validate_",
+    "compute_",
+    "get_content_",
+)
+_PUMP_EXACT = {
+    "render",
+    "render_line",
+    "__rich__",
+    "compose",
+    "get_default_screen",
+    "pre_layout",
+}
 
 # Calls that hand a callable to the pump thread; their target methods run there
 # even though their names match no prefix (NB-1/NB-8).
@@ -346,6 +363,7 @@ def test_pump_methods_have_no_blocking_calls() -> None:
 def test_input_widget_pump_entrypoints_have_runtime_guards() -> None:
     """Interactive input hooks keep the runtime pump-thread assertion."""
     input_classes = {
+        "_BoundedInput",
         "CompletionDropdown",
         "DetailFindInput",
         "FilterInput",
@@ -434,6 +452,16 @@ def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
     node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
     assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
     assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
+    for name in (
+        "_on_key",
+        "_action_submit",
+        "validate_value",
+        "render_line",
+        "__rich__",
+        "get_content_width",
+        "pre_layout",
+    ):
+        assert _is_pump_method(_Method("W", name, node, (), ())), name
     assert not _is_pump_method(_Method("W", "_helper", node, (), ()))  # plain helper
 
 
