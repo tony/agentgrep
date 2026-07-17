@@ -41,7 +41,7 @@ from agentgrep.ui.widgets import (
     SearchResultsList,
     SpinnerWidget,
 )
-from agentgrep.ui.widgets.history import HistoryRecall
+from agentgrep.ui.widgets.history import _ROW_TEXT_MAX_CHARS, HistoryRecall
 from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
 
@@ -269,8 +269,8 @@ async def test_history_filter_bounds_seed_text() -> None:
         )
         await pilot.pause()
         history_filter = app.screen.query_one("#history-filter", Input)
-        assert history_filter.max_length == INPUT_MAX_LENGTH
-        assert history_filter.value == oversized[:INPUT_MAX_LENGTH]
+        assert history_filter.max_length == _ROW_TEXT_MAX_CHARS
+        assert history_filter.value == oversized[:_ROW_TEXT_MAX_CHARS]
 
 
 def test_format_relative_time_units() -> None:

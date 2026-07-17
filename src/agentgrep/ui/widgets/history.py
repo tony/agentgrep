@@ -20,10 +20,11 @@ from __future__ import annotations
 import time
 import typing as t
 
+import rapidfuzz.distance
+import rapidfuzz.fuzz
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
-from textual.fuzzy import Matcher
 from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -45,6 +46,33 @@ _AGE_WIDTH = 9
 
 _ROW_TEXT_MAX_CHARS = 160
 """Maximum query characters projected into one list row."""
+
+
+def _row_text(entry: HistoryEntry) -> str:
+    """Project one history entry to the bounded single-line list surface."""
+    first_line, separator, _rest = entry.text.partition("\n")
+    truncated = bool(separator) or len(first_line) > _ROW_TEXT_MAX_CHARS
+    result = first_line[: _ROW_TEXT_MAX_CHARS - int(truncated)]
+    return f"{result}…" if truncated else result
+
+
+def _subsequence_offsets(query: str, text: str) -> tuple[int, ...]:
+    """Return linear case-insensitive subsequence offsets for decoration."""
+    if not query:
+        return ()
+    needle = query.casefold()
+    needle_index = 0
+    offsets: list[int] = []
+    for source_offset, char in enumerate(text):
+        for folded_char in char.casefold():
+            if folded_char != needle[needle_index]:
+                continue
+            if not offsets or offsets[-1] != source_offset:
+                offsets.append(source_offset)
+            needle_index += 1
+            if needle_index == len(needle):
+                return tuple(offsets)
+    return ()
 
 
 class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual generic base needs a runtime subscript
@@ -101,7 +129,7 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
         self._entries = [
             entry._replace(text=entry.text[:INPUT_MAX_LENGTH]) for entry in entries[:DISPLAY_LIMIT]
         ]
-        self._seed = seed[:INPUT_MAX_LENGTH]
+        self._seed = seed[:_ROW_TEXT_MAX_CHARS]
         self._matches: list[HistoryEntry] = []
         self._now = int(time.time())
         # Content.stylize takes a style string; reverse-video by default,
@@ -119,7 +147,7 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
             yield Input(
                 placeholder="Search history",
                 id="history-filter",
-                max_length=INPUT_MAX_LENGTH,
+                max_length=_ROW_TEXT_MAX_CHARS,
             )
             yield Static(
                 "↑/↓ to navigate · Enter to use · Esc to cancel",
@@ -150,40 +178,59 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
         """Rebuild the list for ``query`` (fuzzy, newest-first), repaint the preview."""
         option_list = self.query_one("#history-list", OptionList)
         option_list.clear_options()
-        matcher = Matcher(query) if query else None
-        if matcher is None:
-            self._matches = list(self._entries)
+        bounded_query = query[:_ROW_TEXT_MAX_CHARS]
+        if not bounded_query:
+            rows = [(entry, _row_text(entry), ()) for entry in self._entries]
         else:
-            scored = [
-                (score, entry)
-                for entry in self._entries
-                if (score := matcher.match(entry.text)) > 0
-            ]
+            folded_query = bounded_query.casefold()
+            scored: list[tuple[float, HistoryEntry, str, tuple[int, ...]]] = []
+            for entry in self._entries:
+                folded_entry = entry.text.casefold()
+                if rapidfuzz.distance.LCSseq.similarity(
+                    folded_query,
+                    folded_entry,
+                    score_cutoff=len(folded_query),
+                ) != len(folded_query):
+                    continue
+                projected = _row_text(entry)
+                score = rapidfuzz.fuzz.ratio(
+                    folded_query,
+                    folded_entry,
+                    processor=None,
+                )
+                offsets = _subsequence_offsets(bounded_query, projected)
+                scored.append((score, entry, projected, offsets))
             # Stable sort by score keeps newest-first among equal scores.
             scored.sort(key=lambda pair: pair[0], reverse=True)
-            self._matches = [entry for _score, entry in scored]
+            rows = [(entry, projected, offsets) for _score, entry, projected, offsets in scored]
+        self._matches = [entry for entry, _projected, _offsets in rows]
         if not self._matches:
             option_list.add_option(Option(self._empty_text(query), disabled=True))
             self.query_one("#history-preview", Static).update("")
             return
-        option_list.add_options(Option(self._row(entry, matcher)) for entry in self._matches)
+        option_list.add_options(
+            Option(self._row(entry, projected=projected, offsets=offsets))
+            for entry, projected, offsets in rows
+        )
         option_list.highlighted = 0
         self._update_preview(0)
 
-    def _row(self, entry: HistoryEntry, matcher: Matcher | None) -> Content:
+    def _row(
+        self,
+        entry: HistoryEntry,
+        query: str = "",
+        *,
+        projected: str | None = None,
+        offsets: cabc.Sequence[int] | None = None,
+    ) -> Content:
         """Compose a list row: a dim relative-time prefix + the (highlighted) query."""
         prefix = f"{format_relative_time(entry.ts, self._now):<{_AGE_WIDTH}}"
-        first_line, separator, _rest = entry.text.partition("\n")
-        truncated = bool(separator) or len(first_line) > _ROW_TEXT_MAX_CHARS
-        row_text = first_line[: _ROW_TEXT_MAX_CHARS - int(truncated)]
-        if truncated:
-            row_text += "…"
-        content = Content(row_text)
-        if matcher is not None:
-            _score, offsets = matcher.fuzzy_search.match(matcher.query, row_text)
-            for offset in offsets:
-                if 0 <= offset < len(row_text) and not row_text[offset].isspace():
-                    content = content.stylize(self._match_style, offset, offset + 1)
+        projected = _row_text(entry) if projected is None else projected
+        content = Content(projected)
+        match_offsets = _subsequence_offsets(query, projected) if offsets is None else offsets
+        for offset in match_offsets:
+            if not projected[offset].isspace():
+                content = content.stylize(self._match_style, offset, offset + 1)
         return Content.assemble((prefix, "dim"), content)
 
     def _empty_text(self, query: str) -> str:

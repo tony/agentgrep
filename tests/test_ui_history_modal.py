@@ -60,11 +60,9 @@ def test_preview_truncates_with_plus_n_lines() -> None:
 
 def test_row_includes_relative_time_and_text() -> None:
     """Each list row carries a relative-time prefix and the query text."""
-    from textual.fuzzy import Matcher
-
     modal = HistoryRecall([], seed="")
     entry = HistoryEntry(text="study the mcp server", ts=0)
-    row = modal._row(entry, Matcher("mcp"))
+    row = modal._row(entry, "mcp")
     assert "study the mcp server" in row.plain
     assert "ago" in row.plain  # the relative-time prefix
 
@@ -74,7 +72,7 @@ def test_modal_bounds_foreign_entries_and_row_projection() -> None:
     modal = HistoryRecall([HistoryEntry(text="x" * 10_000, ts=0)])
     [entry] = modal._entries
     assert len(entry.text) == INPUT_MAX_LENGTH
-    row = modal._row(entry, None)
+    row = modal._row(entry, "")
     assert len(row.plain) <= _ROW_TEXT_MAX_CHARS + 10
     assert row.plain.endswith("…")
 
@@ -100,6 +98,41 @@ async def test_modal_filter_narrows_then_accepts() -> None:
         await pilot.press("enter")
         await pilot.pause()
         assert app.result == "tmux pane capture"
+
+
+async def test_modal_filter_avoids_recursive_textual_matcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adversarial fuzzy text never reaches Textual's recursive matcher."""
+    from textual.fuzzy import Matcher
+
+    def fail_recursive_match(self: Matcher, candidate: str) -> float:
+        del self, candidate
+        raise AssertionError
+
+    monkeypatch.setattr(Matcher, "match", fail_recursive_match)
+    entries = [HistoryEntry(text="a_" * 30 + "b", ts=1)]
+    app = _HistoryHostApp(entries)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        history_filter = app.screen.query_one("#history-filter", Input)
+        history_filter.value = "aaaaab"
+        await pilot.pause()
+        assert app.screen.query_one("#history-list", OptionList).option_count == 1
+
+
+async def test_modal_filter_matches_beyond_row_projection() -> None:
+    """Compact list rows do not narrow the searchable recalled query."""
+    full_query = "x" * (_ROW_TEXT_MAX_CHARS + 20) + " needle"
+    app = _HistoryHostApp([HistoryEntry(text=full_query, ts=1)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        history_filter = app.screen.query_one("#history-filter", Input)
+        history_filter.value = "needle"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.result == full_query
 
 
 async def test_modal_escape_dismisses_none() -> None:
