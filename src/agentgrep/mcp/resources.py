@@ -92,6 +92,7 @@ def build_capabilities() -> CapabilitiesModel:
             "agentgrep://sources",
             "agentgrep://sources/{agent}",
             "agentgrep://catalog",
+            "agentgrep://query-language",
             "agentgrep://store-roles",
             "agentgrep://store-formats",
         ],

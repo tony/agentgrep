@@ -1588,6 +1588,16 @@ def test_mcp_instructions_carry_every_segment_header() -> None:
         assert marker in rendered, marker
 
 
+def test_mcp_instructions_describe_privacy_collapsed_paths() -> None:
+    """Handshake privacy guidance matches the serialized path contract."""
+    from agentgrep.mcp.instructions import _build_instructions
+
+    rendered = _build_instructions()
+    assert "all paths returned are absolute" not in rendered
+    assert "privacy-collapsed display paths" in rendered
+    assert "opaque result refs" in rendered
+
+
 @pytest.mark.parametrize(
     AgentProductNameCase._fields,
     AGENT_PRODUCT_NAME_CASES,
@@ -2062,20 +2072,27 @@ async def test_mcp_store_formats_resource() -> None:
     assert all(row["description"] for row in rows)
 
 
-async def test_mcp_capabilities_advertises_new_resources() -> None:
-    """The capabilities resource must list the three new resource URIs."""
+async def test_mcp_capabilities_match_registered_surface() -> None:
+    """Capabilities exactly match the live tool, resource, and prompt surface."""
     agentgrep_mcp = load_agentgrep_mcp_module()
 
     async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+        resources = t.cast("list[ResourceLike]", await client.list_resources())
+        templates = t.cast(
+            "list[ResourceTemplateLike]",
+            await client.list_resource_templates(),
+        )
+        prompts = t.cast("list[PromptLike]", await client.list_prompts())
         text = extract_resource_text(await client.read_resource("agentgrep://capabilities"))
 
     data = t.cast("dict[str, t.Any]", json.loads(text))
-    advertised = set(data["resources"])
-    assert {
-        "agentgrep://catalog",
-        "agentgrep://store-roles",
-        "agentgrep://store-formats",
-    } <= advertised
+    assert set(data["tools"]) == {tool.name for tool in tools}
+    assert set(data["resources"]) == {
+        *(str(resource.uri) for resource in resources),
+        *(template.uriTemplate for template in templates),
+    }
+    assert set(data["prompts"]) == {prompt.name for prompt in prompts}
 
 
 class McpTermTokenizationCase(t.NamedTuple):
