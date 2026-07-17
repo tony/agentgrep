@@ -49,6 +49,10 @@ _THEME_CASES: tuple[ThemeCase, ...] = (
     ThemeCase("light", theme.agentgrep_light),
 )
 _THEME_IDS = [case.test_id for case in _THEME_CASES]
+_EXPECTED_BRAND_SHINE: dict[str, tuple[str, ...]] = {
+    "dark": ("#9874ff", "#aa89ff", "#bca0ff", "#ceb8ff", "#dfd0ff"),
+    "light": ("#531fc8", "#682cb0", "#6c389f", "#704498", "#735190"),
+}
 
 
 def _relative_luminance(hex6: str) -> float:
@@ -153,6 +157,14 @@ def test_filter_match_foreground_is_readable(case: ThemeCase) -> None:
     variables = case.builder().variables
     ratio = _contrast_ratio(variables["ag-match-filter-fg"], variables["ag-match-filter-bg"])
     assert ratio >= 3.0, f"{case.test_id} filter-match contrast {ratio:.2f} below 3.0"
+
+
+@pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
+def test_brand_shine_uses_violet_to_lavender_palette(case: ThemeCase) -> None:
+    """The wordmark keeps the approved violet-to-lavender identity."""
+    variables = case.builder().variables
+    palette = tuple(variables[f"ag-brand-shine-{step}"] for step in range(1, 6))
+    assert palette == _EXPECTED_BRAND_SHINE[case.test_id]
 
 
 @pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)

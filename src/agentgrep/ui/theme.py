@@ -83,14 +83,14 @@ _TEXT_HUES: dict[str, tuple[str, str]] = {
     "ag-model": ("#9575cd", "#7e57c2"),
 }
 
-# Warm ramp for the welcome wordmark. The dark and light columns are calibrated
-# independently so every animated step clears WCAG AA against its page.
+# Violet-to-lavender ramp for the welcome wordmark. The dark and light columns
+# are calibrated independently so every animated step clears WCAG AA.
 _BRAND_SHINE_HUES: tuple[tuple[str, str], ...] = (
-    ("#ff7a1a", "#9a3e00"),
-    ("#ff922b", "#994900"),
-    ("#ffaa3b", "#925300"),
-    ("#ffc04d", "#875a00"),
-    ("#ffd166", "#765f00"),
+    ("#9874ff", "#531fc8"),
+    ("#aa89ff", "#682cb0"),
+    ("#bca0ff", "#6c389f"),
+    ("#ceb8ff", "#704498"),
+    ("#dfd0ff", "#735190"),
 )
 
 # Page colors are stylesheet-only. Dark mode deliberately inherits the
