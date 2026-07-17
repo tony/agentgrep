@@ -596,7 +596,7 @@ HudLayout.-compact-width #empty-lead {
 /* Transparent screen (by preference): the explorer shows through behind the
    dialog for full context. NOTE: a solid background here would mask the
    explorer — keep this transparent. */
-HistoryRecall {
+HistoryRecall, HistoryRecall:ansi {
     background: transparent;
 }
 #history-dialog {
