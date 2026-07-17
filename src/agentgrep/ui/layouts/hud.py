@@ -1999,7 +1999,7 @@ class HudLayout(LayoutScreen):
         if fmt == "json":
             formatted = body_text
             if _json_pretty_print_is_bounded(body_text):
-                with contextlib.suppress(json.JSONDecodeError, RecursionError, ValueError):
+                with contextlib.suppress(RecursionError, ValueError):
                     formatted = json.dumps(
                         json.loads(body_text),
                         indent=2,
