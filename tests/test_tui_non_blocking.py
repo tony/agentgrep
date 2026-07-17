@@ -517,6 +517,7 @@ def test_filter_completed_adopts_worker_prepared_model() -> None:
     """The pump callback performs no full-result projection work (NB-4/NB-5)."""
     methods = {(item.cls, item.name): item for item in _all_methods()}
     completed = methods[("HudLayout", "on_filter_completed")]
+    filter_loaded = methods[("HudLayout", "filter_loaded")]
     worker = methods[("HudLayout", "_run_filter_worker")]
 
     assert "pump_only" in completed.decorators
@@ -530,6 +531,20 @@ def test_filter_completed_adopts_worker_prepared_model() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id in {"id", "list", "set", "tuple"}
         for node in ast.walk(completed.node)
+    )
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "all_records"
+        for node in ast.walk(worker.node)
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "tuple"
+        and any(
+            isinstance(argument, ast.Attribute) and argument.attr == "all_records"
+            for argument in node.args
+        )
+        for node in ast.walk(filter_loaded.node)
     )
 
 

@@ -1203,12 +1203,14 @@ class HudLayout(LayoutScreen):
         self._filter_generation += 1
         generation = self._filter_generation
         records_generation = self._records_generation
+        records = tuple(self.all_records)
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.run_worker(
             functools.partial(
                 self._run_filter_worker,
                 text,
                 matcher,
+                records,
                 generation,
                 records_generation,
             ),
@@ -1261,18 +1263,18 @@ class HudLayout(LayoutScreen):
         self,
         text: str,
         matcher: t.Any,
+        records: tuple[SearchRecord, ...],
         generation: int,
         records_generation: int,
     ) -> None:
         """Compute the filtered list on a background thread; post a ``FilterCompleted``.
 
-        Copy the current model before matching. The pump advances the records
-        generation on every mutation, so a copy that raced a streamed batch is
-        discarded and retried in :meth:`on_filter_completed`.
+        Match a pump-owned immutable snapshot. The pump advances the records
+        generation on every mutation, so a snapshot superseded by a streamed
+        batch is discarded and retried in :meth:`on_filter_completed`.
         """
-        records = list(self.all_records)
         if matcher is None:
-            matching = records
+            matching = list(records)
         else:
             matching = [record for record in records if matcher.matches(record)]
         record_ids = {id(record) for record in matching}
