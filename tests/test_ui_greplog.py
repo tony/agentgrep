@@ -137,6 +137,32 @@ async def test_greplog_write_chunk_does_not_warm_haystack_on_pump(
         assert len(layout.query_one("#greplog").lines) == 1
 
 
+async def test_greplog_writes_each_chunk_in_one_batch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One bounded record chunk causes one public ``RichLog.write`` call."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = tuple(_record(tmp_path, index, f"row {index}") for index in range(3))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        log = layout.query_one("#greplog")
+        writes: list[object] = []
+        original = log.write
+
+        def spy(content: object, *args: object, **kwargs: object) -> object:
+            writes.append(content)
+            return original(content, *args, **kwargs)
+
+        monkeypatch.setattr(log, "write", spy)
+        layout._write_chunk(records)
+
+        assert len(writes) == 1
+        assert str(writes[0]).count("\n") == len(records) - 1
+        assert len(log.lines) == len(records)
+
+
 async def test_greplog_finished_sets_status_line(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

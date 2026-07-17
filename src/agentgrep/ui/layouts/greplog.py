@@ -331,8 +331,8 @@ class GrepLogLayout(LayoutScreen):
 
     def _write_chunk(self, chunk: cabc.Sequence[SearchRecord]) -> None:
         """Append one bounded slice of records to the log (pump-side)."""
-        for record in chunk:
-            self._log.write(_format_log_line(record))
+        if chunk:
+            self._log.write("\n".join(_format_log_line(record) for record in chunk))
 
     @_runtime.offload
     def _run_log_filter(
