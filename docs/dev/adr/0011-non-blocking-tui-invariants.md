@@ -137,11 +137,12 @@ denylist:
   handles, and native syscalls that skip `PySys_Audit`; the wall-clock watchdog
   is the cause-agnostic backstop for that residue.
 
-The two heaviest sites the static guard cannot reach — the filter re-apply
-(`on_filter_completed` → `set_records` → `_rebuild_options`, in a different class
-than the NB-4 check) and the find-in-detail re-highlight (`_present_detail_find`,
-a full-body `Syntax.highlight`) — are bounded by an id-keyed row-render cache and
-a cached syntax base rather than by the guard. The `textual-non-blocking-pump`
+The two heaviest sites the static guard cannot reach are bounded by design rather
+than by the guard. Filter projection runs in `_run_filter_worker`; the pump adopts
+its prepared model in `on_filter_completed`, and `SearchResultsList` renders only
+the requested `ScrollView` lines through bounded row and final-strip caches.
+Find-in-detail re-highlight (`_present_detail_find`, a full-body
+`Syntax.highlight`) reuses a cached syntax base. The `textual-non-blocking-pump`
 skill carries the full pump-entrypoint catalog and the per-change review rules.
 
 ## Final position
