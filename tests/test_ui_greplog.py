@@ -658,3 +658,16 @@ async def test_greplog_search_input_does_not_crash_on_keys(
         await pilot.press("ctrl+c")  # with text -> screen._handle_input_ctrl_c clears it
         await pilot.pause()
         assert layout._search_input.value == ""
+
+
+def test_greplog_summary_slices_before_line_splitting(tmp_path: pathlib.Path) -> None:
+    """Compact log projection never scans an entire oversized record body."""
+    from agentgrep.ui.layouts.greplog import _format_log_line
+
+    class GuardedText(str):
+        def splitlines(self, keepends: bool = False) -> list[str]:
+            del keepends
+            raise AssertionError
+
+    record = _record(tmp_path, 0, GuardedText("summary\n" + "x" * 1_000_000))
+    assert "summary" in _format_log_line(record)

@@ -477,7 +477,7 @@ def _format_log_line(record: SearchRecord) -> str:
     """Render one record as a compact single grep-log line."""
     agent = (record.agent or "").ljust(8)[:8]
     kind = (record.kind or "").ljust(8)[:8]
-    title = (record.title or record.text or "").splitlines()
+    title = (record.title or record.text or "")[:81].splitlines()
     summary = title[0][:80] if title else ""
     path = format_compact_path(record.path, max_width=50)
     return f"{agent}  {kind}  {summary}  {path}"
