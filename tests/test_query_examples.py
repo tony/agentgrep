@@ -161,9 +161,7 @@ def _extract_query(command: str) -> str | None:
 
 _QUERY_EXAMPLES = _harvest_query_examples()
 _MODEL_QUERY_EXAMPLES = tuple(
-    example
-    for example in _QUERY_EXAMPLES
-    if "model:" in (_extract_query(example.command) or "")
+    example for example in _QUERY_EXAMPLES if "model:" in (_extract_query(example.command) or "")
 )
 
 
