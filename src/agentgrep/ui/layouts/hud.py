@@ -10,6 +10,7 @@ the tests), so ``import agentgrep`` stays Textual-free (ADR 0010).
 from __future__ import annotations
 
 import collections
+import contextlib
 import dataclasses
 import functools
 import json
@@ -102,6 +103,34 @@ class _DetailMatchStyles(t.NamedTuple):
 
 
 _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
+_DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]]
+_DetailBody = tuple[object, str]
+
+
+def _json_pretty_print_is_bounded(text: str) -> bool:
+    """Return whether two-space indentation has a conservative output budget."""
+    depth = 0
+    max_depth = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            max_depth = max(max_depth, depth)
+        elif char in "]}":
+            depth = max(0, depth - 1)
+    estimated_max = len(text) * (2 * max_depth + 3)
+    return estimated_max <= DETAIL_BODY_MAX_CHARS
 
 
 class HudLayout(LayoutScreen):
@@ -228,9 +257,10 @@ class HudLayout(LayoutScreen):
         # highlighted match line. Bounded so a long browsing session
         # can't grow them without limit.
         self._detail_body_cache: collections.OrderedDict[
-            tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
-            tuple[object, str],
+            _DetailCacheKey,
+            tuple[SearchRecord, object, str],
         ] = collections.OrderedDict()
+        self._detail_build_generation = 0
         # Per-record detail scroll memory: id(record) -> scroll_y. A
         # revisited record restores its position; a record opened for the
         # first time opens at the top. Bounded like the body cache.
@@ -564,6 +594,7 @@ class HudLayout(LayoutScreen):
         self.control = SearchControl()
         self._filter_generation += 1
         self._records_generation += 1
+        self._detail_build_generation += 1
         clear_haystack_cache()
         self._detail_body_cache.clear()
         self._detail_scroll_positions.clear()
@@ -1497,6 +1528,8 @@ class HudLayout(LayoutScreen):
         # Showing a record means results exist — leave the bare-canvas state.
         self._set_empty_state(empty=False)
         self._current_detail_record = record
+        self._detail_build_generation += 1
+        detail_generation = self._detail_build_generation
         width = max(20, self._detail.size.width or 80)
         theme_vars = self.app.theme_variables
         agent_color = ui_theme.resolve(
@@ -1551,7 +1584,11 @@ class HudLayout(LayoutScreen):
             DETAIL_BODY_MAX_LINES,
             max_chars=DETAIL_BODY_MAX_CHARS,
         )
-        query_terms = list(self.search_query.terms)
+        query_terms = tuple(self.search_query.terms)
+        case_sensitive = self.search_query.case_sensitive
+        regex = self.search_query.regex
+        filter_terms = self._filter_terms
+        cache_key = self._detail_cache_key(query_terms, record)
         # Keep the header + body text so find-in-detail can re-highlight the
         # body (without rebuilding the header) and scroll to matches.
         self._detail_header_text = header
@@ -1561,15 +1598,33 @@ class HudLayout(LayoutScreen):
             search=self._match_style("search"),
             filter=self._match_style("filter"),
         )
-        if (
-            self._detail_body_is_cached(query_terms)
-            or len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
-        ):
+        cached = self._cached_detail_body(record, cache_key)
+        if cached is not None:
             self._present_detail(
                 record,
                 header,
-                self._build_detail_body(body_truncated, query_terms, match_styles),
+                cached,
                 query_terms,
+                generation=detail_generation,
+                cache_key=cache_key,
+            )
+            return
+        json_like = body_truncated.lstrip(" \t\r\n").startswith(("{", "["))
+        if len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD and not json_like:
+            self._present_detail(
+                record,
+                header,
+                self._build_detail_body(
+                    body_truncated,
+                    query_terms,
+                    match_styles,
+                    case_sensitive=case_sensitive,
+                    regex=regex,
+                    filter_terms=filter_terms,
+                ),
+                query_terms,
+                generation=detail_generation,
+                cache_key=cache_key,
             )
             return
         # Large, uncached body: show the header now and build the heavy
@@ -1586,6 +1641,11 @@ class HudLayout(LayoutScreen):
                 body_truncated,
                 query_terms,
                 match_styles,
+                detail_generation,
+                cache_key,
+                case_sensitive,
+                regex,
+                filter_terms,
             ),
             name="detail",
             group="detail",
@@ -1595,8 +1655,27 @@ class HudLayout(LayoutScreen):
 
     def _detail_body_is_cached(self, query_terms: cabc.Sequence[str]) -> bool:
         """Return whether the detail body for the current record is memoized."""
-        cache_key = self._detail_cache_key(query_terms)
-        return cache_key is not None and cache_key in self._detail_body_cache
+        record = self._current_detail_record
+        cache_key = self._detail_cache_key(query_terms, record)
+        return record is not None and self._cached_detail_body(record, cache_key) is not None
+
+    def _cached_detail_body(
+        self,
+        record: SearchRecord,
+        cache_key: _DetailCacheKey | None,
+    ) -> _DetailBody | None:
+        """Return a retained-record cache hit, rejecting a reused object id."""
+        if cache_key is None:
+            return None
+        cached = self._detail_body_cache.get(cache_key)
+        if cached is None:
+            return None
+        cached_record, renderable, source = cached
+        if cached_record is not record:
+            del self._detail_body_cache[cache_key]
+            return None
+        self._detail_body_cache.move_to_end(cache_key)
+        return renderable, source
 
     @_runtime.offload
     def _build_detail_in_thread(
@@ -1606,15 +1685,31 @@ class HudLayout(LayoutScreen):
         body_truncated: str,
         query_terms: cabc.Sequence[str],
         match_styles: _DetailMatchStyles,
+        generation: int,
+        cache_key: _DetailCacheKey | None,
+        case_sensitive: bool,
+        regex: bool,
+        filter_terms: tuple[str, ...],
     ) -> None:
         """Build the detail body off the UI thread, then apply it on the loop."""
-        body = self._build_detail_body(body_truncated, query_terms, match_styles)
-        self.app.call_from_thread(
-            self._present_detail,
-            record,
-            header,
-            body,
+        body = self._build_detail_body(
+            body_truncated,
             query_terms,
+            match_styles,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            filter_terms=filter_terms,
+        )
+        self.app.call_from_thread(
+            functools.partial(
+                self._present_detail,
+                record,
+                header,
+                body,
+                query_terms,
+                generation=generation,
+                cache_key=cache_key,
+            ),
         )
 
     @_runtime.pump_only
@@ -1622,8 +1717,11 @@ class HudLayout(LayoutScreen):
         self,
         record: SearchRecord,
         header: object,
-        body: tuple[object, str],
+        body: _DetailBody,
         query_terms: cabc.Sequence[str],
+        *,
+        generation: int | None = None,
+        cache_key: _DetailCacheKey | None = None,
     ) -> None:
         """Render ``body`` into the detail pane unless ``record`` is superseded.
 
@@ -1631,9 +1729,18 @@ class HudLayout(LayoutScreen):
         ``call_from_thread`` for off-thread builds); the identity check
         drops a stale build whose record the cursor has already left.
         """
-        if self._detail is None or self._current_detail_record is not record:
+        if (
+            self._detail is None
+            or self._current_detail_record is not record
+            or (generation is not None and generation != self._detail_build_generation)
+        ):
             return
         body_renderable, body_for_scroll = body
+        if cache_key is not None:
+            self._detail_body_cache[cache_key] = (record, body_renderable, body_for_scroll)
+            self._detail_body_cache.move_to_end(cache_key)
+            if len(self._detail_body_cache) > self._DETAIL_CACHE_MAX:
+                self._detail_body_cache.popitem(last=False)
         # The displayed text find searches/scrolls against — formatted JSON
         # for json bodies, the raw body otherwise.
         self._detail_find_source = body_for_scroll
@@ -1651,7 +1758,8 @@ class HudLayout(LayoutScreen):
     def _detail_cache_key(
         self,
         query_terms: cabc.Sequence[str],
-    ) -> tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]] | None:
+        record: SearchRecord | None = None,
+    ) -> _DetailCacheKey | None:
         """Compose the LRU key for the current record + query + filter.
 
         Returns ``None`` when there is no current record (e.g. detail
@@ -1659,7 +1767,7 @@ class HudLayout(LayoutScreen):
         to skip the cache entirely. The filter terms are part of the key
         so changing the filter re-renders the filter-term highlights.
         """
-        record = self._current_detail_record
+        record = record if record is not None else self._current_detail_record
         if record is None:
             return None
         return (
@@ -1710,7 +1818,13 @@ class HudLayout(LayoutScreen):
             return f"bold {foreground} on {background}"
         return "bold black on cyan"
 
-    def _apply_filter_highlight(self, text: t.Any, style: str | None = None) -> None:
+    def _apply_filter_highlight(
+        self,
+        text: t.Any,
+        style: str | None = None,
+        *,
+        terms: cabc.Sequence[str] | None = None,
+    ) -> None:
         """Overlay the filter's literal terms onto ``text`` in a distinct color.
 
         Applied after the search-term highlight so filter matches stand out
@@ -1718,7 +1832,7 @@ class HudLayout(LayoutScreen):
         too; field predicates contribute no literal terms.
         """
         style = style if style is not None else self._match_style("filter")
-        for term in self._filter_terms:
+        for term in self._filter_terms if terms is None else terms:
             if not term:
                 continue
             try:
@@ -1732,38 +1846,45 @@ class HudLayout(LayoutScreen):
         body_text: str,
         query_terms: cabc.Sequence[str],
         match_styles: _DetailMatchStyles | None = None,
-    ) -> tuple[object, str]:
+        *,
+        case_sensitive: bool | None = None,
+        regex: bool | None = None,
+        filter_terms: cabc.Sequence[str] | None = None,
+    ) -> _DetailBody:
         """Return ``(renderable, body_text_for_match_search)`` for ``body_text``.
 
         The second tuple element is whatever text the caller's
         ``find_first_match_line`` should scan. For JSON we pretty-print
         and return the formatted text so the line index lines up with
-        what the user actually sees rendered. Result is memoized per
-        ``(record, query)`` so scrolling back to a previously-viewed
-        record never re-parses the JSON body.
+        what the user actually sees rendered. This computation is detached:
+        the pump validates its generation and owns the shared LRU.
         """
-        cache_key = self._detail_cache_key(query_terms)
-        if cache_key is not None:
-            cached = self._detail_body_cache.get(cache_key)
-            if cached is not None:
-                self._detail_body_cache.move_to_end(cache_key)
-                return cached
+        effective_case_sensitive = (
+            self.search_query.case_sensitive if case_sensitive is None else case_sensitive
+        )
+        effective_regex = self.search_query.regex if regex is None else regex
+        safe_query_terms = () if effective_regex else query_terms
         fmt = detect_content_format(body_text)
-        result: tuple[object, str]
+        result: _DetailBody
         if fmt == "json":
-            try:
-                formatted = json.dumps(
-                    json.loads(body_text),
-                    indent=2,
-                    ensure_ascii=False,
-                )
-            except json.JSONDecodeError, ValueError:
-                formatted = body_text
+            formatted = body_text
+            if _json_pretty_print_is_bounded(body_text):
+                with contextlib.suppress(json.JSONDecodeError, RecursionError, ValueError):
+                    formatted = json.dumps(
+                        json.loads(body_text),
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+            formatted = truncate_lines(
+                formatted,
+                DETAIL_BODY_MAX_LINES,
+                max_chars=DETAIL_BODY_MAX_CHARS,
+            )
             match_line = find_first_match_line(
                 formatted,
-                query_terms,
-                case_sensitive=self.search_query.case_sensitive,
-                regex=self.search_query.regex,
+                safe_query_terms,
+                case_sensitive=effective_case_sensitive,
+                regex=False,
             )
             highlight_lines = {match_line + 1} if match_line is not None else None
             syntax = _RichSyntax(
@@ -1782,21 +1903,17 @@ class HudLayout(LayoutScreen):
         else:
             highlighted = highlight_matches(
                 body_text,
-                query_terms,
-                case_sensitive=self.search_query.case_sensitive,
-                regex=self.search_query.regex,
+                safe_query_terms,
+                case_sensitive=effective_case_sensitive,
+                regex=False,
                 style=match_styles.search if match_styles else self._match_style("search"),
             )
             self._apply_filter_highlight(
                 highlighted,
                 match_styles.filter if match_styles else None,
+                terms=filter_terms,
             )
             result = (highlighted, body_text)
-        if cache_key is not None:
-            self._detail_body_cache[cache_key] = result
-            self._detail_body_cache.move_to_end(cache_key)
-            if len(self._detail_body_cache) > self._DETAIL_CACHE_MAX:
-                self._detail_body_cache.popitem(last=False)
         return result
 
     def _restore_detail_scroll(self, record: SearchRecord) -> None:
@@ -1952,6 +2069,7 @@ class HudLayout(LayoutScreen):
         cached = self._detail_find_base
         if cached is not None and self._detail_find_base_key == key:
             return cached
+        query_terms = () if self.search_query.regex else self.search_query.terms
         if detect_content_format(source) == "json":
             text = _RichSyntax(source, "json", theme="ansi_dark", word_wrap=True).highlight(source)
             text.no_wrap = False
@@ -1959,9 +2077,9 @@ class HudLayout(LayoutScreen):
         else:
             text = highlight_matches(
                 source,
-                list(self.search_query.terms),
+                query_terms,
                 case_sensitive=self.search_query.case_sensitive,
-                regex=self.search_query.regex,
+                regex=False,
                 style=self._match_style("search"),
             )
         self._apply_filter_highlight(text)
@@ -1973,16 +2091,19 @@ class HudLayout(LayoutScreen):
         """Overlay the active search-query terms onto ``text`` (for the JSON path).
 
         The plain-text path bakes these via ``highlight_matches``; on the
-        Syntax-highlighted JSON ``Text`` they are layered with the same
-        regex/style so search terms read consistently in both paths.
+        Syntax-highlighted JSON ``Text`` literal terms are layered with the
+        same style. Regex terms are omitted because presentation must not
+        re-run an untrusted pattern on the message pump.
         """
+        if self.search_query.regex:
+            return
         style = self._match_style("search")
         for term in self.search_query.terms:
             if not term:
                 continue
             try:
                 flags = 0 if self.search_query.case_sensitive else re.IGNORECASE
-                pattern = term if self.search_query.regex else re.escape(term)
+                pattern = re.escape(term)
                 compiled = re.compile(pattern, flags)
             except re.error:
                 continue

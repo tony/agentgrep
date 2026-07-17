@@ -582,9 +582,10 @@ def highlight_matches(
 ) -> _RichText:
     """Build a Rich ``Text`` with every occurrence of any term styled.
 
-    Stacks one ``highlight_regex`` pass per term so the per-pass complexity
-    is linear; total cost is O(N * T) for text length N and T terms.
-    Malformed regex patterns are silently skipped (mirrors
+    Stacks one ``highlight_regex`` pass per term. Literal matching is bounded
+    by the text and term counts; caller-supplied regex patterns retain Python
+    ``re`` complexity and must not be evaluated on a UI message pump.
+    Malformed patterns are silently skipped (mirrors
     :func:`find_first_match_line`).
     """
     rich = _RichText(text, no_wrap=False)
@@ -650,7 +651,7 @@ def detect_content_format(text: str) -> ContentFormat:
     if stripped.startswith(("{", "[")):
         try:
             json.loads(text)
-        except ValueError:
+        except RecursionError, ValueError:
             pass
         else:
             return "json"

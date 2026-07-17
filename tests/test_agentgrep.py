@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import importlib
 import inspect
@@ -3907,6 +3908,134 @@ async def test_present_detail_discards_superseded_record(
         assert len(updates) == 1  # current record is rendered
 
 
+async def test_present_detail_rejects_stale_same_record_generation(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older same-record worker cannot overwrite a newer detail build."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        record = _ui_record(agentgrep, tmp_path / "same.jsonl", "body", "same")
+        app.screen._current_detail_record = record
+        app.screen._detail_build_generation = 2
+        cache_key = app.screen._detail_cache_key((), record)
+        updates: list[object] = []
+        monkeypatch.setattr(app.screen._detail, "update", updates.append)
+
+        app.screen._present_detail(
+            record,
+            "OLD",
+            (object(), "old body"),
+            (),
+            generation=1,
+            cache_key=cache_key,
+        )
+        assert updates == []
+        assert cache_key not in app.screen._detail_body_cache
+
+        app.screen._present_detail(
+            record,
+            "NEW",
+            (object(), "new body"),
+            (),
+            generation=2,
+            cache_key=cache_key,
+        )
+        assert len(updates) == 1
+        assert app.screen._detail_body_cache[cache_key][0] is record
+
+
+async def test_detail_body_builder_does_not_mutate_shared_cache(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detached worker computation leaves cache ownership on the pump."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen._current_detail_record = _ui_record(
+            agentgrep,
+            tmp_path / "a.jsonl",
+            "body",
+            "a",
+        )
+        app.screen._build_detail_body("body", ())
+        assert app.screen._detail_body_cache == {}
+
+
+async def test_expanding_json_detail_is_offloaded_and_bounded(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compact deeply nested JSON never expands on the pump or past the cap."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    nested = "[" * 3000 + "0" + "]" * 3000
+    record = _ui_record(agentgrep, tmp_path / "nested.jsonl", nested, "nested")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        scheduled: list[object] = []
+
+        def capture_worker(worker: object, **_: object) -> None:
+            scheduled.append(worker)
+
+        monkeypatch.setattr(app.screen, "run_worker", capture_worker)
+        app.screen.show_detail(record)
+        assert len(scheduled) == 1
+
+        _renderable, formatted = await asyncio.to_thread(
+            app.screen._build_detail_body,
+            app.screen._detail_body_text,
+            (),
+        )
+        assert len(formatted) <= agentgrep.DETAIL_BODY_MAX_CHARS + 32
+
+
+async def test_regex_detail_omits_untrusted_pattern_highlighting(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regex search semantics never run Python pattern matching in detail chrome."""
+    from agentgrep.ui.layouts import hud as hud_module
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    pattern = "(a+)+$"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen.search_query = dataclasses.replace(
+            app.screen.search_query,
+            terms=(pattern,),
+            regex=True,
+        )
+        calls: list[tuple[str, ...]] = []
+        real_highlight = hud_module.highlight_matches
+
+        def guarded_highlight(
+            text: str,
+            terms: cabc.Sequence[str],
+            *,
+            case_sensitive: bool = False,
+            regex: bool = False,
+            style: str = "bold yellow",
+        ) -> object:
+            calls.append(tuple(terms))
+            assert not terms
+            return real_highlight(
+                text,
+                terms,
+                case_sensitive=case_sensitive,
+                regex=regex,
+                style=style,
+            )
+
+        monkeypatch.setattr(hud_module, "highlight_matches", guarded_highlight)
+        app.screen._build_detail_body("a" * 23 + "!", (pattern,))
+        assert calls == [()]
+
+
 async def test_dropdown_dismissal_keys_close_without_accepting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7651,6 +7780,13 @@ def test_detect_content_format_falls_back_to_text_for_malformed_json() -> None:
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     assert agentgrep.detect_content_format('{"missing": ') == "text"
     assert agentgrep.detect_content_format("{not even json}") == "text"
+
+
+def test_detect_content_format_falls_back_for_excessive_json_depth() -> None:
+    """A deeply nested JSON-looking body cannot overflow format detection."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    nested = "[" * 50000 + "0" + "]" * 1000
+    assert agentgrep.detect_content_format(nested) == "text"
 
 
 def test_detect_content_format_recognizes_markdown() -> None:
