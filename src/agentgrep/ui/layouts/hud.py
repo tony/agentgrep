@@ -1532,10 +1532,25 @@ class HudLayout(LayoutScreen):
                 ):
                     self.show_detail(record)
             else:
+                find_had_focus = self.app.focused is self._detail_find_input
+                if self._detail_find_active:
+                    self._remember_detail_find()
+                self._detail_build_generation += 1
+                self._reset_detail_find_state()
+                self._current_detail_record = None
                 self._presented_detail_cache_key = None
+                self._detail_body_text = ""
+                self._detail_header_text = None
+                self._detail_find_source = ""
+                self._detail_find_json_syntax = False
+                self._detail_find_base = None
+                self._detail_find_base_key = None
                 self._detail.update(
                     "No results." if self._search_done else "No matches yet.",
                 )
+                self._refresh_detail_statusline()
+                if find_had_focus and self._filter_input is not None:
+                    self._filter_input.focus()
         # Empty results collapse the stacked detail; a populated list
         # keeps whatever open state the user already chose.
         self._apply_responsive_layout()

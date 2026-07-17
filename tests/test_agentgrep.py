@@ -5225,6 +5225,41 @@ async def test_filter_completion_refreshes_same_record_detail_highlights(
         )
 
 
+async def test_empty_filter_completion_clears_detail_find_selection(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty filter cannot retain or repaint the excluded detail record."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    record = _ui_record(agentgrep, tmp_path / "excluded.jsonl", "needle body", "excluded")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _open_detail_with_find(app, record, pilot)
+        app.screen._detail_find_input.load_query("needle")
+        app.screen._run_detail_find("needle", reset_cursor=True)
+        app.screen._search_done = True
+        app.screen._filter_input.value = "absent"
+        await pilot.pause()
+
+        app.screen.on_filter_completed(
+            _filter_completed(app, [], text="absent"),
+        )
+        await pilot.pause()
+
+        assert str(app.screen._detail.render()) == "No results."
+        assert app.screen._current_detail_record is None
+        assert app.screen._detail_find_active is False
+        assert app.screen._detail_find_input.display is False
+        assert app.screen._detail_find_matches == []
+        assert str(app.screen._detail_statusline.render()) == ""
+        assert getattr(app.focused, "id", None) == "filter"
+
+        app.screen._detail_find_step(1)
+
+        assert str(app.screen._detail.render()) == "No results."
+
+
 @pytest.mark.parametrize(
     "case",
     DETAIL_FIND_FILTER_REFRESH_CASES,
