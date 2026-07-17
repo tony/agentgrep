@@ -154,10 +154,7 @@ async def list_stores(
         CatalogAgentSelector,
         Field(
             default="all",
-            description=(
-                "Filter to one catalog agent, including catalog-only agents, "
-                "or 'all'."
-            ),
+            description=("Filter to one catalog agent, including catalog-only agents, or 'all'."),
             examples=["all", "claude", "windsurf"],
         ),
     ] = "all",

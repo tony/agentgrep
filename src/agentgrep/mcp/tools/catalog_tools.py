@@ -211,8 +211,7 @@ def register(mcp: FastMCP) -> None:
             Field(
                 default="all",
                 description=(
-                    "Filter to one catalog agent, including catalog-only agents, "
-                    "or 'all'."
+                    "Filter to one catalog agent, including catalog-only agents, or 'all'."
                 ),
             ),
         ] = "all",
