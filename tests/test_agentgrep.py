@@ -4006,6 +4006,35 @@ def test_streaming_ui_app_passes_runtime_to_search_worker(
     assert runtimes[0].source_scan_cache is not None
 
 
+def test_streaming_ui_search_worker_emits_failure(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker exception remains a typed, generation-gated terminal event."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    hud = app.get_default_screen()
+    error = RuntimeError("search failed")
+
+    def fail_search(*_args: object, **_kwargs: object) -> t.NoReturn:
+        raise error
+
+    monkeypatch.setattr(hud._invoker, "run", fail_search)
+    events: list[object] = []
+    hud._search_emit = events.append
+
+    hud._run_search()
+
+    assert events == [
+        agentgrep.StreamingSearchFinished(
+            outcome="error",
+            total=0,
+            elapsed=0.0,
+            error=error,
+        ),
+    ]
+
+
 async def test_search_input_posts_search_requested_only_on_enter(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

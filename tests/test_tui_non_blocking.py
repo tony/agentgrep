@@ -513,6 +513,25 @@ def test_apply_records_batch_uses_bounded_stream_apply() -> None:
     assert "stream_apply" in calls
 
 
+def test_search_worker_failures_use_gated_emitters() -> None:
+    """Worker exceptions travel through the same NB-10 generation gate."""
+    methods = {(item.cls, item.name): item for item in _all_methods()}
+    for class_name in ("HudLayout", "GrepLogLayout"):
+        worker = methods[(class_name, "_run_search")]
+        calls = {
+            node.func.attr
+            for node in ast.walk(worker.node)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        assert "call_from_thread" not in calls, class_name
+        assert any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "StreamingSearchFinished"
+            for node in ast.walk(worker.node)
+        ), class_name
+
+
 def test_filter_completed_adopts_worker_prepared_model() -> None:
     """The pump callback performs no full-result projection work (NB-4/NB-5)."""
     methods = {(item.cls, item.name): item for item in _all_methods()}

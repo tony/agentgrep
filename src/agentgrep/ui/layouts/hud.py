@@ -774,12 +774,13 @@ class HudLayout(LayoutScreen):
         try:
             self._invoker.run(self.search_query, control=self.control, emit=emit)
         except BaseException as exc:
-            self.app.call_from_thread(
-                self._apply_finished,
-                "error",
-                len(self.all_records),
-                0.0,
-                str(exc),
+            emit(
+                StreamingSearchFinished(
+                    outcome="error",
+                    total=0,
+                    elapsed=0.0,
+                    error=exc,
+                ),
             )
 
     @_runtime.pump_only

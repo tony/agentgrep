@@ -254,7 +254,14 @@ class GrepLogLayout(LayoutScreen):
         try:
             self.context.invoker.run(self.search_query, control=self.control, emit=emit)
         except BaseException as exc:
-            self.app.call_from_thread(self._apply_finished, "error", 0, 0.0, str(exc))
+            emit(
+                StreamingSearchFinished(
+                    outcome="error",
+                    total=0,
+                    elapsed=0.0,
+                    error=exc,
+                ),
+            )
 
     @_runtime.pump_only
     async def _apply_event(self, generation: int, event: object) -> None:
