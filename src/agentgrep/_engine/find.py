@@ -92,70 +92,79 @@ def iter_find_events(
     # agentgrep`` path (pinned by tests/test_import_time.py); the facade tail
     # re-exports this module, so a module-level import would load it.
     from agentgrep import events as _events
+    from agentgrep._engine.telemetry import engine_operation
 
     active_backends = select_backends() if backends is None else backends
     start_time = time.monotonic()
 
-    sources = discover_sources(
-        home,
-        agents,
-        active_backends,
-        version_detail="none",
-        store_roles=find_store_roles_for_type_filter(type_filter),
-    )
-    yield _events.FindStarted(source_count=len(sources))
-
-    query = pattern.casefold() if pattern is not None else None
-    source_predicate = compiled.source_predicate if compiled is not None else None
-    emitted = 0
-
-    for source in sources:
-        # Compiled-query source pruning happens before the legacy
-        # substring filter so a field predicate like `agent:codex`
-        # short-circuits without even building the haystack.
-        if source_predicate is not None and not source_predicate(source):
-            continue
-        record = FindRecord(
-            kind="find",
-            agent=source.agent,
-            store=source.store,
-            adapter_id=source.adapter_id,
-            path=source.path,
-            path_kind=source.path_kind,
-            metadata={"source_kind": source.source_kind},
+    with engine_operation(
+        "find",
+        agent_count=len(agents),
+        limit=limit,
+        pattern_present=pattern is not None,
+    ) as operation:
+        sources = discover_sources(
+            home,
+            agents,
+            active_backends,
+            version_detail="none",
+            store_roles=find_store_roles_for_type_filter(type_filter),
         )
-        if query is not None:
-            haystack = " ".join(
-                (
-                    record.agent,
-                    record.store,
-                    record.adapter_id,
-                    str(record.path),
-                    record.path_kind,
-                ),
-            ).casefold()
-            if query not in haystack:
+        operation.sources_planned(len(sources), len(sources))
+        yield _events.FindStarted(source_count=len(sources))
+
+        query = pattern.casefold() if pattern is not None else None
+        source_predicate = compiled.source_predicate if compiled is not None else None
+        emitted = 0
+
+        for source in sources:
+            # Compiled-query source pruning happens before the legacy
+            # substring filter so a field predicate like `agent:codex`
+            # short-circuits without even building the haystack.
+            if source_predicate is not None and not source_predicate(source):
                 continue
-        yield _events.FindRecordEmitted(record=record)
-        emitted += 1
-        if limit is not None and emitted >= limit:
-            break
+            record = FindRecord(
+                kind="find",
+                agent=source.agent,
+                store=source.store,
+                adapter_id=source.adapter_id,
+                path=source.path,
+                path_kind=source.path_kind,
+                metadata={"source_kind": source.source_kind},
+            )
+            if query is not None:
+                haystack = " ".join(
+                    (
+                        record.agent,
+                        record.store,
+                        record.adapter_id,
+                        str(record.path),
+                        record.path_kind,
+                    ),
+                ).casefold()
+                if query not in haystack:
+                    continue
+            yield _events.FindRecordEmitted(record=record)
+            emitted += 1
+            if limit is not None and emitted >= limit:
+                break
 
-    from agentgrep import _telemetry
+        from agentgrep import _telemetry
 
-    _telemetry.record_metric(
-        "agentgrep.find.sources",
-        len(sources),
-        agentgrep_surface="engine",
-        agentgrep_agent_count=len(agents),
-    )
-    _telemetry.record_metric(
-        "agentgrep.find.results",
-        emitted,
-        agentgrep_surface="engine",
-        agentgrep_agent_count=len(agents),
-    )
-    yield _events.FindFinished(
-        match_count=emitted,
-        elapsed_seconds=time.monotonic() - start_time,
-    )
+        _telemetry.record_metric(
+            "agentgrep.find.sources",
+            len(sources),
+            agentgrep_surface="engine",
+            agentgrep_agent_count=len(agents),
+        )
+        _telemetry.record_metric(
+            "agentgrep.find.results",
+            emitted,
+            agentgrep_surface="engine",
+            agentgrep_agent_count=len(agents),
+        )
+        operation.complete(emitted)
+        yield _events.FindFinished(
+            match_count=emitted,
+            elapsed_seconds=time.monotonic() - start_time,
+        )
