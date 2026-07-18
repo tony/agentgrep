@@ -11,6 +11,7 @@ from pydantic import Field
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
+    AgentSelector,
     agentgrep,
     normalize_agent_selection,
 )
@@ -114,7 +115,7 @@ def register(mcp: FastMCP) -> None:
     )
     async def insights_skills_tool(
         agent: t.Annotated[
-            str,
+            AgentSelector,
             Field(description="Agent to analyze, or 'all'."),
         ] = "all",
         limit: t.Annotated[
@@ -130,9 +131,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="Only analyze records on/before this ISO date."),
         ] = None,
     ) -> InsightsSkillsResponse:
-        request = InsightsSkillsRequest(
-            agent=t.cast("t.Any", agent), limit=limit, since=since, until=until
-        )
+        request = InsightsSkillsRequest(agent=agent, limit=limit, since=since, until=until)
         return await asyncio.to_thread(_insights_skills_sync, request)
 
     _ = insights_skills_tool

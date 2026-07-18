@@ -465,7 +465,7 @@ t.cast(t.Any, recent_sessions).__fastmcp__ = types.SimpleNamespace(
 
 async def insights_skills(
     agent: t.Annotated[
-        str,
+        AgentSelector,
         Field(description="Agent to analyze, or 'all'."),
     ] = "all",
     limit: t.Annotated[
