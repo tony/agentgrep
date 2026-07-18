@@ -207,7 +207,13 @@ def iter_protobuf_text_fields(
 
 def open_readonly_sqlite(path: pathlib.Path) -> sqlite3.Connection:
     """Open a SQLite database with a read-only URI."""
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    from agentgrep import _telemetry
+
+    return sqlite3.connect(
+        f"file:{path}?mode=ro",
+        uri=True,
+        factory=_telemetry.sqlite_connection_factory(),
+    )
 
 
 def sqlite_table_names(connection: sqlite3.Connection) -> set[str]:
