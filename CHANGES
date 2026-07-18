@@ -51,6 +51,9 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 - Documentation-example tests no longer copy the docs `node_modules` tree into
   their sandbox, keeping local doc runs fast on a dirty working tree. (#133)
+- The per-agent store parsers now live in an `adapters/` package, one module
+  per agent, with a data-driven dispatch registry; a module-size guard caps
+  new modules so the split does not regrow. (#134)
 
 ## agentgrep 0.1.0a37 (2026-07-18)
 
