@@ -27,6 +27,7 @@ from agentgrep.ui import _runtime
 from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
 from agentgrep.ui.widgets.messages import (
     DetailFindRequested,
+    EmptyInputQuitRequested,
     FilterRequested,
     SearchRequested,
 )
@@ -226,6 +227,12 @@ class FilterInput(_BoundedInput):
         _disarm_confirm_exit(self)
         if dropdown_open and key == "enter":
             dropdown.display = False
+        if key == "q" and not value:
+            _consume_key(event)
+            self.post_message(
+                EmptyInputQuitRequested(input_id=str(self.id or "filter"), key=key),
+            )
+            return
         if key == "down":
             if dropdown_open and dropdown.option_count:
                 # An open completion picker captures Down: jump into it.
@@ -467,6 +474,12 @@ class SearchInput(_BoundedInput):
                 return
             # Keyword completion: close the picker; the normal submit proceeds.
             dropdown.display = False
+        if key == "q" and not value:
+            _consume_key(event)
+            self.post_message(
+                EmptyInputQuitRequested(input_id=str(self.id or "search"), key=key),
+            )
+            return
         if key == "down":
             if dropdown_open and dropdown.option_count:
                 # An open enum picker captures Down: jump into it.

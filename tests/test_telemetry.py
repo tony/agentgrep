@@ -539,13 +539,14 @@ def test_tui_session_emits_structured_trace_linked_log(
     assert "agentic signal" not in str(session_log.attributes)
 
 
-def test_tui_empty_input_quit_emits_trace_linked_log(
+async def test_tui_empty_input_quit_emits_trace_linked_log(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Focused-input quit requests should be visible under the TUI trace."""
     import agentgrep
     import agentgrep._telemetry as telemetry
+    from agentgrep.ui.widgets.messages import EmptyInputQuitRequested
 
     home = tmp_path / "home"
     home.mkdir()
@@ -560,14 +561,18 @@ def test_tui_empty_input_quit_emits_trace_linked_log(
     )
     app = agentgrep.build_streaming_ui_app(home, query, control=agentgrep.SearchControl())
     exits: list[bool] = []
-    monkeypatch.setattr(app, "exit", lambda: exits.append(True))
-
     backend = telemetry.InMemoryTelemetryBackend()
     telemetry.configure_backend(backend)
     remove_handler = telemetry.install_logging_exporter(backend)
     try:
-        with telemetry.root_span("agentgrep.tui.session", agentgrep_surface="tui"):
-            t.cast("t.Any", app)._quit_from_empty_input(input_id="search", key="q")
+        async with t.cast("t.Any", app).run_test() as pilot:
+            await pilot.pause()
+            monkeypatch.setattr(app, "exit", lambda: exits.append(True))
+            with telemetry.root_span("agentgrep.tui.session", agentgrep_surface="tui"):
+                active_app = t.cast("t.Any", app)
+                active_app.screen.on_empty_input_quit_requested(
+                    EmptyInputQuitRequested(input_id="search", key="q"),
+                )
     finally:
         remove_handler()
         telemetry.configure_backend(None)
