@@ -8,8 +8,16 @@ pytest_plugins = ("pytester",)
 
 # Nested pytester runs configure pytest-asyncio explicitly; their isolated
 # rootdir never reads this repository's pyproject.toml, so an unset
-# asyncio_default_fixture_loop_scope would warn on every inner run.
-_NESTED_RUN_ARGS = ("-q", "-o", "asyncio_default_fixture_loop_scope=function")
+# asyncio_default_fixture_loop_scope would warn on every inner run. The
+# documentation plugin ships no pytest11 entry point, so nested runs load it
+# explicitly the same way the repository's addopts do.
+_NESTED_RUN_ARGS = (
+    "-q",
+    "-o",
+    "asyncio_default_fixture_loop_scope=function",
+    "-p",
+    "pytest_documentation.plugin",
+)
 
 
 def test_suite_collects_markdown_examples_as_pytest_items(pytester: pytest.Pytester) -> None:
@@ -145,7 +153,7 @@ def test_suite_collects_python_page_examples_as_single_pytest_item(
     result.assert_outcomes(passed=1)
 
 
-def test_plugin_entrypoint_is_dormant_without_configured_suite(pytester: pytest.Pytester) -> None:
+def test_plugin_is_dormant_without_configured_suite(pytester: pytest.Pytester) -> None:
     """Loading the plugin alone does not start collecting every documentation file."""
     pytester.makeini(
         """

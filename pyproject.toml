@@ -23,14 +23,6 @@ classifiers = [
 
 keywords = ["ai", "codex", "claude", "cursor", "gemini", "antigravity", "grok", "pi", "opencode", "vscode", "copilot", "mcp", "search", "agent-history"]
 readme = "README.md"
-packages = [
-  { include = "*", from = "src" },
-]
-include = [
-  { path = "tests", format = "sdist" },
-  { path = "docs", format = "sdist" },
-  { path = "conftest.py", format = "sdist" },
-]
 
 dependencies = [
   "pydantic>=2.11.3",
@@ -52,9 +44,6 @@ Repository = "https://github.com/tony/agentgrep"
 [project.scripts]
 agentgrep = "agentgrep.cli:main"
 agentgrep-mcp = "agentgrep.mcp:main"
-
-[project.entry-points.pytest11]
-pytest-documentation = "pytest_documentation.plugin"
 
 [dependency-groups]
 dev = [
@@ -116,6 +105,14 @@ docs = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# The wheel deliberately ships only the agentgrep package.
+# pytest_documentation is this repository's docs-suite harness: it is loaded
+# explicitly via `-p` in addopts and must never auto-load in consumer
+# environments (a pytest11 entry point once shipped without the package and
+# broke every consumer pytest run at startup).
+packages = ["src/agentgrep"]
 
 [tool.uv.exclude-newer-package]
 # git-pull packages release in lockstep with their workspaces, so a
@@ -256,6 +253,10 @@ addopts = [
   "--no-header",
   "--showlocals",
   "--doctest-modules",
+  # The docs-suite plugin is repo-local (not shipped in the wheel, no pytest11
+  # entry point), so this run loads it explicitly.
+  "-p",
+  "pytest_documentation.plugin",
 ]
 doctest_optionflags = [
   "ELLIPSIS",
