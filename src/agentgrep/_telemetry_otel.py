@@ -277,7 +277,7 @@ class _AppRootSampler(Sampler):
         trace_state: TraceState | None = None,
     ) -> SamplingResult:
         """Return a bounded start-time decision without retaining trace state."""
-        del trace_id, kind, attributes, links, trace_state
+        del trace_id, kind, links, trace_state
         from opentelemetry import trace
         from opentelemetry.sdk.trace.sampling import Decision
         from opentelemetry.trace import TraceFlags
@@ -291,7 +291,11 @@ class _AppRootSampler(Sampler):
         else:
             sampled = parent_sampled
         decision = Decision.RECORD_AND_SAMPLE if sampled else Decision.DROP
-        return SamplingResult(decision, trace_state=parent.trace_state)
+        return SamplingResult(
+            decision,
+            attributes=attributes if sampled else None,
+            trace_state=parent.trace_state,
+        )
 
     def get_description(self) -> str:
         """Return the stable sampler description used by the SDK."""
