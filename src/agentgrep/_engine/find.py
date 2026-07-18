@@ -24,6 +24,7 @@ import pathlib
 import time
 import typing as t
 
+from agentgrep._engine.telemetry import isolate_generator_context
 from agentgrep.adapters import find_store_roles_for_type_filter
 from agentgrep.discovery import discover_sources
 from agentgrep.readers import select_backends
@@ -34,6 +35,7 @@ if t.TYPE_CHECKING:
     from agentgrep.query.compile import CompiledQuery
 
 
+@isolate_generator_context
 def iter_find_events(
     home: pathlib.Path,
     agents: tuple[AgentName, ...],
@@ -43,7 +45,7 @@ def iter_find_events(
     backends: BackendSelection | None = None,
     compiled: CompiledQuery | None = None,
     type_filter: FindSourceTypeFilter = "all",
-) -> cabc.Iterator[_events.FindEvent]:
+) -> cabc.Generator[_events.FindEvent]:
     """Yield typed events as the find engine enumerates sources.
 
     Parameters
@@ -149,20 +151,6 @@ def iter_find_events(
             if limit is not None and emitted >= limit:
                 break
 
-        from agentgrep import _telemetry
-
-        _telemetry.record_metric(
-            "agentgrep.find.sources",
-            len(sources),
-            agentgrep_surface="engine",
-            agentgrep_agent_count=len(agents),
-        )
-        _telemetry.record_metric(
-            "agentgrep.find.results",
-            emitted,
-            agentgrep_surface="engine",
-            agentgrep_agent_count=len(agents),
-        )
         operation.complete(emitted)
         yield _events.FindFinished(
             match_count=emitted,
