@@ -401,10 +401,11 @@ keep working when OTel dependencies, LGTM, Docker, or OTLP endpoints are
 absent.
 
 Use `AGENTGREP_OTEL` as the single project telemetry switch. Do not add a
-second enable variable. Local checkouts default to passive local telemetry;
-packaged installs stay quiet unless explicitly enabled. Telemetry setup,
-export, and shutdown failures must never change CLI, TUI, MCP, or test
-correctness.
+second enable variable. Local checkouts and packaged installs stay quiet unless
+explicitly enabled. Standard OTel endpoint variables do not opt agentgrep in;
+honor `OTEL_SDK_DISABLED` and the standard per-signal exporter controls.
+Telemetry setup, export, and shutdown failures must never change CLI, TUI, MCP,
+or test correctness.
 
 `service.version` is the package version only. Do not put debug attempts,
 dirty candidates, pytest retries, or agent-loop identifiers in
@@ -425,10 +426,10 @@ SQLite telemetry must cover `sqlite3.Connection` shortcut methods through
 `agentgrep._telemetry.sqlite_connection_factory()`. Do not rely on
 `SQLite3Instrumentor` alone for SQLite spans; it does not cover the connection
 shortcut path agentgrep uses for source parsing. SQL spans must be children of
-an existing app trace and must not include bound parameter values, prompt text,
-file contents, or local database paths. SQLite and CPU-impacting work metrics
-must come from normal app, profiler, benchmark, CLI, TUI, MCP, and pytest paths,
-not only from synthetic smoke scripts.
+an existing app trace and must not include statement text, bound parameter
+values, prompt text, file contents, or local database paths. SQLite and
+CPU-impacting work metrics must come from normal app, profiler, benchmark, CLI,
+TUI, MCP, and pytest paths, not only from synthetic smoke scripts.
 
 Logs exported through OTel must be trace-linked. Do not export unparented
 logs, raw prompts, raw MCP arguments, raw argv, environment values, file

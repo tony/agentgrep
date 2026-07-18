@@ -9,13 +9,18 @@ import logging
 import os
 import pathlib
 import sys
+import time
 import typing as t
 import warnings
+
+from opentelemetry.context import Context
+from opentelemetry.sdk.trace.sampling import Sampler, SamplingResult
+from opentelemetry.trace import Link, SpanKind, TraceState
+from opentelemetry.util.types import Attributes
 
 from agentgrep import _telemetry
 
 if t.TYPE_CHECKING:
-    from opentelemetry.sdk.trace import ReadableSpan
     from opentelemetry.sdk.trace.export import SpanExporter
 
 _SAFE_LOG_ATTRIBUTE_KEYS: frozenset[str] = frozenset(
@@ -86,6 +91,7 @@ class OtelTelemetryBackend:
         self._histograms: dict[str, t.Any] = {}
         self._instrumentations = instrumentations
         self.profiles_started = profiles_started
+        self._shutdown = False
 
     @contextlib.contextmanager
     def start_span(self, span: _telemetry._SpanState) -> cabc.Iterator[t.Any]:
@@ -101,7 +107,12 @@ class OtelTelemetryBackend:
         context = None
         if span.parent_id is None and not span.inherit_otel_context:
             context = trace.set_span_in_context(trace.INVALID_SPAN)
-        with self._tracer.start_as_current_span(span.name, context=context) as otel_span:
+        with self._tracer.start_as_current_span(
+            span.name,
+            context=context,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as otel_span:
             span_context = otel_span.get_span_context()
             span.trace_id = format_trace_id(span_context.trace_id)
             span.span_id = format_span_id(span_context.span_id)
@@ -131,20 +142,23 @@ class OtelTelemetryBackend:
         trace.get_current_span().set_attribute(key, value)
 
     def record_exception(self, error: BaseException) -> None:
-        """Record an exception on the current OTel span."""
+        """Record one bounded exception event on the current OTel span."""
         from opentelemetry import trace
         from opentelemetry.trace import Status, StatusCode
 
         active_span = trace.get_current_span()
-        active_span.record_exception(error)
-        active_span.set_status(Status(StatusCode.ERROR, str(error)))
+        error_type = _telemetry.error_type_name(error)
+        active_span.add_event("exception", {"exception.type": error_type})
+        active_span.set_attribute("agentgrep_error_type", error_type)
+        active_span.set_status(Status(StatusCode.ERROR))
 
     def set_span_status_error(self, description: str) -> None:
         """Mark the current OTel span as errored without an exception."""
         from opentelemetry import trace
         from opentelemetry.trace import Status, StatusCode
 
-        trace.get_current_span().set_status(Status(StatusCode.ERROR, description))
+        del description
+        trace.get_current_span().set_status(Status(StatusCode.ERROR))
 
     def record_metric(
         self,
@@ -194,35 +208,35 @@ class OtelTelemetryBackend:
             return False
 
     def force_flush(self, timeout_millis: int = 30_000) -> bool:
-        """Flush pending traces, metrics, and logs."""
-        return all(
-            _force_flush_provider(provider, timeout_millis=timeout_millis)
-            for provider in (
-                self._tracer_provider,
-                self._meter_provider,
-                self._logger_provider,
+        """Flush every provider under one shared timeout budget."""
+        deadline = time.monotonic() + max(0, timeout_millis) / 1_000
+        results: list[bool] = []
+        for provider in (
+            self._tracer_provider,
+            self._meter_provider,
+            self._logger_provider,
+        ):
+            remaining_millis = max(0, int((deadline - time.monotonic()) * 1_000))
+            results.append(
+                _force_flush_provider(provider, timeout_millis=remaining_millis),
             )
-        )
+        return all(results)
 
     def shutdown(self) -> None:
-        """Flush and release telemetry processors."""
+        """Release telemetry processors exactly once."""
+        if self._shutdown:
+            return
+        self._shutdown = True
         for instrumentation in self._instrumentations:
             with contextlib.suppress(Exception):
                 instrumentation.uninstrument()
-        with contextlib.suppress(Exception):
-            self.force_flush()
         with contextlib.suppress(Exception):
             self._tracer_provider.shutdown()
         with contextlib.suppress(Exception):
             self._meter_provider.shutdown()
         with contextlib.suppress(Exception):
             self._logger_provider.shutdown()
-        # Only tear down Pyroscope when this backend actually started it
-        # (mirrors the start-side ``if profiles_started`` guard). Passive-local
-        # and any explicit=False backend never call ``pyroscope.configure``, so
-        # an unconditional ``pyroscope.shutdown()`` here finds no agent to drop
-        # and logs "Pyroscope Agent shutdown failed" to stderr via the SDK's
-        # last-resort handler — user-visible noise on every ``--help``.
+        # Only tear down Pyroscope when this backend actually started it.
         if self.profiles_started:
             with contextlib.suppress(Exception):
                 import pyroscope
@@ -249,32 +263,39 @@ def _force_flush_provider(provider: t.Any, *, timeout_millis: int) -> bool:
     return result is not False
 
 
-class _FilteringSpanExporter:
-    """Drop root spans that are not app-level roots."""
+class _AppRootSampler(Sampler):
+    """Sample app-root traces and inherit their local sampling decision."""
 
-    def __init__(self, wrapped: t.Any) -> None:
-        self._wrapped = wrapped
+    def should_sample(
+        self,
+        parent_context: Context | None,
+        trace_id: int,
+        name: str,
+        kind: SpanKind | None = None,
+        attributes: Attributes = None,
+        links: cabc.Sequence[Link] | None = None,
+        trace_state: TraceState | None = None,
+    ) -> SamplingResult:
+        """Return a bounded start-time decision without retaining trace state."""
+        del trace_id, kind, attributes, links, trace_state
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace.sampling import Decision
+        from opentelemetry.trace import TraceFlags
 
-    def export(self, spans: cabc.Sequence[ReadableSpan]) -> t.Any:
-        """Export spans after app-root filtering."""
-        filtered = [
-            span
-            for span in spans
-            if span.parent is not None or span.name in _telemetry.APP_ROOT_SPAN_NAMES
-        ]
-        if not filtered:
-            from opentelemetry.sdk.trace.export import SpanExportResult
+        parent = trace.get_current_span(parent_context).get_span_context()
+        parent_sampled = bool(parent.trace_flags & TraceFlags.SAMPLED)
+        if not parent.is_valid:
+            sampled = name in _telemetry.APP_ROOT_SPAN_NAMES
+        elif parent.is_remote:
+            sampled = name in _telemetry.APP_ROOT_SPAN_NAMES and parent_sampled
+        else:
+            sampled = parent_sampled
+        decision = Decision.RECORD_AND_SAMPLE if sampled else Decision.DROP
+        return SamplingResult(decision)
 
-            return SpanExportResult.SUCCESS
-        return self._wrapped.export(filtered)
-
-    def shutdown(self) -> None:
-        """Shut down the wrapped exporter."""
-        self._wrapped.shutdown()
-
-    def force_flush(self, timeout_millis: int = 30_000) -> bool:
-        """Flush the wrapped exporter."""
-        return bool(self._wrapped.force_flush(timeout_millis=timeout_millis))
+    def get_description(self) -> str:
+        """Return the stable sampler description used by the SDK."""
+        return "agentgrep-app-root"
 
 
 def build_backend(
@@ -282,18 +303,15 @@ def build_backend(
     mode: _telemetry.TelemetryMode,
     resource_attributes: _telemetry.TelemetryAttributes,
     explicit: bool = True,
+    env: cabc.Mapping[str, str] | None = None,
 ) -> OtelTelemetryBackend:
-    """Build an OpenTelemetry/Pyroscope backend.
-
-    Passive local telemetry (``explicit`` false) still exports traces, metrics,
-    and logs but skips Pyroscope and auto-instrumentation so an in-repo
-    ``agentgrep --help`` stays fast.
-    """
+    """Build an explicitly enabled OpenTelemetry/Pyroscope backend."""
+    active_env = os.environ if env is None else env
+    traces_enabled = explicit and _signal_export_enabled(active_env, "traces")
+    metrics_enabled = explicit and _signal_export_enabled(active_env, "metrics")
+    logs_enabled = explicit and _signal_export_enabled(active_env, "logs")
     from opentelemetry import metrics, trace
     from opentelemetry._logs import set_logger_provider
-    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
-    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -323,26 +341,29 @@ def build_backend(
     )
     profiles_started = _configure_profiles(resource_attributes) if explicit else False
 
-    tracer_provider = TracerProvider(resource=resource)
+    tracer_provider = TracerProvider(resource=resource, sampler=_AppRootSampler())
     if profiles_started:
         with contextlib.suppress(Exception):
             from pyroscope.otel import PyroscopeSpanProcessor
 
             tracer_provider.add_span_processor(PyroscopeSpanProcessor())
-    tracer_provider.add_span_processor(
-        BatchSpanProcessor(
-            t.cast(
-                "SpanExporter",
-                _FilteringSpanExporter(OTLPSpanExporter(timeout=_timeout_seconds())),
-            ),
-        ),
-    )
-    if mode == "debug-console":
+    if traces_enabled:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
         tracer_provider.add_span_processor(
             BatchSpanProcessor(
                 t.cast(
                     "SpanExporter",
-                    _FilteringSpanExporter(ConsoleSpanExporter(out=sys.stderr)),
+                    OTLPSpanExporter(timeout=_timeout_seconds(active_env)),
+                ),
+            ),
+        )
+    if mode == "debug-console" and traces_enabled:
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(
+                t.cast(
+                    "SpanExporter",
+                    ConsoleSpanExporter(out=sys.stderr),
                 ),
             ),
         )
@@ -362,16 +383,20 @@ def build_backend(
             Counter: AggregationTemporality.DELTA,
             Histogram: AggregationTemporality.DELTA,
         }
-    metric_readers = [
-        PeriodicExportingMetricReader(
-            OTLPMetricExporter(
-                timeout=_timeout_seconds(),
-                preferred_temporality=preferred_temporality,
+    metric_readers: list[t.Any] = []
+    if metrics_enabled:
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+        metric_readers.append(
+            PeriodicExportingMetricReader(
+                OTLPMetricExporter(
+                    timeout=_timeout_seconds(active_env),
+                    preferred_temporality=preferred_temporality,
+                ),
+                export_interval_millis=1_000,
             ),
-            export_interval_millis=1_000,
-        ),
-    ]
-    if mode == "debug-console":
+        )
+    if mode == "debug-console" and metrics_enabled:
         metric_readers.append(
             PeriodicExportingMetricReader(
                 ConsoleMetricExporter(out=sys.stderr),
@@ -400,10 +425,15 @@ def build_backend(
     )
 
     logger_provider = LoggerProvider(resource=resource)
-    logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(OTLPLogExporter(timeout=_timeout_seconds())),
-    )
-    if mode == "debug-console":
+    if logs_enabled:
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+
+        logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(
+                OTLPLogExporter(timeout=_timeout_seconds(active_env)),
+            ),
+        )
+    if mode == "debug-console" and logs_enabled:
         logger_provider.add_log_record_processor(
             BatchLogRecordProcessor(ConsoleLogRecordExporter(out=sys.stderr)),
         )
@@ -499,9 +529,16 @@ def _install_auto_instrumentation(mode: _telemetry.TelemetryMode) -> tuple[t.Any
     return tuple(installed)
 
 
-def _timeout_seconds() -> float:
+def _signal_export_enabled(env: cabc.Mapping[str, str], signal: str) -> bool:
+    """Return whether the standard per-signal exporter is enabled."""
+    value = env.get(f"OTEL_{signal.upper()}_EXPORTER")
+    return value is None or value.strip().lower() != "none"
+
+
+def _timeout_seconds(env: cabc.Mapping[str, str] | None = None) -> float:
     """Return a short OTLP timeout."""
-    raw_timeout = os.environ.get("OTEL_EXPORTER_OTLP_TIMEOUT")
+    active_env = os.environ if env is None else env
+    raw_timeout = active_env.get("OTEL_EXPORTER_OTLP_TIMEOUT")
     if raw_timeout:
         with contextlib.suppress(ValueError):
             return max(0.1, float(raw_timeout))
@@ -521,6 +558,14 @@ def _sanitized_log_record(record: logging.LogRecord) -> logging.LogRecord:
 def _sanitized_log_record_dict(record: logging.LogRecord) -> dict[str, object]:
     """Return a copied record dict with private project extras redacted."""
     copied: dict[str, object] = record.__dict__.copy()
+    exc_info = copied.get("exc_info")
+    if isinstance(exc_info, tuple) and exc_info and isinstance(exc_info[0], type):
+        copied["agentgrep_exception_type"] = _telemetry.error_type_name(
+            t.cast("type[BaseException]", exc_info[0]),
+        )
+    copied["exc_info"] = None
+    copied["exc_text"] = None
+    copied["stack_info"] = None
     for key, value in tuple(copied.items()):
         if not _is_sensitive_log_attribute(key):
             continue

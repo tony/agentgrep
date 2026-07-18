@@ -25,10 +25,13 @@ project boundary. OpenTelemetry SDK, OTLP exporters, auto-instrumentation, and
 Pyroscope setup live in `agentgrep._telemetry_otel` and are imported lazily
 only when telemetry is enabled.
 
-`AGENTGREP_OTEL` is the single project switch. Local source checkouts default
-to passive local telemetry. Packaged installs stay quiet unless explicitly
-enabled. The accepted modes are `off`, `local`, `debug`, `debug-console`,
-`test`, and `live`.
+`AGENTGREP_OTEL` is the single project opt-in switch. Source checkouts and
+packaged installs both stay off unless it is explicitly set. Standard OTel
+endpoint variables configure an enabled backend; they do not enable agentgrep
+telemetry on their own. `OTEL_SDK_DISABLED=true` overrides the project switch,
+and each `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` setting disables that
+signal's exporter. The accepted modes are `off`, `local`, `debug`,
+`debug-console`, `test`, and `live`.
 
 OTel setup is best effort. If the SDK, exporters, LGTM, Docker, or an OTLP
 endpoint is unavailable, agentgrep continues to run. Export failures do not
@@ -50,6 +53,10 @@ cover logical work such as parse, dispatch, discovery, planning, collection,
 filtering, detail building, rendering, subprocess execution, and thread/async
 boundaries. Low-level keypresses, render frames, event-loop callbacks, and
 orphaned auto-instrumentation roots are not accepted signal.
+An app-root sampler makes that decision at span start: approved roots and their
+sampled local descendants are retained, while unrelated roots and their entire
+traces are dropped. An inbound remote parent is retained only when it is sampled
+and the local entry span is an approved app root.
 
 Native OpenTelemetry context is the source of truth for trace and span ids.
 The dependency-light facade mints placeholder ids and keeps a contextvar span
@@ -63,12 +70,14 @@ SQLite spans use a project connection factory for `sqlite3.Connection`
 shortcut methods such as `execute`, `executemany`, and `executescript`.
 The upstream SQLite DB-API instrumentation wraps cursor execution, but
 agentgrep's source parsers use connection shortcuts. SQL spans therefore stay
-under an existing app root and do not record bound parameter values, raw
-prompts, file contents, or local database paths.
+under an existing app root and record only a finite operation label and method,
+never statement text, bound parameter values, raw prompts, file contents, or
+local database paths.
 
-Logs are exported only when there is an active project span or a valid current
-OTel span so Loki records are trace-linked. OTel log records are sanitized
-before export to avoid local absolute source paths.
+Logs are exported only from the `agentgrep` logger namespace and when there is
+an active project span or a valid current OTel span, so Loki records are
+trace-linked. OTel log records are sanitized before export to avoid local
+absolute source paths and raw exception messages or stack traces.
 
 Metrics start with span count/duration plus explicit project metrics for
 search/source/result counts, CPU-impacting engine loops, SQLite shortcut
@@ -102,14 +111,14 @@ instrumentation scopes, not separate services.
 - Developers can run `just otel-acceptance` against Grafana LGTM and verify
   traces, metrics, logs, and profiles.
 - Default pytest remains offline and deterministic through in-memory telemetry.
-- Packaged users do not pay for OTel SDK imports or network exporters unless
-  telemetry is enabled.
+- Default source and packaged runs do not pay for OTel SDK imports or network
+  exporters.
 - Async/thread work preserves project trace context through local wrappers.
 
 ### Tradeoffs
 
-- Local source checkouts are more observable by default than packaged installs.
-  This is intentional for development but must stay failure-tolerant.
+- Developers must opt in before local traces, metrics, logs, or profiles are
+  available. This keeps ordinary CLI and MCP startup deterministic and silent.
 - Run-scoped metric labels add local QA series count. This is accepted here
   because this branch closes blindspots; later cardinality reductions need
   evidence.
