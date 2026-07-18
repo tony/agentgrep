@@ -8,7 +8,12 @@ import typing as t
 
 from pydantic import Field
 
-from agentgrep.mcp._library import READONLY_TAGS, agentgrep, normalize_agent_selection
+from agentgrep.mcp._library import (
+    READONLY_TAGS,
+    TOOL_ANNOTATIONS,
+    agentgrep,
+    normalize_agent_selection,
+)
 from agentgrep.mcp.models import InsightsSkillsRequest, InsightsSkillsResponse
 
 if t.TYPE_CHECKING:
@@ -105,6 +110,7 @@ def register(mcp: FastMCP) -> None:
             "conversations. Needs the graph level (agentgrep[insights-graph]); "
             "reports status='unavailable' with a setup command otherwise."
         ),
+        annotations=TOOL_ANNOTATIONS,
     )
     async def insights_skills_tool(
         agent: t.Annotated[
