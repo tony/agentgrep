@@ -676,11 +676,11 @@ async def test_greplog_search_highlighting_follows_active_theme(
         layout._search_input.value = "agent:claude"
         await pilot.pause()
 
-        assert any("#006b75" in str(span.style) for span in layout._search_input._value.spans)
+        assert any("#007f7f" in str(span.style) for span in layout._search_input._value.spans)
 
         app.theme = theme.DARK_THEME_NAME
         await pilot.pause()
-        assert any("color(79)" in str(span.style) for span in layout._search_input._value.spans)
+        assert any("#5fd7af" in str(span.style) for span in layout._search_input._value.spans)
 
 
 def test_greplog_summary_slices_before_line_splitting(tmp_path: pathlib.Path) -> None:

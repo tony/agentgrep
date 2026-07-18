@@ -13,6 +13,7 @@ import pathlib
 import typing as t
 
 import pytest
+from rich.color import Color as RichColor, ColorSystem
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
@@ -47,11 +48,13 @@ class ThemeCase(t.NamedTuple):
 _THEME_CASES: tuple[ThemeCase, ...] = (
     ThemeCase("dark", theme.agentgrep_dark),
     ThemeCase("light", theme.agentgrep_light),
+    ThemeCase("tokyo-night", theme.agentgrep_tokyo_night),
 )
 _THEME_IDS = [case.test_id for case in _THEME_CASES]
 _EXPECTED_BRAND_SHINE: dict[str, tuple[str, ...]] = {
     "dark": ("#9874ff", "#aa89ff", "#bca0ff", "#ceb8ff", "#dfd0ff"),
     "light": ("#531fc8", "#682cb0", "#6c389f", "#704498", "#735190"),
+    "tokyo-night": ("#9874ff", "#aa89ff", "#bca0ff", "#ceb8ff", "#dfd0ff"),
 }
 
 
@@ -94,6 +97,7 @@ def test_theme_builders_use_expected_names() -> None:
     """The builders return themes under the documented names."""
     assert theme.agentgrep_dark().name == theme.DARK_THEME_NAME
     assert theme.agentgrep_light().name == theme.LIGHT_THEME_NAME
+    assert theme.agentgrep_tokyo_night().name == theme.TOKYO_NIGHT_THEME_NAME
 
 
 def test_resolve_handles_missing_and_present() -> None:
@@ -127,6 +131,12 @@ def test_every_ag_token_present_and_parseable(case: ThemeCase) -> None:
         | {f"ag-state-{name}-bg" for name in ("user", "pending", "success", "error", "selected")}
         | {f"ag-on-{name}" for name in ("user", "pending", "success", "error", "selected")}
         | {"ag-match-search", "ag-match-filter-bg", "ag-match-filter-fg"}
+        | {
+            "ag-match-find-bg",
+            "ag-match-find-fg",
+            "ag-match-find-current-bg",
+            "ag-match-find-current-fg",
+        }
         | {f"ag-brand-shine-{step}" for step in range(1, 6)}
     )
     missing = expected - set(variables)
@@ -214,7 +224,7 @@ def test_query_highlighter_palette_is_readable(case: ThemeCase) -> None:
     """Every query-syntax foreground clears WCAG AA on its theme page."""
     built = case.builder()
     text = Text('-agent:codex OR model:gpt* timestamp:>2026-01-01 "exact phrase"')
-    QueryHighlighter(dark=built.dark).highlight(text)
+    QueryHighlighter(dark=built.dark, theme_variables=built.variables).highlight(text)
 
     for span in text.spans:
         color = Style.parse(str(span.style)).color
@@ -223,6 +233,28 @@ def test_query_highlighter_palette_is_readable(case: ThemeCase) -> None:
         foreground = f"#{triplet.red:02x}{triplet.green:02x}{triplet.blue:02x}"
         ratio = _contrast_ratio(foreground, built.background)
         assert ratio >= 4.5, f"{case.test_id}/{span.style} contrast {ratio:.2f} below 4.5"
+
+
+@pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
+def test_query_palette_is_readable_after_standard_ansi_downgrade(case: ThemeCase) -> None:
+    """Owned query roles retain AA contrast on a standard 16-color terminal."""
+    built = case.builder()
+    canvas = (
+        built.background
+        if built.variables["ag-canvas"] == "ansi_default"
+        else built.variables["ag-canvas"]
+    )
+
+    def downgraded_hex(value: str) -> str:
+        color = RichColor.parse(value).downgrade(ColorSystem.STANDARD).get_truecolor()
+        return f"#{color.red:02x}{color.green:02x}{color.blue:02x}"
+
+    background = downgraded_hex(canvas)
+    roles = ("field", "keyword", "operator", "wildcard", "negation", "punct", "value", "date")
+    for role in roles:
+        foreground = downgraded_hex(built.variables[f"ag-query-{role}"])
+        ratio = _contrast_ratio(foreground, background)
+        assert ratio >= 4.5, f"{case.test_id}/{role} ANSI contrast {ratio:.2f} below 4.5"
 
 
 # --- live app: registration, application, switching ------------------------
@@ -271,6 +303,24 @@ async def test_switch_to_light_theme_succeeds(
         assert header._c_accent.lower() == "#477070"
 
 
+async def test_tokyo_night_focused_search_keeps_canvas_flat(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Focus changes the search rule without tinting the Tokyo Night canvas."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    app.theme = theme.TOKYO_NIGHT_THEME_NAME
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        search = app.screen._search_input
+
+        assert search.has_focus
+        assert search.styles.background == Color.parse("#1a1b26")
+        assert search.styles.background_tint.a == 0
+        assert search.background_colors[1] == Color.parse("#1a1b26")
+
+
 async def test_theme_switch_recolors_shared_query_highlighting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -288,15 +338,15 @@ async def test_theme_switch_recolors_shared_query_highlighting(
         filter_input.cursor_position = 3
         await pilot.pause()
 
-        assert any("color(79)" in str(span.style) for span in search._value.spans)
+        assert any("#5fd7af" in str(span.style) for span in search._value.spans)
         assert any("rgb(95,215,175)" in str(span.style) for span in examples.render().spans)
 
         app.theme = theme.LIGHT_THEME_NAME
         await pilot.pause()
 
         for widget in (search, filter_input):
-            assert any("#006b75" in str(span.style) for span in widget._value.spans)
-        assert any("rgb(0,107,117)" in str(span.style) for span in examples.render().spans)
+            assert any("#007f7f" in str(span.style) for span in widget._value.spans)
+        assert any("rgb(0,127,127)" in str(span.style) for span in examples.render().spans)
         assert (search.value, search.cursor_position) == ("agent:claude", 5)
         assert (filter_input.value, filter_input.cursor_position) == ("agent:claude", 3)
         assert {
@@ -308,8 +358,8 @@ async def test_theme_switch_recolors_shared_query_highlighting(
         app.theme = theme.DARK_THEME_NAME
         app.theme = theme.LIGHT_THEME_NAME
         await pilot.pause()
-        assert any("#006b75" in str(span.style) for span in search._value.spans)
-        assert not any("color(79)" in str(span.style) for span in search._value.spans)
+        assert any("#007f7f" in str(span.style) for span in search._value.spans)
+        assert not any("#5fd7af" in str(span.style) for span in search._value.spans)
 
 
 async def test_themes_composite_queries_against_matching_canvases(
@@ -368,7 +418,7 @@ async def test_themes_composite_queries_against_matching_canvases(
 
 @pytest.mark.parametrize(
     ("theme_name", "field_style"),
-    (("textual-dark", "color(79)"), ("textual-light", "#006b75")),
+    (("textual-dark", "color(79)"), ("textual-light", "#007f7f")),
 )
 async def test_switch_to_builtin_theme_does_not_crash(
     tmp_path: pathlib.Path,

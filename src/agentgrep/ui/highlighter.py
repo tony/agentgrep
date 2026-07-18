@@ -14,6 +14,7 @@ hues; a separate light palette keeps every syntax role readable.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import typing as t
 
 from rich.highlighter import Highlighter
@@ -38,39 +39,71 @@ _DARK_ROLE_STYLES: dict[str, str] = {
     "date": "color(252)",
 }
 _LIGHT_ROLE_STYLES: dict[str, str] = {
-    "field": "#006b75",
-    "keyword": "bold #8a4b00",
-    "operator": "#8a4b00",
-    "wildcard": "bold #765f00",
+    "field": "#007f7f",
+    "keyword": "bold #502000",
+    "operator": "#502000",
+    "wildcard": "bold #000080",
     "negation": "bold #9b2242",
-    "punct": "#5c5c5c",
-    "value": "#343434",
-    "date": "#343434",
+    "punct": "#202020",
+    "value": "#202020",
+    "date": "#008000",
 }
 
 
 class QueryHighlighter(Highlighter):
     """Highlight agentgrep query syntax live in a Textual ``Input``."""
 
-    def __init__(self, *, dark: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        dark: bool = True,
+        theme_variables: cabc.Mapping[str, str] | None = None,
+    ) -> None:
         """Initialize the highlighter for a dark or light canvas.
 
         Parameters
         ----------
         dark : bool
             Whether to select the dark-canvas syntax palette.
+        theme_variables : collections.abc.Mapping[str, str] | None
+            Concrete semantic query tokens for an owned profile.
         """
-        self.set_theme(dark=dark)
+        self.set_theme(dark=dark, theme_variables=theme_variables)
 
-    def set_theme(self, *, dark: bool) -> None:
+    def set_theme(
+        self,
+        *,
+        dark: bool = True,
+        theme_variables: cabc.Mapping[str, str] | None = None,
+    ) -> None:
         """Select the concrete syntax-role palette for the active theme.
 
         Parameters
         ----------
         dark : bool
             Whether the active theme uses a dark canvas.
+        theme_variables : collections.abc.Mapping[str, str] | None
+            Concrete semantic query tokens, or ``None`` for polarity fallback.
         """
-        self._role_styles = _DARK_ROLE_STYLES if dark else _LIGHT_ROLE_STYLES
+        fallback = _DARK_ROLE_STYLES if dark else _LIGHT_ROLE_STYLES
+        if theme_variables is None:
+            self._role_styles = fallback
+            return
+        self._role_styles = {
+            role: self._profile_style(role, theme_variables, fallback[role]) for role in fallback
+        }
+
+    @staticmethod
+    def _profile_style(
+        role: str,
+        variables: cabc.Mapping[str, str],
+        fallback: str,
+    ) -> str:
+        """Return one Rich style backed by a semantic query token."""
+        color = variables.get(f"ag-query-{role}")
+        if not color:
+            return fallback
+        return f"bold {color}" if role in {"keyword", "wildcard", "negation"} else color
 
     def highlight(self, text: Text) -> None:
         """Apply query-syntax styles to ``text`` in place.

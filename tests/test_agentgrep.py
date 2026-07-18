@@ -2827,6 +2827,8 @@ def _build_empty_ui_app(
     # Isolate the search-history state file under tmp so tests never read or
     # trim the developer's real ~/.local/state/agentgrep/history.jsonl.
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    # Keep persisted UI preferences away from the developer's real config.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setattr(
         agentgrep,
         "run_search_query",

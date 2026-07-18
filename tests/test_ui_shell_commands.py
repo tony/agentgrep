@@ -205,29 +205,25 @@ async def test_slash_keys_toggles_one_help_panel_without_notifications(
         assert layout._search_input.value == "usable"
 
 
-async def test_slash_theme_selects_and_toggles_agentgrep_themes(
+async def test_slash_theme_selects_and_opens_owned_theme_picker(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``/theme`` changes only between agentgrep's dark and light themes."""
+    """``/theme NAME`` selects directly; bare ``/theme`` opens previews."""
     app = _build_empty_ui_app(tmp_path, monkeypatch)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-
-        def forbidden(*_args: object, **_kwargs: object) -> t.NoReturn:
-            message = "theme command opened a palette screen"
-            raise AssertionError(message)
-
-        monkeypatch.setattr(app, "search_themes", forbidden, raising=False)
-        monkeypatch.setattr(app, "push_screen", forbidden)
 
         await _submit(pilot, app.screen, "/theme light")
         assert app.theme == ui_theme.LIGHT_THEME_NAME
         assert app.screen._search_input.value == ""
 
         await _submit(pilot, app.screen, "/theme")
-        assert app.theme == ui_theme.DARK_THEME_NAME
-        assert app.screen._search_input.value == ""
+        assert app.screen.id == "theme-picker"
+        assert app.theme == ui_theme.LIGHT_THEME_NAME
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.theme == ui_theme.LIGHT_THEME_NAME
 
 
 async def test_slash_screenshot_delivers_after_command_chrome_clears(
@@ -780,9 +776,15 @@ async def test_greplog_slash_menu_lists_filters_and_selects_at_77_columns(
         await pilot.press("enter")
         await pilot.pause()
 
-        assert app.theme == ui_theme.LIGHT_THEME_NAME
+        assert app.screen.id == "theme-picker"
         assert layout._search_input.value == ""
         assert dropdown.display is False
+
+        await pilot.press("j", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.theme == ui_theme.LIGHT_THEME_NAME
+        assert app.screen is layout
 
 
 async def test_greplog_keys_theme_and_screenshot_match_hud_commands(

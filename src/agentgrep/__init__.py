@@ -443,20 +443,17 @@ def run_ui(
     queries without a ``scope:`` predicate return to. ``None`` uses the
     effective launch-query scope.
     """
+    from agentgrep.ui import registry as ui_registry
     from agentgrep.ui.app import run_ui as _run_ui
 
-    selection: dict[str, str] = {}
-    if layout is not None:
-        selection["layout"] = layout
-    if workflow is not None:
-        selection["workflow"] = workflow
     _run_ui(
         home,
         query,
         control=control,
         initial_search_text=initial_search_text,
         base_scope=base_scope,
-        **selection,
+        layout=ui_registry.DEFAULT_LAYOUT if layout is None else layout,
+        workflow=ui_registry.DEFAULT_WORKFLOW if workflow is None else workflow,
     )
 
 
@@ -477,20 +474,17 @@ def build_streaming_ui_app(
     built, never at import time of the top-level package. ``layout`` /
     ``workflow`` select the pluggable surface; ``None`` uses the defaults.
     """
+    from agentgrep.ui import registry as ui_registry
     from agentgrep.ui.app import build_streaming_ui_app as _build
 
-    selection: dict[str, str] = {}
-    if layout is not None:
-        selection["layout"] = layout
-    if workflow is not None:
-        selection["workflow"] = workflow
     return _build(
         home,
         query,
         control=control,
         initial_search_text=initial_search_text,
         base_scope=base_scope,
-        **selection,
+        layout=ui_registry.DEFAULT_LAYOUT if layout is None else layout,
+        workflow=ui_registry.DEFAULT_WORKFLOW if workflow is None else workflow,
     )
 
 

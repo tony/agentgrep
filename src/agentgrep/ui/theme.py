@@ -1,9 +1,9 @@
 """pi-lite semantic theme and design tokens for the Textual explorer.
 
-Two themes — :func:`agentgrep_dark` and :func:`agentgrep_light` — map a
-pi-inspired "lite" palette onto Textual's seed colors so every built-in widget
-re-skins through :class:`textual.design.ColorSystem` for free (one accent, calm
-muted secondary text, flat surfaces). agentgrep-specific semantics that have no
+Agentgrep-owned profiles map a pi-inspired "lite" palette onto Textual's seed
+colors so every built-in widget re-skins through
+:class:`textual.design.ColorSystem` (one accent, calm muted secondary text, flat
+surfaces). Agentgrep-specific semantics that have no
 seed equivalent live as ``$ag-*`` custom variables: per-agent hues, the
 ``prompt`` / ``history`` kinds, the muted/dim/faint text trio, the welcome
 wordmark shine, state-tint backgrounds, and search/filter match highlights.
@@ -28,7 +28,9 @@ eager ``import agentgrep`` path.
 from __future__ import annotations
 
 import collections.abc as cabc
+import types
 import typing as t
+from dataclasses import dataclass
 
 from textual.color import Color
 from textual.theme import Theme
@@ -38,15 +40,21 @@ __all__ = [
     "DARK_THEME_NAME",
     "KIND_TOKEN_BY_NAME",
     "LIGHT_THEME_NAME",
+    "THEME_PROFILES",
+    "THEME_PROFILE_BY_NAME",
+    "TOKYO_NIGHT_THEME_NAME",
+    "ThemeProfile",
     "ag_variable_defaults",
     "agentgrep_dark",
     "agentgrep_light",
+    "agentgrep_tokyo_night",
     "detail_syntax_theme",
     "resolve",
 ]
 
 DARK_THEME_NAME = "agentgrep-dark"
 LIGHT_THEME_NAME = "agentgrep-light"
+TOKYO_NIGHT_THEME_NAME = "agentgrep-tokyo-night"
 
 # --- pi palette tables: token base name -> (dark hex, light hex) -----------
 #
@@ -119,6 +127,22 @@ _STATE_BG_HUES: dict[str, tuple[str, str]] = {
 # with a contrast-computed foreground. The two never read as the same thing.
 _MATCH_SEARCH_FG: tuple[str, str] = ("#ffd75f", "#906908")
 _MATCH_FILTER_BG: tuple[str, str] = ("#8abeb7", "#477070")
+_MATCH_FIND_BG: tuple[str, str] = ("#9575cd", "#7e57c2")
+_MATCH_FIND_CURRENT_BG: tuple[str, str] = ("#ffd75f", "#906908")
+
+# Query grammar colors are semantic theme variables too. Rich can't resolve
+# ``$ag-*`` references itself, so :class:`QueryHighlighter` reads the selected
+# profile's concrete values from ``App.theme_variables``.
+_QUERY_HUES: dict[str, tuple[str, str]] = {
+    "field": ("#5fd7af", "#007f7f"),
+    "keyword": ("#ffaf5f", "#502000"),
+    "operator": ("#ffaf5f", "#502000"),
+    "wildcard": ("#ffd787", "#000080"),
+    "negation": ("#ff5f87", "#9b2242"),
+    "punct": ("#8a8a8a", "#202020"),
+    "value": ("#d0d0d0", "#202020"),
+    "date": ("#d0d0d0", "#008000"),
+}
 
 #: ``record.agent`` -> ``$ag-*`` variable name (without the ``$``). Keyed by
 #: every member of :data:`agentgrep.records.AGENT_CHOICES`.
@@ -177,6 +201,14 @@ def _ag_variables(mode: int) -> dict[str, str]:
     filter_background = _MATCH_FILTER_BG[mode]
     variables["ag-match-filter-bg"] = filter_background
     variables["ag-match-filter-fg"] = _on(filter_background)
+    find_background = _MATCH_FIND_BG[mode]
+    variables["ag-match-find-bg"] = find_background
+    variables["ag-match-find-fg"] = _on(find_background)
+    current_find_background = _MATCH_FIND_CURRENT_BG[mode]
+    variables["ag-match-find-current-bg"] = current_find_background
+    variables["ag-match-find-current-fg"] = _on(current_find_background)
+    for role, hexes in _QUERY_HUES.items():
+        variables[f"ag-query-{role}"] = hexes[mode]
     return variables
 
 
@@ -187,15 +219,8 @@ def _ag_variables(mode: int) -> dict[str, str]:
 # hover/drag) for completeness — Textual generates these for every theme — but
 # the lite layout hides scrollbars entirely (``scrollbar-size: 0`` in styles.tcss,
 # vim/pi-style), so this palette only renders if a scrollbar is re-enabled.
-#: ``surface`` seed per mode (track color), mirrors the Theme ``surface`` values.
-_SURFACE_HEX: tuple[str, str] = ("#1e1e24", "#ffffff")
-
-
-def _builtin_overrides(mode: int) -> dict[str, str]:
-    """Return pi-flat overrides for Textual's own widget tokens."""
-    accent = _AGENT_HUES["pi"][mode]
-    faint = _TEXT_HUES["ag-faint"][mode]
-    surface = _SURFACE_HEX[mode]
+def _builtin_overrides(*, accent: str, faint: str, surface: str) -> dict[str, str]:
+    """Return flat overrides derived from one profile's own palette."""
     return {
         "block-cursor-background": accent,
         "block-cursor-foreground": _on(accent),
@@ -234,7 +259,10 @@ def agentgrep_dark() -> Theme:
         surface="#1e1e24",
         panel="#26262e",
         dark=True,
-        variables={**_ag_variables(0), **_builtin_overrides(0)},
+        variables={
+            **_ag_variables(0),
+            **_builtin_overrides(accent="#8abeb7", faint="#5a5a5a", surface="#1e1e24"),
+        },
     )
 
 
@@ -259,11 +287,119 @@ def agentgrep_light() -> Theme:
         surface="#ffffff",
         panel="#eeeeee",
         dark=False,
-        variables={**_ag_variables(1), **_builtin_overrides(1)},
+        variables={
+            **_ag_variables(1),
+            **_builtin_overrides(accent="#477070", faint="#a0a0a0", surface="#ffffff"),
+        },
     )
 
 
-def detail_syntax_theme(*, dark: bool) -> t.Literal["ansi_dark", "ansi_light"]:
+def agentgrep_tokyo_night() -> Theme:
+    """Return agentgrep's curated Tokyo Night-inspired profile.
+
+    Returns
+    -------
+    textual.theme.Theme
+        A complete agentgrep-owned palette registered under
+        :data:`TOKYO_NIGHT_THEME_NAME`.
+    """
+    variables = _ag_variables(0)
+    variables.update(
+        {
+            "ag-canvas": "#1a1b26",
+            "ag-canvas-text": "#c0caf5",
+            "ag-muted": "#a9b1d6",
+            "ag-dim": "#9aa5ce",
+            "ag-faint": "#565f89",
+            "ag-model": "#bb9af7",
+            "ag-kind-prompt": "#9ece6a",
+            "ag-kind-history": "#7aa2f7",
+            "ag-match-search": "#e0af68",
+            "ag-match-filter-bg": "#7aa2f7",
+            "ag-match-filter-fg": _on("#7aa2f7"),
+            "ag-match-find-bg": "#bb9af7",
+            "ag-match-find-fg": _on("#bb9af7"),
+            "ag-match-find-current-bg": "#e0af68",
+            "ag-match-find-current-fg": _on("#e0af68"),
+            "ag-query-field": "#7dcfff",
+            "ag-query-keyword": "#bb9af7",
+            "ag-query-operator": "#ff9e64",
+            "ag-query-wildcard": "#e0af68",
+            "ag-query-negation": "#f7768e",
+            "ag-query-punct": "#a9b1d6",
+            "ag-query-value": "#c0caf5",
+            "ag-query-date": "#9ece6a",
+        },
+    )
+    for state, background in {
+        "user": "#24283b",
+        "pending": "#292e42",
+        "success": "#23382f",
+        "error": "#3b2630",
+        "selected": "#3b4261",
+    }.items():
+        variables[f"ag-state-{state}-bg"] = background
+        variables[f"ag-on-{state}"] = _on(background)
+    return Theme(
+        name=TOKYO_NIGHT_THEME_NAME,
+        primary="#7aa2f7",
+        secondary="#bb9af7",
+        accent="#7dcfff",
+        warning="#e0af68",
+        error="#f7768e",
+        success="#9ece6a",
+        foreground="#c0caf5",
+        background="#1a1b26",
+        surface="#1f2335",
+        panel="#24283b",
+        dark=True,
+        variables={
+            **variables,
+            **_builtin_overrides(accent="#7dcfff", faint="#565f89", surface="#1f2335"),
+        },
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ThemeProfile:
+    """One immutable, agentgrep-owned theme choice.
+
+    Parameters
+    ----------
+    name : str
+        Stable persisted identifier.
+    label : str
+        Compact picker label.
+    builder : typing.Callable[[], textual.theme.Theme]
+        Factory returning a fresh complete Textual theme.
+    syntax_theme : str
+        Rich/Pygments theme used for detail syntax rendering.
+    """
+
+    name: str
+    label: str
+    builder: t.Callable[[], Theme]
+    syntax_theme: str
+
+    def build(self) -> Theme:
+        """Build a fresh Textual theme for this profile."""
+        return self.builder()
+
+
+THEME_PROFILES: tuple[ThemeProfile, ...] = (
+    ThemeProfile(DARK_THEME_NAME, "agentgrep-dark", agentgrep_dark, "ansi_dark"),
+    ThemeProfile(LIGHT_THEME_NAME, "agentgrep-light", agentgrep_light, "ansi_light"),
+    ThemeProfile(TOKYO_NIGHT_THEME_NAME, "tokyo-night", agentgrep_tokyo_night, "one-dark"),
+)
+"""Small, ordered theme catalog exposed by the setup picker."""
+
+THEME_PROFILE_BY_NAME: cabc.Mapping[str, ThemeProfile] = types.MappingProxyType(
+    {profile.name: profile for profile in THEME_PROFILES},
+)
+"""Read-only lookup for persisted names and direct ``/theme`` selection."""
+
+
+def detail_syntax_theme(*, dark: bool, theme_name: str | None = None) -> str:
     """Return the Rich syntax theme matching the active Textual mode.
 
     Parameters
@@ -276,6 +412,9 @@ def detail_syntax_theme(*, dark: bool) -> t.Literal["ansi_dark", "ansi_light"]:
     typing.Literal["ansi_dark", "ansi_light"]
         The matching built-in Rich syntax theme name.
     """
+    profile = THEME_PROFILE_BY_NAME.get(theme_name or "")
+    if profile is not None:
+        return profile.syntax_theme
     return "ansi_dark" if dark else "ansi_light"
 
 

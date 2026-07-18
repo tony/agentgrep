@@ -14,7 +14,7 @@ from __future__ import annotations
 import pathlib
 import typing as t
 
-from agentgrep.ui import _history, registry
+from agentgrep.ui import _history, preferences, registry
 from agentgrep.ui._context import UiContext
 
 if t.TYPE_CHECKING:
@@ -73,6 +73,7 @@ def run_ui(
         base_scope=base_scope,
         layout=layout,
         workflow=workflow,
+        _offer_theme_setup=True,
     )
     t.cast("RunnableAppLike", app).run()
 
@@ -86,6 +87,7 @@ def build_streaming_ui_app(
     base_scope: SearchScope | None = None,
     layout: str = registry.DEFAULT_LAYOUT,
     workflow: str = registry.DEFAULT_WORKFLOW,
+    _offer_theme_setup: bool = False,
 ) -> object:
     """Construct the streaming Textual app without entering its run loop.
 
@@ -171,4 +173,12 @@ def build_streaming_ui_app(
         history=history,
         history_disabled=history_disabled,
     )
-    return ExplorerApp(ctx, composition=composition)
+    config_path = preferences.theme_config_path(home=home)
+    selected_theme = preferences.load_theme_name(config_path)
+    return ExplorerApp(
+        ctx,
+        composition=composition,
+        selected_theme=selected_theme,
+        config_path=config_path,
+        offer_theme_setup=_offer_theme_setup,
+    )

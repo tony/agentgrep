@@ -375,6 +375,8 @@ class HudLayout(LayoutScreen):
         self._completion_suggester = QuerySuggester(default_registry())
         # One highlighter syntax-colors the typed query on both inputs.
         self._query_highlighter = QueryHighlighter()
+        self._theme_refresh_pending = False
+        self._rendered_theme_name: str | None = None
         self._enum_values: tuple[str, ...] = ()
         self._filter_dropdown: t.Any = None
         self._filter_dropdown_values: tuple[str, ...] = ()
@@ -468,6 +470,12 @@ class HudLayout(LayoutScreen):
         """
         if not self.is_mounted:
             return
+        if self.app.theme == self._rendered_theme_name:
+            self._theme_refresh_pending = False
+            return
+        if self.app.screen is not self:
+            self._theme_refresh_pending = True
+            return
         self._refresh_query_highlighting(dark=bool(getattr(_theme, "dark", True)))
         results = self._results
         if results is not None:
@@ -479,11 +487,19 @@ class HudLayout(LayoutScreen):
         self._detail_body_cache.clear()
         if self._current_detail_record is not None:
             self.show_detail(self._current_detail_record)
+        self._rendered_theme_name = self.app.theme
 
     @_runtime.pump_only
     def _refresh_query_highlighting(self, *, dark: bool) -> None:
         """Repaint the shared query grammar with the active theme palette."""
-        self._query_highlighter.set_theme(dark=dark)
+        self._query_highlighter.set_theme(
+            dark=dark,
+            theme_variables=(
+                self.app.theme_variables
+                if self.app.theme in ui_theme.THEME_PROFILE_BY_NAME
+                else None
+            ),
+        )
         if self._search_input is not None:
             self._search_input.refresh()
         if self._filter_input is not None:
@@ -655,6 +671,7 @@ class HudLayout(LayoutScreen):
         # Rebuild Rich-baked rows/detail when the active color palette changes.
         # The pump-thread bind and watchdog are owned by the App shell (it owns
         # the pump).
+        self._rendered_theme_name = self.app.theme
         self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._apply_responsive_layout()
         # Attach the workflow (base.on_mount): it seeds the initial dispatch —
@@ -722,7 +739,10 @@ class HudLayout(LayoutScreen):
 
     @_runtime.pump_only
     def on_screen_resume(self) -> None:
-        """Resume the welcome shine only if the empty canvas is active."""
+        """Apply a coalesced theme preview, then restore the welcome shine."""
+        if self._theme_refresh_pending:
+            self._theme_refresh_pending = False
+            self._on_theme_changed(self.app.current_theme)
         self._sync_welcome_shine_timer()
 
     @_runtime.pump_only
@@ -1900,7 +1920,10 @@ class HudLayout(LayoutScreen):
             search=self._match_style("search"),
             filter=self._match_style("filter"),
         )
-        syntax_theme = ui_theme.detail_syntax_theme(dark=self.app.current_theme.dark)
+        syntax_theme = ui_theme.detail_syntax_theme(
+            dark=self.app.current_theme.dark,
+            theme_name=self.app.theme,
+        )
         cached = self._cached_detail_body(record, cache_key)
         if cached is not None:
             self._present_detail(
@@ -2130,15 +2153,17 @@ class HudLayout(LayoutScreen):
             foreground = ui_theme.resolve(theme_vars, "ag-match-search")
             return f"bold {foreground}".rstrip() if foreground else "bold yellow"
         if kind == "find":
-            # All find matches: a purple fill, distinct from search-gold and
-            # filter-accent.
-            color = ui_theme.resolve(theme_vars, "ag-model")
-            return f"bold black on {color}" if color else "bold black on magenta"
+            background = ui_theme.resolve(theme_vars, "ag-match-find-bg")
+            foreground = ui_theme.resolve(theme_vars, "ag-match-find-fg")
+            if background and foreground:
+                return f"bold {foreground} on {background}"
+            return "bold black on magenta"
         if kind == "find-current":
-            # The match the find cursor is on: a brighter gold fill so it
-            # stands out from the other (purple) find matches.
-            color = ui_theme.resolve(theme_vars, "ag-match-search")
-            return f"bold black on {color}" if color else "bold black on yellow"
+            background = ui_theme.resolve(theme_vars, "ag-match-find-current-bg")
+            foreground = ui_theme.resolve(theme_vars, "ag-match-find-current-fg")
+            if background and foreground:
+                return f"bold {foreground} on {background}"
+            return "bold black on yellow"
         background = ui_theme.resolve(theme_vars, "ag-match-filter-bg")
         foreground = ui_theme.resolve(theme_vars, "ag-match-filter-fg")
         if background and foreground:
@@ -2436,7 +2461,10 @@ class HudLayout(LayoutScreen):
         if cached is not None and self._detail_find_base_key == key:
             return cached
         if self._detail_find_json_syntax:
-            syntax_theme = ui_theme.detail_syntax_theme(dark=self.app.current_theme.dark)
+            syntax_theme = ui_theme.detail_syntax_theme(
+                dark=self.app.current_theme.dark,
+                theme_name=self.app.theme,
+            )
             text = _RichSyntax(source, "json", theme=syntax_theme, word_wrap=True).highlight(source)
             text.no_wrap = False
             self._apply_search_highlight(text)

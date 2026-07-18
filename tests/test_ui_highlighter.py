@@ -111,11 +111,11 @@ def test_query_highlighter_light_palette_uses_readable_semantic_hues() -> None:
     )
     assert {
         ("-", "bold #9b2242"),
-        ("agent", "#006b75"),
-        (":", "#5c5c5c"),
-        ("codex", "#343434"),
-        ("OR", "bold #8a4b00"),
-        ("*", "bold #765f00"),
-        (">", "#8a4b00"),
-        ("exact phrase", "#343434"),
+        ("agent", "#007f7f"),
+        (":", "#202020"),
+        ("codex", "#202020"),
+        ("OR", "bold #502000"),
+        ("*", "bold #000080"),
+        (">", "#502000"),
+        ("exact phrase", "#202020"),
     }.issubset(spans)

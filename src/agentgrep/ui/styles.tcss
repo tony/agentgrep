@@ -46,6 +46,7 @@ Input:focus, MaskedInput:focus, TextArea:focus {
     border: none;
     border-top: solid $accent;
     border-bottom: solid $accent;
+    background-tint: $foreground 0%;
 }
 
 /* Backup variant: the boxed (rounded, all-around) input we shipped first — add

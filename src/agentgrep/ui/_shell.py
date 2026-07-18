@@ -1,26 +1,26 @@
-"""The thin, fixed-composition Textual App shell (ADR 0013).
+"""Thin, fixed-composition Textual application shell (ADR 0013).
 
-``ExplorerApp`` owns *only* App-lifecycle concerns: pi-lite theme registration,
-native ANSI-background mode, the non-blocking pump bind / heartbeat watchdog /
-audit hook (ADR 0011), and which
-:class:`~agentgrep.ui.layouts._base.LayoutScreen` and
-:class:`~agentgrep.ui.workflows.Workflow` to mount. The validated pair is
-injected as one immutable shell composition, which the shell never replaces.
-All bindings and presentation belong to the layout, not here.
+``ExplorerApp`` owns app lifecycle, the immutable layout/workflow composition,
+theme registration, onboarding, and serialized UI-preference persistence. The
+search engine and MCP surfaces remain outside this module.
 
-Textual is imported at module scope, so this module is reached only lazily (via
-:func:`agentgrep.ui.app.build_streaming_ui_app`), keeping ``import agentgrep``
-Textual-free (ADR 0010).
+Textual is imported at module scope, so this module is reached only lazily via
+:func:`agentgrep.ui.app.build_streaming_ui_app`.
 """
 
 from __future__ import annotations
 
+import functools
+import pathlib
 import typing as t
+from dataclasses import dataclass
 
 from textual.app import App
 from textual.binding import BindingType
+from textual.worker import Worker, WorkerState
 
-from agentgrep.ui import _runtime, registry, theme as ui_theme
+from agentgrep.ui import _runtime, preferences, registry, theme as ui_theme
+from agentgrep.ui.widgets.theme_picker import ThemePicker
 
 if t.TYPE_CHECKING:
     from textual.screen import Screen
@@ -29,15 +29,31 @@ if t.TYPE_CHECKING:
 
 __all__ = ["ExplorerApp"]
 
+_EXPLORER_MODE = "explorer"
+
+
+@_runtime.offload
+def _save_theme_selection(theme_name: str, config_path: pathlib.Path) -> bool:
+    """Persist one detached theme choice away from the Textual pump."""
+    try:
+        return preferences.save_theme_name(theme_name, config_path)
+    except Exception:
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class _ThemeSaveRequest:
+    """One serialized preference write."""
+
+    generation: int
+    theme_name: str
+
 
 class ExplorerApp(App[None]):
     """Layout-agnostic shell with one validated immutable composition."""
 
     ENABLE_COMMAND_PALETTE: t.ClassVar[bool] = False
     COMMANDS: t.ClassVar[set[t.Any]] = set()
-    #: The pi-lite global stylesheet (semantic tokens + all-widget rules). The
-    #: ``$ag-*`` tokens it references always resolve via
-    #: :meth:`get_theme_variable_defaults`, regardless of the active theme.
     CSS_PATH: t.ClassVar[str] = "styles.tcss"
     BINDINGS: t.ClassVar[list[BindingType]] = []
 
@@ -46,48 +62,53 @@ class ExplorerApp(App[None]):
         ctx: UiContext,
         *,
         composition: registry._UiComposition,
+        selected_theme: str | None = None,
+        config_path: pathlib.Path | None = None,
+        offer_theme_setup: bool = False,
     ) -> None:
         super().__init__()
-        # Register and activate the pi-lite themes before the stylesheet loads
-        # (CSS is parsed during startup) so the ``$ag-*`` tokens it references
-        # resolve from the active theme.
-        self.register_theme(ui_theme.agentgrep_dark())
-        self.register_theme(ui_theme.agentgrep_light())
-        self.theme = ui_theme.DARK_THEME_NAME
-        # Native ANSI handling lets the dark theme use the terminal background.
-        # The semantic canvas token paints light themes explicitly, avoiding a
-        # Textual 3.2 ANSI-conversion bug on dim surfaces.
+        for profile in ui_theme.THEME_PROFILES:
+            self.register_theme(profile.build())
+        valid_selection = (
+            selected_theme if selected_theme in ui_theme.THEME_PROFILE_BY_NAME else None
+        )
+        self.theme = valid_selection or ui_theme.DARK_THEME_NAME
         self.ansi_color = True
         self._ctx = ctx
         self._composition = composition
+        self._theme_config_path = config_path or preferences.theme_config_path(home=ctx.home)
+        self._needs_theme_setup = offer_theme_setup and valid_selection is None
+        if self._needs_theme_setup:
+            self.add_mode(_EXPLORER_MODE, self._build_layout_screen)
+        self._theme_save_generation = 0
+        self._theme_save_pending: _ThemeSaveRequest | None = None
+        self._theme_save_active: _ThemeSaveRequest | None = None
+        self._theme_save_worker: Worker[bool] | None = None
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
-        """Merge the ``$ag-*`` token defaults so the stylesheet always resolves.
-
-        Returns
-        -------
-        dict[str, str]
-            Textual's defaults merged with :func:`agentgrep.ui.theme.ag_variable_defaults`
-            so a switch to any built-in theme can't leave an ``$ag-*`` reference
-            unresolved.
-        """
+        """Merge agentgrep tokens so unowned Textual themes remain safe."""
         base = super().get_theme_variable_defaults()
         return {**base, **ui_theme.ag_variable_defaults()}
 
     @_runtime.pump_only
-    def get_default_screen(self) -> Screen:
-        """Mount the selected layout and workflow as the launch screen."""
+    def _build_layout_screen(self) -> Screen:
+        """Construct the immutable layout/workflow pair on demand."""
         workflow = self._composition.workflow_type()
-        layout = self._composition.layout_type(self._ctx, workflow)
-        return t.cast("Screen", layout)
+        return t.cast("Screen", self._composition.layout_type(self._ctx, workflow))
 
+    @_runtime.pump_only
+    def get_default_screen(self) -> Screen:
+        """Return onboarding first, otherwise the selected explorer layout."""
+        if self._needs_theme_setup:
+            return t.cast(
+                "Screen",
+                ThemePicker(self.theme, initial_setup=True),
+            )
+        return self._build_layout_screen()
+
+    @_runtime.pump_only
     def on_mount(self) -> None:
-        """Bind the pump thread for the non-blocking guards (ADR 0011 NB-1/NB-8).
-
-        The shell owns the pump, so the bind, the log-only heartbeat watchdog
-        (default-on for an interactive TTY), and the opt-in audit hook live here;
-        the layouts only carry ``@pump_only`` / ``@offload`` callables.
-        """
+        """Bind pump guards and start the optional watchdog/audit hooks."""
         _runtime.bind_pump_thread()
         self.theme_changed_signal.subscribe(self, self._on_theme_changed)
         if _runtime.watchdog_enabled():
@@ -98,14 +119,116 @@ class ExplorerApp(App[None]):
 
     @_runtime.pump_only
     def _on_theme_changed(self, _selected_theme: object) -> None:
-        """Keep native ANSI enabled after Textual 3.2 changes the theme."""
+        """Preserve Textual's ANSI-aware rendering across profile changes."""
         if self.ansi_color is True:
             return
         self.ansi_color = True
         self.refresh_css(animate=False)
 
+    @_runtime.pump_only
+    def open_theme_picker(self) -> bool:
+        """Open one runtime picker, returning whether it was pushed."""
+        if isinstance(self.screen, ThemePicker):
+            return False
+        self.push_screen(ThemePicker(self.theme, initial_setup=False))
+        return True
+
+    @_runtime.pump_only
+    def commit_theme_picker(self, picker: ThemePicker, theme_name: str) -> bool:
+        """Apply a picker selection, close setup, and persist in background."""
+        if self.screen is not picker or theme_name not in ui_theme.THEME_PROFILE_BY_NAME:
+            return False
+        self.theme = theme_name
+        if picker.initial_setup:
+            self._needs_theme_setup = False
+            self.switch_mode(_EXPLORER_MODE)
+        else:
+            self.pop_screen()
+        self._queue_theme_save(theme_name)
+        return True
+
+    @_runtime.pump_only
+    def cancel_theme_picker(self, picker: ThemePicker) -> None:
+        """Close a runtime picker or continue setup without persisting."""
+        if self.screen is not picker:
+            return
+        if picker.initial_setup:
+            self._needs_theme_setup = False
+            self.switch_mode(_EXPLORER_MODE)
+        else:
+            self.pop_screen()
+
+    @_runtime.pump_only
+    def select_theme(self, theme_name: str) -> bool:
+        """Apply and persist one valid profile name."""
+        if theme_name not in ui_theme.THEME_PROFILE_BY_NAME:
+            return False
+        self.theme = theme_name
+        self._queue_theme_save(theme_name)
+        return True
+
+    def _queue_theme_save(self, theme_name: str) -> None:
+        """Coalesce preference writes while preserving final-choice ordering."""
+        self._theme_save_generation += 1
+        request = _ThemeSaveRequest(self._theme_save_generation, theme_name)
+        self._theme_save_pending = request
+        if self._theme_save_worker is None:
+            self._start_theme_save(request)
+
+    def _start_theme_save(self, request: _ThemeSaveRequest) -> None:
+        """Start one exclusive worker after the preceding write has finished."""
+        self._theme_save_active = request
+        try:
+            self._theme_save_worker = self.run_worker(
+                functools.partial(
+                    _save_theme_selection,
+                    request.theme_name,
+                    self._theme_config_path,
+                ),
+                name="theme-config",
+                group="theme-config",
+                description="save theme",
+                exit_on_error=False,
+                thread=True,
+                exclusive=True,
+            )
+        except RuntimeError:
+            self._theme_save_active = None
+            self._finish_theme_save(saved=False)
+
+    @_runtime.pump_only
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Advance the serialized preference queue after its worker terminates."""
+        if event.worker is not self._theme_save_worker:
+            return
+        if event.state not in {WorkerState.CANCELLED, WorkerState.ERROR, WorkerState.SUCCESS}:
+            return
+        request = self._theme_save_active
+        worker = self._theme_save_worker
+        self._theme_save_active = None
+        self._theme_save_worker = None
+        if request is None:
+            return
+        pending = self._theme_save_pending
+        if pending is not None and pending.generation != request.generation:
+            self._start_theme_save(pending)
+            return
+        self._theme_save_pending = None
+        saved = event.state is WorkerState.SUCCESS and bool(worker.result)
+        self._finish_theme_save(saved=saved)
+
+    def _finish_theme_save(self, *, saved: bool) -> None:
+        """Surface a durable-write failure without rolling back the session."""
+        if not saved:
+            self.notify(
+                "Theme is active for this session, but the preference could not be saved.",
+                title="Theme",
+                severity="warning",
+            )
+
+    @_runtime.pump_only
     def on_unmount(self) -> None:
-        """Release the pump-thread binding and stop the watchdog on teardown."""
+        """Release pump-thread guards and watchdog resources."""
         _runtime.unbind_pump_thread()
         _runtime.stop_pump_watchdog()
         _runtime.disarm_pump_audit()

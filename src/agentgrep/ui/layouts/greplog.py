@@ -34,7 +34,7 @@ from agentgrep.progress import (
     format_match_count,
 )
 from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _runtime
+from agentgrep.ui import _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.highlighter import QueryHighlighter
@@ -86,6 +86,8 @@ class GrepLogLayout(LayoutScreen):
         self._status: t.Any = None
         self._search_input: t.Any = None
         self._query_highlighter = QueryHighlighter()
+        self._theme_refresh_pending = False
+        self._rendered_theme_name: str | None = None
 
     def compose(self) -> cabc.Iterator[object]:
         """Build the tree: a search input over a log scrollback and a status line."""
@@ -105,6 +107,7 @@ class GrepLogLayout(LayoutScreen):
         yield Static("", id="greplog-status", markup=False)
         yield Footer()
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Cache widgets, then attach the workflow (its initial dispatch streams)."""
         self._search_input = self.query_one("#search")
@@ -113,7 +116,11 @@ class GrepLogLayout(LayoutScreen):
         self._log = self.query_one("#greplog")
         self._status = self.query_one("#greplog-status")
         self._search_input.cursor_blink = False
-        self._query_highlighter.set_theme(dark=bool(self.app.current_theme.dark))
+        self._query_highlighter.set_theme(
+            dark=bool(self.app.current_theme.dark),
+            theme_variables=self._owned_theme_variables(),
+        )
+        self._rendered_theme_name = self.app.theme
         self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._search_emit = self._make_gated_emit()
         super().on_mount()
@@ -124,8 +131,36 @@ class GrepLogLayout(LayoutScreen):
         """Repaint the search query with the selected theme's syntax palette."""
         if not self.is_mounted:
             return
-        self._query_highlighter.set_theme(dark=bool(getattr(selected_theme, "dark", True)))
+        if self.app.theme == self._rendered_theme_name:
+            self._theme_refresh_pending = False
+            return
+        if self.app.screen is not self:
+            self._theme_refresh_pending = True
+            return
+        self._apply_theme_refresh(selected_theme)
+
+    def _apply_theme_refresh(self, selected_theme: object) -> None:
+        """Apply the latest owned or polarity-based query palette."""
+        self._query_highlighter.set_theme(
+            dark=bool(getattr(selected_theme, "dark", True)),
+            theme_variables=self._owned_theme_variables(),
+        )
         self._search_input.refresh()
+        self._rendered_theme_name = self.app.theme
+
+    @_runtime.pump_only
+    def on_screen_resume(self) -> None:
+        """Coalesce hidden picker previews into one visible repaint."""
+        if not self._theme_refresh_pending:
+            return
+        self._theme_refresh_pending = False
+        self._apply_theme_refresh(self.app.current_theme)
+
+    def _owned_theme_variables(self) -> cabc.Mapping[str, str] | None:
+        """Return profile variables, or polarity fallback for unowned themes."""
+        if self.app.theme not in ui_theme.THEME_PROFILE_BY_NAME:
+            return None
+        return self.app.theme_variables
 
     @_runtime.pump_only
     def on_input_changed(self, event: object) -> None:
