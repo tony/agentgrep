@@ -92,6 +92,16 @@ async def search(
             description="Only return records whose recorded git branch matches this name.",
         ),
     ] = None,
+    human: t.Annotated[
+        t.Literal["true", "false"] | None,
+        Field(
+            default=None,
+            description=(
+                "Filter by who authored the turn: 'true' keeps user-typed prompts, "
+                "'false' keeps tool/assistant output. Omit to keep both."
+            ),
+        ),
+    ] = None,
 ) -> SearchToolResponse:
     """Search normalized prompts by default; opt into conversations with scope.
 
