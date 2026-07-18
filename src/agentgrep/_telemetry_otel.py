@@ -228,7 +228,6 @@ class OtelTelemetryBackend:
         logging_handler: logging.Handler,
         span_counter: t.Any,
         span_duration: t.Any,
-        instrumentations: tuple[t.Any, ...],
         profiles_started: bool,
         trace_api: t.Any | None = None,
     ) -> None:
@@ -243,7 +242,6 @@ class OtelTelemetryBackend:
         self._trace_api = trace_api
         self._counters: dict[str, t.Any] = {}
         self._histograms: dict[str, t.Any] = {}
-        self._instrumentations = instrumentations
         self.profiles_started = profiles_started
         self._shutdown = False
 
@@ -381,9 +379,6 @@ class OtelTelemetryBackend:
         if self._shutdown:
             return
         self._shutdown = True
-        for instrumentation in self._instrumentations:
-            with contextlib.suppress(Exception):
-                instrumentation.uninstrument()
         with contextlib.suppress(Exception):
             self._tracer_provider.shutdown()
         with contextlib.suppress(Exception):
@@ -610,7 +605,6 @@ def build_backend(
         )
         logging_handler = LoggingHandler(logger_provider=logger_provider)
 
-    instrumentations = _install_auto_instrumentation(mode) if explicit else ()
     return OtelTelemetryBackend(
         tracer=trace.get_tracer("agentgrep"),
         tracer_provider=tracer_provider,
@@ -620,7 +614,6 @@ def build_backend(
         logging_handler=logging_handler,
         span_counter=span_counter,
         span_duration=span_duration,
-        instrumentations=instrumentations,
         profiles_started=profiles_started,
     )
 
@@ -671,26 +664,6 @@ def _profile_tags(resource_attributes: _telemetry.TelemetryAttributes) -> dict[s
     if git_ref is not None:
         tags["service_git_ref"] = str(git_ref)
     return tags
-
-
-def _install_auto_instrumentation(mode: _telemetry.TelemetryMode) -> tuple[t.Any, ...]:
-    """Install debug/live auto-instrumentation.
-
-    SQLite spans come solely from
-    :func:`agentgrep._telemetry.sqlite_connection_factory`, which traces the
-    ``Connection.execute`` shortcut path agentgrep uses; ``SQLite3Instrumentor``
-    only covers the cursor path agentgrep never takes, so it is not installed.
-    """
-    if mode not in {"local", "debug", "debug-console", "live"}:
-        return ()
-    installed: list[t.Any] = []
-    with contextlib.suppress(Exception):
-        from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
-
-        asyncio_instrumentor = AsyncioInstrumentor()
-        asyncio_instrumentor.instrument()
-        installed.append(asyncio_instrumentor)
-    return tuple(installed)
 
 
 def _signal_export_enabled(env: cabc.Mapping[str, str], signal: str) -> bool:
