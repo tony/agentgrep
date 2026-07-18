@@ -11,9 +11,12 @@ agentgrep`` Textual-free (ADR 0010).
 
 from __future__ import annotations
 
+import logging
 import pathlib
+import time
 import typing as t
 
+from agentgrep import _telemetry
 from agentgrep.ui import _history, preferences, registry
 from agentgrep.ui._context import UiContext
 
@@ -23,6 +26,8 @@ if t.TYPE_CHECKING:
     from agentgrep.records import SearchQuery, SearchScope
 
 __all__ = ["build_streaming_ui_app", "run_ui"]
+
+logger = logging.getLogger(__name__)
 
 
 class UiQueryTooLongError(ValueError):
@@ -65,17 +70,73 @@ def run_ui(
     workflow : str
         The workflow to drive it (see :data:`agentgrep.ui.registry.WORKFLOWS`).
     """
-    app = build_streaming_ui_app(
-        home,
-        query,
-        control=control,
-        initial_search_text=initial_search_text,
-        base_scope=base_scope,
-        layout=layout,
-        workflow=workflow,
-        _offer_theme_setup=True,
-    )
-    t.cast("RunnableAppLike", app).run()
+    started_at = time.monotonic()
+    session_attributes = {
+        "agentgrep_surface": "tui",
+        "agentgrep_component": "frontend",
+        "agentgrep_component_kind": "in_process",
+        "agentgrep_operation": "tui.session",
+        "agentgrep_scope": query.scope,
+        "agentgrep_agent_count": len(query.agents),
+        "agentgrep_initial_query_present": bool(
+            initial_search_text or query.terms or query.compiled or query.origin_filter
+        ),
+    }
+    outcome = "ok"
+    with _telemetry.root_span("agentgrep.tui.session", **session_attributes):
+        try:
+            with _telemetry.span(
+                "agentgrep.tui.lifecycle",
+                **{
+                    **session_attributes,
+                    "agentgrep_operation": "tui.lifecycle",
+                },
+            ):
+                app = build_streaming_ui_app(
+                    home,
+                    query,
+                    control=control,
+                    initial_search_text=initial_search_text,
+                    base_scope=base_scope,
+                    layout=layout,
+                    workflow=workflow,
+                    _offer_theme_setup=True,
+                )
+                t.cast("RunnableAppLike", app).run()
+                _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+        except BaseException as error:
+            outcome = "error"
+            _telemetry.set_span_attribute("agentgrep_outcome", outcome)
+            _telemetry.set_span_attribute("agentgrep_error_type", type(error).__name__)
+            logger.error(  # noqa: TRY400 -- the span owns the re-raised traceback
+                "tui session failed",
+                extra={
+                    **session_attributes,
+                    "agentgrep_outcome": outcome,
+                    "agentgrep_error_type": type(error).__name__,
+                },
+            )
+            raise
+        else:
+            duration_ms = (time.monotonic() - started_at) * 1000.0
+            _telemetry.set_span_attribute("agentgrep_outcome", outcome)
+            _telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+            logger.info(
+                "tui session completed",
+                extra={
+                    **session_attributes,
+                    "agentgrep_outcome": outcome,
+                    "agentgrep_duration_ms": duration_ms,
+                },
+            )
+        finally:
+            shutdown_attributes = {
+                **session_attributes,
+                "agentgrep_operation": "tui.shutdown",
+                "agentgrep_outcome": outcome,
+            }
+            with _telemetry.span("agentgrep.tui.shutdown", **shutdown_attributes):
+                logger.info("tui shutdown completed", extra=shutdown_attributes)
 
 
 def build_streaming_ui_app(

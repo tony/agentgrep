@@ -158,6 +158,11 @@ class LayoutScreen(_SCREEN_BASE):
         """
         self._workflow.on_attach(t.cast("t.Any", self))
 
+    @_runtime.pump_only
+    def on_unmount(self) -> None:
+        """Cooperatively stop engine work owned by the departing layout."""
+        t.cast("t.Any", self).request_cancel()
+
     def set_workflow(self, workflow: Workflow) -> None:
         """Replace the active workflow and seed its initial dispatch."""
         t.cast("t.Any", self).request_cancel()
