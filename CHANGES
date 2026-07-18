@@ -36,11 +36,21 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a37 (Yet to be released)
+## agentgrep 0.1.0a38 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a37 (2026-07-18)
+
+agentgrep 0.1.0a37 makes the interactive explorer (`agentgrep ui`) usable on
+large result sets and gives it a complete set of owned themes. Searches now
+stream and filter without building every row in advance, so history recall,
+detail rendering, and theme repaints stay responsive while work continues. The
+explorer ships agentgrep dark, light, and Tokyo Night themes with a first-run
+chooser and the `/theme` command, and a redesigned welcome screen offers
+clickable, syntax-highlighted query examples as runnable starting points.
 
 ### What's new
 
