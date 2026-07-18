@@ -327,6 +327,7 @@ async def test_shutdown_flushes_latest_theme_after_active_save(
     first_started = threading.Event()
     first_finished = threading.Event()
     release_first = threading.Event()
+    first_timed_out = threading.Event()
     activity_lock = threading.Lock()
     active = 0
     max_active = 0
@@ -339,7 +340,9 @@ async def test_shutdown_flushes_latest_theme_after_active_save(
         try:
             if theme_name == theme.LIGHT_THEME_NAME:
                 first_started.set()
-                assert release_first.wait(timeout=2)
+                if not release_first.wait(timeout=2):
+                    first_timed_out.set()
+                    return False
             return bool(real_save(theme_name, path))
         finally:
             with activity_lock:
@@ -360,6 +363,7 @@ async def test_shutdown_flushes_latest_theme_after_active_save(
 
     release_first.set()
     assert await asyncio.to_thread(first_finished.wait, 2)
+    assert not first_timed_out.is_set()
     assert max_active == 1
     assert notices == []
     assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
