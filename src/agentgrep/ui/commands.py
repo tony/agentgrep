@@ -86,7 +86,7 @@ def _run_screenshot(app: t.Any, args: str) -> bool:
 
 
 def _run_theme(app: t.Any, args: str) -> bool:
-    """Toggle or select one of agentgrep's two themes."""
+    """Open or select one of agentgrep's owned themes."""
     return bool(app.select_theme(args))
 
 
@@ -125,9 +125,9 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand(
         "theme",
         (),
-        "Toggle or select the color theme",
+        "Preview or select the color theme",
         _run_theme,
-        "[dark|light]",
+        "[name]",
         accepts_args=True,
     ),
 )

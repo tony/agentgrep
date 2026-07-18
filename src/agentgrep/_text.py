@@ -31,6 +31,7 @@ else:
 __all__ = [
     "ANSI_CSI_RE",
     "CLI_DESCRIPTION",
+    "DETAIL_BODY_MAX_CHARS",
     "DETAIL_BODY_MAX_LINES",
     "FIND_DESCRIPTION",
     "GREP_DESCRIPTION",
@@ -293,7 +294,7 @@ SEARCH_DESCRIPTION = build_description(
                 "agentgrep search 'agent:codex migration'",
                 "agentgrep search '\"exact phrase\"'",
                 "agentgrep search 'timestamp:>2026-01-01 release'",
-                "agentgrep search 'model:gpt* caching'",
+                "agentgrep search 'scope:all model:gpt* caching'",
                 "agentgrep search 'cwd:~/work/django-project deploy'",
                 "agentgrep search 'project:docs branch:main deploy'",
                 "agentgrep search 'deploy -agent:cursor-cli'",
@@ -481,22 +482,36 @@ def _hard_truncate_ansi(text: str, max_width: int) -> str:
     return "".join(output)
 
 
-def truncate_lines(text: str, max_lines: int) -> str:
-    """Return the first ``max_lines`` lines of ``text``, with an overflow marker.
+def truncate_lines(
+    text: str,
+    max_lines: int,
+    *,
+    max_chars: int | None = None,
+) -> str:
+    """Return a bounded prefix of ``text``, with an overflow marker.
 
     Used by the TUI detail pane so a record body of any size renders in
-    microseconds — only the lines that fit on screen are passed to the
-    ``Static`` widget. The overflow marker (``… (+N more lines)``) tells the
-    user that more content exists.
+    bounded time — only the configured character and line prefix is passed to
+    the ``Static`` widget. Line-only overflow retains an exact count; character
+    overflow uses a generic marker so the bound never scans the omitted tail.
     """
-    if max_lines <= 0 or not text:
+    if max_lines <= 0 or not text or (max_chars is not None and max_chars <= 0):
         return ""
-    lines = text.split("\n")
-    if len(lines) <= max_lines:
+    chars_truncated = max_chars is not None and len(text) > max_chars
+    bounded = text[:max_chars] if chars_truncated else text
+    lines = bounded.split("\n")
+    lines_truncated = len(lines) > max_lines
+    if not lines_truncated and not chars_truncated:
         return text
     visible = lines[:max_lines]
+    if chars_truncated:
+        return "\n".join(visible) + "\n… (more content)"
     remaining = len(lines) - max_lines
     return "\n".join(visible) + f"\n… (+{remaining} more lines)"
+
+
+DETAIL_BODY_MAX_CHARS = 64 * 1024
+"""Hard cap on characters rendered in the detail-pane body."""
 
 
 DETAIL_BODY_MAX_LINES = 1000
@@ -567,9 +582,10 @@ def highlight_matches(
 ) -> _RichText:
     """Build a Rich ``Text`` with every occurrence of any term styled.
 
-    Stacks one ``highlight_regex`` pass per term so the per-pass complexity
-    is linear; total cost is O(N * T) for text length N and T terms.
-    Malformed regex patterns are silently skipped (mirrors
+    Stacks one ``highlight_regex`` pass per term. Literal matching is bounded
+    by the text and term counts; caller-supplied regex patterns retain Python
+    ``re`` complexity and must not be evaluated on a UI message pump.
+    Malformed patterns are silently skipped (mirrors
     :func:`find_first_match_line`).
     """
     rich = _RichText(text, no_wrap=False)
@@ -635,7 +651,7 @@ def detect_content_format(text: str) -> ContentFormat:
     if stripped.startswith(("{", "[")):
         try:
             json.loads(text)
-        except ValueError:
+        except RecursionError, ValueError:
             pass
         else:
             return "json"
@@ -741,4 +757,6 @@ def should_enable_color(color_mode: ColorMode, stream: t.TextIO) -> bool:
         return True
     if os.environ.get("FORCE_COLOR"):
         return True
+    if os.environ.get("TERM", "").lower() == "dumb":
+        return False
     return bool(getattr(stream, "isatty", lambda: False)())

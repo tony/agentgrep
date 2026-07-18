@@ -25,7 +25,12 @@ import pytest
 
 import agentgrep
 from agentgrep.cli.parser import create_parser
-from agentgrep.query import compile_query, default_registry, parse_query
+from agentgrep.query import (
+    compile_query,
+    default_registry,
+    parse_query,
+    scope_widened_for_ast,
+)
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _QUERY_SUBCOMMANDS = frozenset({"search", "grep", "find"})
@@ -155,6 +160,9 @@ def _extract_query(command: str) -> str | None:
 
 
 _QUERY_EXAMPLES = _harvest_query_examples()
+_MODEL_QUERY_EXAMPLES = tuple(
+    example for example in _QUERY_EXAMPLES if "model:" in (_extract_query(example.command) or "")
+)
 
 
 def test_query_examples_were_harvested() -> None:
@@ -178,6 +186,19 @@ def test_query_example_parses_and_compiles(example: QueryExample) -> None:
     ast = parse_query(query, registry)
     compiled = compile_query(ast, registry)
     assert compiled is not None
+
+
+@pytest.mark.parametrize(
+    "example",
+    _MODEL_QUERY_EXAMPLES,
+    ids=[example.test_id for example in _MODEL_QUERY_EXAMPLES],
+)
+def test_model_examples_discover_conversations(example: QueryExample) -> None:
+    """Shipped model examples widen the prompt-default discovery scope."""
+    query = _extract_query(example.command)
+    assert query is not None
+    ast = parse_query(query, default_registry())
+    assert scope_widened_for_ast(ast, "prompts") == "all"
 
 
 def test_extract_query_reads_positional_dropping_flags() -> None:

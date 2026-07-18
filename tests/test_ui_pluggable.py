@@ -93,11 +93,14 @@ def test_shell_accepts_one_typed_immutable_composition() -> None:
     workflow = registry.workflow_spec("search")
     assert layout is not None
     assert workflow is not None
-    composition = registry._UiComposition(layout=layout, workflow=workflow)
+    composition = registry._UiComposition(
+        layout_type=layout.loader(),
+        workflow_type=workflow.loader(),
+    )
     assert dataclasses.is_dataclass(composition)
-    field_name = "layout"
+    field_name = "layout_type"
     with pytest.raises(dataclasses.FrozenInstanceError):
-        setattr(composition, field_name, layout)
+        setattr(composition, field_name, layout.loader())
 
 
 def test_ui_command_has_no_layout_workflow_fields() -> None:
@@ -143,6 +146,129 @@ def test_build_streaming_ui_app_validates_selection(tmp_path: pathlib.Path) -> N
             control=agentgrep.SearchControl(),
             workflow="nope",
         )
+
+
+def test_factory_preserves_component_loader_import_error(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An internal loader defect is not mislabeled as missing Textual."""
+    from agentgrep.ui import registry
+
+    message = "sentinel loader defect"
+
+    def fail_loader() -> t.NoReturn:
+        raise ImportError(message)
+
+    spec = registry.LayoutSpec("hud", "test", fail_loader)
+    monkeypatch.setattr(registry, "layout_spec", lambda _name: spec)
+    query = agentgrep.SearchQuery(
+        terms=(),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
+    with pytest.raises(ImportError, match=message):
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+        )
+
+
+def test_build_streaming_ui_app_rejects_unrepresentable_launch_query(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The launch search cannot exceed what its primary input can display."""
+    from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
+
+    oversized = "x" * (QUERY_TEXT_MAX_CHARS + 1)
+    query = agentgrep.SearchQuery(
+        terms=(oversized,),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
+    with pytest.raises(ValueError, match="launch query exceeds"):
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+        )
+
+    query.terms = ("shown",)
+    with pytest.raises(ValueError, match="initial search text exceeds"):
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+            initial_search_text=oversized,
+        )
+
+    query.terms = ("x" * QUERY_TEXT_MAX_CHARS,)
+    app = t.cast(
+        "t.Any",
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=agentgrep.SearchControl(),
+        ),
+    )
+    assert len(app._ctx.query.terms[0]) == QUERY_TEXT_MAX_CHARS
+
+
+def test_factory_resolves_components_and_history_before_run(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shell receives resolved classes and an in-memory history snapshot."""
+    from agentgrep.ui import _history
+
+    query = SearchQuery(
+        terms=(),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=(),
+        limit=None,
+    )
+    entry = _history.HistoryEntry("scope:prompts", 1.0, "prompts")
+    loaded_paths: list[pathlib.Path] = []
+
+    def load_history(path: pathlib.Path, *, limit: int = _history.DISPLAY_LIMIT) -> list[object]:
+        loaded_paths.append(path)
+        assert limit == _history.DISPLAY_LIMIT
+        return [entry]
+
+    monkeypatch.setattr(_history, "load_history", load_history)
+    app = t.cast(
+        "t.Any",
+        agentgrep.build_streaming_ui_app(
+            tmp_path,
+            query,
+            control=SearchControl(),
+        ),
+    )
+
+    assert len(loaded_paths) == 1
+    assert app._ctx.history == (entry,)
+    assert app._composition.layout_type.__name__ == "HudLayout"
+    assert app._composition.workflow_type.__name__ == "SearchWorkflow"
+
+    agentgrep.build_streaming_ui_app(
+        tmp_path,
+        query,
+        control=SearchControl(),
+        layout="greplog",
+    )
+    assert len(loaded_paths) == 1
 
 
 async def test_explorer_app_has_fixed_shell_surface(
@@ -253,10 +379,11 @@ async def test_explorer_app_composition_selects_initial_pair(
             invoker=_NoopInvoker(),
             query=query,
             control=SearchControl(),
+            base_scope=query.scope,
         ),
         composition=registry._UiComposition(
-            layout=layout_spec,
-            workflow=workflow_spec,
+            layout_type=layout_spec.loader(),
+            workflow_type=workflow_spec.loader(),
         ),
     )
     async with app.run_test() as pilot:

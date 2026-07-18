@@ -78,6 +78,7 @@ except ImportError:
 from agentgrep._text import (
     ANSI_CSI_RE,
     CLI_DESCRIPTION,
+    DETAIL_BODY_MAX_CHARS,
     DETAIL_BODY_MAX_LINES,
     FIND_DESCRIPTION,
     GREP_DESCRIPTION,
@@ -421,6 +422,7 @@ def run_ui(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
     layout: str | None = None,
     workflow: str | None = None,
 ) -> None:
@@ -436,20 +438,22 @@ def run_ui(
     to the space-joined ``query.terms`` for compatibility with the
     pre-query-language callers. ``layout`` / ``workflow`` select the
     pluggable surface; ``None`` uses the registry defaults.
+
+    ``base_scope`` preserves the discovery scope that later interactive
+    queries without a ``scope:`` predicate return to. ``None`` uses the
+    effective launch-query scope.
     """
+    from agentgrep.ui import registry as ui_registry
     from agentgrep.ui.app import run_ui as _run_ui
 
-    selection: dict[str, str] = {}
-    if layout is not None:
-        selection["layout"] = layout
-    if workflow is not None:
-        selection["workflow"] = workflow
     _run_ui(
         home,
         query,
         control=control,
         initial_search_text=initial_search_text,
-        **selection,
+        base_scope=base_scope,
+        layout=ui_registry.DEFAULT_LAYOUT if layout is None else layout,
+        workflow=ui_registry.DEFAULT_WORKFLOW if workflow is None else workflow,
     )
 
 
@@ -459,6 +463,7 @@ def build_streaming_ui_app(
     *,
     control: SearchControl,
     initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
     layout: str | None = None,
     workflow: str | None = None,
 ) -> object:
@@ -469,19 +474,17 @@ def build_streaming_ui_app(
     built, never at import time of the top-level package. ``layout`` /
     ``workflow`` select the pluggable surface; ``None`` uses the defaults.
     """
+    from agentgrep.ui import registry as ui_registry
     from agentgrep.ui.app import build_streaming_ui_app as _build
 
-    selection: dict[str, str] = {}
-    if layout is not None:
-        selection["layout"] = layout
-    if workflow is not None:
-        selection["workflow"] = workflow
     return _build(
         home,
         query,
         control=control,
         initial_search_text=initial_search_text,
-        **selection,
+        base_scope=base_scope,
+        layout=ui_registry.DEFAULT_LAYOUT if layout is None else layout,
+        workflow=ui_registry.DEFAULT_WORKFLOW if workflow is None else workflow,
     )
 
 
@@ -614,6 +617,7 @@ __all__ = (
     "CONVERSATION_CONTENT_STORES",
     "CONVERSATION_STORE_ROLES",
     "CURSOR_STATE_TOKENS",
+    "DETAIL_BODY_MAX_CHARS",
     "DETAIL_BODY_MAX_LINES",
     "FIND_DESCRIPTION",
     "GREP_DESCRIPTION",

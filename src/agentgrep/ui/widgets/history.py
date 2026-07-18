@@ -4,42 +4,149 @@
 two-pane recall surface — a left list of past search queries (each row a
 relative-time prefix + the query, fuzzy-highlighted) and a right preview of the
 selected entry — with a bottom incremental filter and a footer hint. It owns all
-keys while open, dims the screen below, and ``dismiss(...)`` flows the chosen
-query (or ``None`` on cancel) back to the app, which fills the search box.
+keys while open, keeps the screen below visible, and ``dismiss(...)`` flows the
+chosen query (or ``None`` on cancel) back to the app, which fills the search box.
 
-The list is a small, capped, in-memory snapshot, so filtering runs synchronously
-on every keystroke (no worker, no disk) — ADR 0011's no-blocking rule holds with
-room to spare. The query text is rendered as a plain :class:`~textual.content.Content`
-(never ``from_markup``) so a query containing ``[...]`` is shown verbatim, and the
-fuzzy match offsets are stylized by hand — mirroring the completion dropdown's
-``markup=False`` guard.
+The list is a capped, in-memory snapshot. Filtering is debounced and scored in
+an exclusive thread worker so rapid typing never runs fuzzy ranking on Textual's
+message pump. The query text is rendered as a plain
+:class:`~textual.content.Content` (never ``from_markup``) so a query containing
+``[...]`` is shown verbatim, and the fuzzy match offsets are stylized by hand —
+mirroring the completion dropdown's ``markup=False`` guard.
 """
 
 from __future__ import annotations
 
+import functools
 import time
 import typing as t
 
+import rapidfuzz.distance
+import rapidfuzz.fuzz
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
-from textual.fuzzy import Matcher
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from agentgrep.ui import theme as ui_theme
+from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._history import DISPLAY_LIMIT, HistoryEntry
 from agentgrep.ui.format import format_relative_time
+from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
-
-    from agentgrep.ui._history import HistoryEntry
 
 __all__ = ["HistoryRecall"]
 
 _AGE_WIDTH = 9
 """Fixed width of the relative-time prefix column so query text aligns."""
+
+_ROW_TEXT_MAX_CHARS = 160
+"""Maximum query characters projected into one list row."""
+
+_FILTER_WORKER_GROUP = "history-recall-filter"
+"""Stable worker group for supersedable history scoring."""
+
+
+class _FilterSnapshot(t.NamedTuple):
+    """Immutable inputs captured on the pump for one fuzzy score pass."""
+
+    generation: int
+    query: str
+    entries: tuple[HistoryEntry, ...]
+
+
+class _FilterRow(t.NamedTuple):
+    """One worker-produced row ready for bounded pump-side rendering."""
+
+    entry: HistoryEntry
+    projected: str
+    offsets: tuple[int, ...]
+
+
+class _FilterResult(t.NamedTuple):
+    """One immutable history-filter result returned to the pump."""
+
+    query: str
+    rows: tuple[_FilterRow, ...]
+
+
+def _row_text(entry: HistoryEntry) -> str:
+    """Project one history entry to the bounded single-line list surface."""
+    first_line, separator, _rest = entry.text.partition("\n")
+    truncated = bool(separator) or len(first_line) > _ROW_TEXT_MAX_CHARS
+    result = first_line[: _ROW_TEXT_MAX_CHARS - int(truncated)]
+    return f"{result}…" if truncated else result
+
+
+def _subsequence_offsets(query: str, text: str) -> tuple[int, ...]:
+    """Return linear case-insensitive subsequence offsets for decoration."""
+    if not query:
+        return ()
+    needle = query.casefold()
+    needle_index = 0
+    offsets: list[int] = []
+    for source_offset, char in enumerate(text):
+        for folded_char in char.casefold():
+            if folded_char != needle[needle_index]:
+                continue
+            if not offsets or offsets[-1] != source_offset:
+                offsets.append(source_offset)
+            needle_index += 1
+            if needle_index == len(needle):
+                return tuple(offsets)
+    return ()
+
+
+def _score_snapshot(snapshot: _FilterSnapshot) -> tuple[_FilterRow, ...]:
+    """Score one immutable history snapshot, preserving newest-first ties."""
+    if not snapshot.query:
+        return tuple(_FilterRow(entry, _row_text(entry), ()) for entry in snapshot.entries)
+    folded_query = snapshot.query.casefold()
+    scored: list[tuple[float, _FilterRow]] = []
+    for entry in snapshot.entries:
+        folded_entry = entry.text.casefold()
+        if rapidfuzz.distance.LCSseq.similarity(
+            folded_query,
+            folded_entry,
+            score_cutoff=len(folded_query),
+        ) != len(folded_query):
+            continue
+        projected = _row_text(entry)
+        score = rapidfuzz.fuzz.ratio(
+            folded_query,
+            folded_entry,
+            processor=None,
+        )
+        scored.append(
+            (
+                score,
+                _FilterRow(
+                    entry,
+                    projected,
+                    _subsequence_offsets(snapshot.query, projected),
+                ),
+            )
+        )
+    # Python's sort is stable, so equal scores retain the newest-first snapshot order.
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return tuple(row for _score, row in scored)
+
+
+@_runtime.offload
+def _score_and_deliver(
+    snapshot: _FilterSnapshot,
+    emit: cabc.Callable[[object], None],
+) -> None:
+    """Score off-pump and carry the snapshot generation back to the modal."""
+    try:
+        emit(_FilterResult(snapshot.query, _score_snapshot(snapshot)))
+    except RuntimeError:
+        # The app may finish while a cancelled thread drains its pure-CPU pass.
+        return
 
 
 class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual generic base needs a runtime subscript
@@ -50,6 +157,7 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
     # shape (no bare ``ClassVar``, which the checker rejects in a union).
     HORIZONTAL_BREAKPOINTS: list[tuple[int, str]] | None = [(0, "-narrow"), (80, "-wide")]  # noqa: RUF012
     PREVIEW_ROWS: t.ClassVar[int] = 12
+    _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
 
     BINDINGS: t.ClassVar[list[Binding]] = [
         Binding("escape", "cancel", "Cancel", priority=True, show=False),
@@ -93,10 +201,17 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
         id: str | None = None,  # noqa: A002 -- Textual ``id`` kwarg
     ) -> None:
         super().__init__(id=id)
-        self._entries = list(entries)
-        self._seed = seed
+        self._entries = tuple(
+            entry._replace(text=entry.text[:INPUT_MAX_LENGTH]) for entry in entries[:DISPLAY_LIMIT]
+        )
+        self._seed = seed[:_ROW_TEXT_MAX_CHARS]
         self._matches: list[HistoryEntry] = []
         self._now = int(time.time())
+        self._filter_generation = 0
+        self._applied_filter_generation = -1
+        self._accept_generation: int | None = None
+        self._filter_timer: Timer | None = None
+        self._pending_filter: _FilterSnapshot | None = None
         # Content.stylize takes a style string; reverse-video by default,
         # recolored to the accent hex once the theme resolves on mount.
         self._match_style = "reverse"
@@ -109,23 +224,32 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
                 yield OptionList(id="history-list", markup=False)
                 with VerticalScroll(id="history-preview-scroll"):
                     yield Static("", id="history-preview")
-            yield Input(placeholder="Search history", id="history-filter")
+            yield Input(
+                placeholder="Search history",
+                id="history-filter",
+                max_length=_ROW_TEXT_MAX_CHARS,
+            )
             yield Static(
                 "↑/↓ to navigate · Enter to use · Esc to cancel",
                 id="history-footer",
             )
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Resolve the highlight color, seed the filter, and render the first list."""
         accent = self._resolve_accent()
         if accent:
             self._match_style = f"{accent} bold"
+        filter_input = self.query_one("#history-filter", Input)
         if self._seed:
-            # Setting the value fires ``Input.Changed`` -> ``_refilter``; only
-            # refilter directly when there is no seed to drive that event.
-            self.query_one("#history-filter", Input).value = self._seed
-        else:
-            self._refilter("")
+            with filter_input.prevent(Input.Changed):
+                filter_input.value = self._seed
+        self._launch_refilter(self._new_snapshot(self._seed))
+
+    @_runtime.pump_only
+    def on_unmount(self) -> None:
+        """Invalidate pending callbacks while Textual tears down the modal."""
+        self._invalidate_refilter()
 
     def _resolve_accent(self) -> str:
         """Return the theme's accent hex, or ``""`` when it cannot be resolved."""
@@ -135,40 +259,112 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
             return ""
 
     # --- filtering + rendering -------------------------------------------
+    @_runtime.pump_only
     def _refilter(self, query: str) -> None:
-        """Rebuild the list for ``query`` (fuzzy, newest-first), repaint the preview."""
+        """Debounce one immutable query snapshot before fuzzy scoring."""
+        snapshot = self._new_snapshot(query)
+        self._pending_filter = snapshot
+        if self._filter_timer is not None:
+            self._filter_timer.stop()
+        self._filter_timer = self.set_timer(
+            self._DEBOUNCE_SECONDS,
+            self._start_pending_refilter,
+        )
+
+    def _new_snapshot(self, query: str) -> _FilterSnapshot:
+        """Invalidate older work and return the next immutable score request."""
+        self._filter_generation += 1
+        return _FilterSnapshot(
+            self._filter_generation,
+            query[:_ROW_TEXT_MAX_CHARS],
+            self._entries,
+        )
+
+    @_runtime.pump_only
+    def _start_pending_refilter(self) -> None:
+        """Launch only the newest request after typing goes quiet."""
+        self._filter_timer = None
+        snapshot = self._pending_filter
+        self._pending_filter = None
+        if snapshot is not None and self.is_mounted:
+            self._launch_refilter(snapshot)
+
+    @_runtime.pump_only
+    def _launch_refilter(self, snapshot: _FilterSnapshot) -> None:
+        """Start one exclusive scorer over pump-captured immutable values."""
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_refilter,
+            snapshot.generation,
+        )
+        self.run_worker(
+            functools.partial(
+                _score_and_deliver,
+                snapshot,
+                emit,
+            ),
+            name="history recall filter",
+            group=_FILTER_WORKER_GROUP,
+            description="Score one immutable history recall snapshot",
+            thread=True,
+            exclusive=True,
+        )
+
+    @_runtime.pump_only
+    def _apply_refilter(
+        self,
+        generation: int,
+        event: object,
+    ) -> None:
+        """Apply the newest worker result and discard stale generations."""
+        if generation != self._filter_generation or not self.is_mounted:
+            return
+        result = t.cast("_FilterResult", event)
         option_list = self.query_one("#history-list", OptionList)
         option_list.clear_options()
-        matcher = Matcher(query) if query else None
-        if matcher is None:
-            self._matches = list(self._entries)
-        else:
-            scored = [
-                (score, entry)
-                for entry in self._entries
-                if (score := matcher.match(entry.text)) > 0
-            ]
-            # Stable sort by score keeps newest-first among equal scores.
-            scored.sort(key=lambda pair: pair[0], reverse=True)
-            self._matches = [entry for _score, entry in scored]
+        self._applied_filter_generation = generation
+        self._matches = [row.entry for row in result.rows]
         if not self._matches:
-            option_list.add_option(Option(self._empty_text(query), disabled=True))
+            option_list.add_option(Option(self._empty_text(result.query), disabled=True))
             self.query_one("#history-preview", Static).update("")
-            return
-        for entry in self._matches:
-            option_list.add_option(Option(self._row(entry, matcher)))
-        option_list.highlighted = 0
-        self._update_preview(0)
+        else:
+            option_list.add_options(
+                Option(self._row(row.entry, projected=row.projected, offsets=row.offsets))
+                for row in result.rows
+            )
+            option_list.highlighted = 0
+            self._update_preview(0)
+        if self._accept_generation == generation:
+            self._accept_generation = None
+            self._accept(option_list.highlighted)
 
-    def _row(self, entry: HistoryEntry, matcher: Matcher | None) -> Content:
+    @_runtime.pump_only
+    def _invalidate_refilter(self) -> None:
+        """Cancel the debounce and gate any draining worker result."""
+        self._filter_generation += 1
+        self._accept_generation = None
+        self._pending_filter = None
+        if self._filter_timer is not None:
+            self._filter_timer.stop()
+            self._filter_timer = None
+        self.workers.cancel_group(self, _FILTER_WORKER_GROUP)
+
+    def _row(
+        self,
+        entry: HistoryEntry,
+        query: str = "",
+        *,
+        projected: str | None = None,
+        offsets: cabc.Sequence[int] | None = None,
+    ) -> Content:
         """Compose a list row: a dim relative-time prefix + the (highlighted) query."""
         prefix = f"{format_relative_time(entry.ts, self._now):<{_AGE_WIDTH}}"
-        content = Content(entry.text)
-        if matcher is not None:
-            _score, offsets = matcher.fuzzy_search.match(matcher.query, entry.text)
-            for offset in offsets:
-                if 0 <= offset < len(entry.text) and not entry.text[offset].isspace():
-                    content = content.stylize(self._match_style, offset, offset + 1)
+        projected = _row_text(entry) if projected is None else projected
+        content = Content(projected)
+        match_offsets = _subsequence_offsets(query, projected) if offsets is None else offsets
+        for offset in match_offsets:
+            if not projected[offset].isspace():
+                content = content.stylize(self._match_style, offset, offset + 1)
         return Content.assemble((prefix, "dim"), content)
 
     def _empty_text(self, query: str) -> str:
@@ -253,6 +449,12 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
 
     def _accept(self, index: int | None) -> None:
         """Dismiss with the chosen query text, or ``None`` when there is none."""
+        if self._applied_filter_generation != self._filter_generation:
+            self._accept_generation = self._filter_generation
+            if self._pending_filter is not None:
+                self._start_pending_refilter()
+            return
+        self._invalidate_refilter()
         if index is None or not (0 <= index < len(self._matches)):
             self.dismiss(None)
             return
@@ -260,6 +462,7 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
 
     def action_cancel(self) -> None:
         """Escape cancels: dismiss with ``None`` so the search box is left as-is."""
+        self._invalidate_refilter()
         self.dismiss(None)
 
     def action_filter_clear_or_cancel(self) -> None:
@@ -274,4 +477,5 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
         if filter_input.value:
             filter_input.value = ""
             return
+        self._invalidate_refilter()
         self.dismiss(None)

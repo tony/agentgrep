@@ -40,7 +40,7 @@ def _ui_source_trees() -> list[ast.AST]:
 
     Each pluggable layout (HUD, grep-log, …) carries its own streaming transport,
     so the no-blocking-calls guard scans the pump methods (``watch_*`` /
-    ``_on_key`` / ``on_mount`` / ``render`` / ``@pump_only``) of all of them, plus
+    ``on_key`` / ``on_mount`` / ``render`` / ``@pump_only``) of all of them, plus
     the App-lifecycle shell and the leaf widgets.
     """
     ui_dir = _APP_PATH.parent.parent
@@ -59,19 +59,36 @@ _UI_TREES = _ui_source_trees()
 # handlers, render/compose, the input key/value overrides, @on-decorated
 # handlers (any name), the callables handed to a scheduler/cross-thread/signal
 # site (see _SCHEDULED_PUMP_NAMES), plus anything explicitly tagged @pump_only.
-_PUMP_PREFIXES = ("on_", "action_", "watch_", "compute_", "_watch_")
-_PUMP_EXACT = {"render", "compose", "_on_key"}
+_PUMP_PREFIXES = (
+    "on_",
+    "_on_",
+    "action_",
+    "_action_",
+    "watch_",
+    "_watch_",
+    "validate_",
+    "compute_",
+    "get_content_",
+)
+_PUMP_EXACT = {
+    "render",
+    "render_line",
+    "__rich__",
+    "compose",
+    "get_default_screen",
+    "pre_layout",
+}
 
 # Calls that hand a callable to the pump thread; their target methods run there
 # even though their names match no prefix (NB-1/NB-8).
-_SCHEDULER_FUNCS = {
-    "set_timer",
-    "set_interval",
-    "call_later",
-    "call_next",
-    "call_after_refresh",
-    "call_from_thread",
-    "subscribe",
+_SCHEDULER_CALLBACK_POSITIONS = {
+    "set_timer": (1,),
+    "set_interval": (1,),
+    "call_later": (0,),
+    "call_next": (0,),
+    "call_after_refresh": (0,),
+    "call_from_thread": (0,),
+    "subscribe": (1,),
 }
 
 # Blocking calls forbidden in a pump-thread body (NB-1). JSON parsing is checked
@@ -134,7 +151,7 @@ def _import_map(tree: ast.AST) -> dict[str, str]:
     return mapping
 
 
-def _scheduled_pump_names() -> frozenset[str]:
+def _scheduled_pump_names(trees: t.Iterable[ast.AST] = _UI_TREES) -> frozenset[str]:
     """Return method names handed to a scheduler/cross-thread/signal call site.
 
     Textual runs these on the pump thread even though their names match no
@@ -142,13 +159,20 @@ def _scheduled_pump_names() -> frozenset[str]:
     cannot see them, so seed them from the call sites (NB-8).
     """
     names: set[str] = set()
-    for tree in _UI_TREES:
+    for tree in trees:
         for call in ast.walk(tree):
             if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
                 continue
-            if call.func.attr not in _SCHEDULER_FUNCS:
+            positions = _SCHEDULER_CALLBACK_POSITIONS.get(call.func.attr)
+            if positions is None:
                 continue
-            for arg in call.args:
+            candidates = [
+                argument for index, argument in enumerate(call.args) if index in positions
+            ]
+            candidates.extend(
+                keyword.value for keyword in call.keywords if keyword.arg == "callback"
+            )
+            for arg in candidates:
                 # Seed only ``self.method`` targets: the data args passed
                 # alongside the callable are bare names, and a lambda/partial
                 # target has no name to seed (a known residual, ADR 0011).
@@ -343,6 +367,29 @@ def test_pump_methods_have_no_blocking_calls() -> None:
     assert not offenders, f"blocking calls reachable from pump methods (NB-1/NB-8): {offenders}"
 
 
+def test_input_widget_pump_entrypoints_have_runtime_guards() -> None:
+    """Interactive input hooks keep the runtime pump-thread assertion."""
+    input_classes = {
+        "_BoundedInput",
+        "CompletionDropdown",
+        "DetailFindInput",
+        "FilterInput",
+        "SearchInput",
+    }
+    entrypoints = [
+        method
+        for method in _all_methods()
+        if method.cls in input_classes and _is_pump_method(method)
+    ]
+
+    assert entrypoints
+    assert not {
+        f"{method.cls}.{method.name}"
+        for method in entrypoints
+        if "pump_only" not in method.decorators
+    }
+
+
 def test_forbidden_call_detector_flags_blocking_calls() -> None:
     """The detector itself is not a no-op — it flags real blocking calls.
 
@@ -409,9 +456,27 @@ def test_classifier_sees_scheduled_callables_and_on_handlers() -> None:
     assert "pump_only" in screenshot_callback.decorators
     # Data args passed alongside the callable must NOT be seeded (NB-8 false alarm).
     assert not ({"record", "header", "body", "query_terms", "self"} & _SCHEDULED_PUMP_NAMES)
+    keyword_tree = ast.parse(
+        "self.set_timer(delay=0.1, callback=self._keyword_callback)",
+    )
+    assert _scheduled_pump_names([keyword_tree]) == {"_keyword_callback"}
+    data_keyword_tree = ast.parse(
+        "self.call_from_thread(self._apply, value=self.record)",
+    )
+    assert _scheduled_pump_names([data_keyword_tree]) == {"_apply"}
     node = t.cast("ast.FunctionDef", ast.parse("def f(self): ...").body[0])
     assert _is_pump_method(_Method("A", "_after_resize", node, (), ()))  # set_timer target
     assert _is_pump_method(_Method("W", "_handle", node, ("on",), ()))  # @on handler
+    for name in (
+        "_on_key",
+        "_action_submit",
+        "validate_value",
+        "render_line",
+        "__rich__",
+        "get_content_width",
+        "pre_layout",
+    ):
+        assert _is_pump_method(_Method("W", name, node, (), ())), name
     assert not _is_pump_method(_Method("W", "_helper", node, (), ()))  # plain helper
 
 
@@ -477,6 +542,44 @@ def test_workers_are_thread_exclusive_and_grouped() -> None:
         assert isinstance(exclusive, ast.Constant) and exclusive.value is not non_supersedable
 
 
+def test_partial_workers_have_static_descriptions() -> None:
+    """Textual must not derive worker descriptions from data-bearing partial reprs."""
+    partial_count = 0
+    for tree in _UI_TREES:
+        imports = _import_map(tree)
+        for call in ast.walk(tree):
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "run_worker"
+            ):
+                continue
+            work = (
+                call.args[0]
+                if call.args
+                else next(
+                    (kw.value for kw in call.keywords if kw.arg == "work"),
+                    None,
+                )
+            )
+            if not isinstance(work, ast.Call):
+                continue
+            dotted = _dotted(work.func)
+            root, _, rest = dotted.partition(".")
+            canonical = imports.get(root, root) + ("." + rest if rest else "")
+            if canonical != "functools.partial":
+                continue
+            partial_count += 1
+            kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+            description = kwargs.get("description")
+            assert (
+                isinstance(description, ast.Constant)
+                and isinstance(description.value, str)
+                and description.value.strip()
+            ), "data-bearing partial worker needs a static description="
+    assert partial_count, "expected at least one partial worker"
+
+
 def test_results_widget_owns_filter_membership_without_hud_rescan() -> None:
     """Filter replacement reuses the results widget's existing ID delta set."""
     methods = {(method.cls, method.name): method.node for method in _all_methods()}
@@ -513,28 +616,87 @@ def test_apply_records_batch_uses_bounded_stream_apply() -> None:
     assert "stream_apply" in calls
 
 
-def test_theme_changed_uses_bounded_async_pump_apply() -> None:
-    """Theme-baked rows rebuild asynchronously through the NB-4 chunk cap."""
+def test_search_worker_failures_use_gated_emitters() -> None:
+    """Worker exceptions travel through the same NB-10 generation gate."""
+    methods = {(item.cls, item.name): item for item in _all_methods()}
+    for class_name in ("HudLayout", "GrepLogLayout"):
+        worker = methods[(class_name, "_run_search")]
+        calls = {
+            node.func.attr
+            for node in ast.walk(worker.node)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        assert "call_from_thread" not in calls, class_name
+        assert any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "StreamingSearchFinished"
+            for node in ast.walk(worker.node)
+        ), class_name
+
+
+def test_filter_completed_adopts_worker_prepared_model() -> None:
+    """The pump callback performs no full-result projection work (NB-4/NB-5)."""
+    methods = {(item.cls, item.name): item for item in _all_methods()}
+    completed = methods[("HudLayout", "on_filter_completed")]
+    filter_loaded = methods[("HudLayout", "filter_loaded")]
+    worker = methods[("HudLayout", "_run_filter_worker")]
+
+    assert "pump_only" in completed.decorators
+    assert "offload" in worker.decorators
+    assert not any(
+        isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp))
+        for node in ast.walk(completed.node)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"id", "list", "set", "tuple"}
+        for node in ast.walk(completed.node)
+    )
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "all_records"
+        for node in ast.walk(worker.node)
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "tuple"
+        and any(
+            isinstance(argument, ast.Attribute) and argument.attr == "all_records"
+            for argument in node.args
+        )
+        for node in ast.walk(filter_loaded.node)
+    )
+
+
+def test_theme_changed_invalidates_the_virtual_viewport() -> None:
+    """Theme changes invalidate lazy rows without scanning the result model."""
     method = next(
         item
         for item in _all_methods()
         if item.cls == "HudLayout" and item.name == "_on_theme_changed"
     )
-    assert isinstance(method.node, ast.AsyncFunctionDef)
+    assert isinstance(method.node, ast.FunctionDef)
     assert "pump_only" in method.decorators
-    stream_calls = [
-        node
+    call_attributes = [
+        node.func
         for node in ast.walk(method.node)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "stream_apply"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     ]
-    assert len(stream_calls) == 1
-    chunk_size = next(
-        keyword.value for keyword in stream_calls[0].keywords if keyword.arg == "chunk_size"
+    results_refreshes = [
+        attribute
+        for attribute in call_attributes
+        if attribute.attr == "refresh_theme"
+        and isinstance(attribute.value, ast.Name)
+        and attribute.value.id == "results"
+    ]
+    assert len(results_refreshes) == 1
+    assert not any(attribute.attr == "stream_apply" for attribute in call_attributes)
+    assert not any(
+        isinstance(node, (ast.For, ast.ListComp, ast.SetComp, ast.DictComp))
+        for node in ast.walk(method.node)
     )
-    assert isinstance(chunk_size, ast.Attribute)
-    assert chunk_size.attr == "_APPLY_CHUNK_SIZE"
 
 
 # --- runtime guards --------------------------------------------------------

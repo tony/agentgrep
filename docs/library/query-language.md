@@ -43,7 +43,7 @@ term = TERM ;
 A full query exercising most of the grammar:
 
 ```agentgrep-query
-(agent:codex OR agent:cursor-cli) model:gpt* timestamp:>2026-01-01 NOT deploy
+scope:all (agent:codex OR agent:cursor-cli) model:gpt* timestamp:>2026-01-01 NOT deploy
 ```
 
 Implicit AND between bare terms is preserved: `agentgrep grep foo bar`
@@ -143,7 +143,7 @@ double-quoted token reaches agentgrep intact.)
 non-empty**, regardless of value:
 
 ```agentgrep-query
-model:* ruff
+scope:all model:* ruff
 ```
 
 Records that carry any model string and mention `ruff`. Negate for
@@ -151,7 +151,7 @@ absence with `NOT field:*` (or `-field:*` inside a larger quoted
 query):
 
 ```agentgrep-query
-NOT model:* deploy
+scope:all NOT model:* deploy
 ```
 
 Field-exists works on every field kind; it is the readable way to ask
@@ -169,7 +169,7 @@ behavior). A wildcard on `text` matches the record text only, while a
 plain `text:` value keeps its multi-surface substring match.
 
 ```agentgrep-query
-model:gpt*
+scope:all model:gpt*
 ```
 
 The `path` field also globs (`*` / `?` / `[…]`), but path globs are
@@ -224,18 +224,18 @@ Ranked prompts mentioning either `ruff` or `uv`. A bare uppercase
 `OR` engages the query language without any field predicate.
 
 ```console
-$ agentgrep search 'model:gpt* caching'
+$ agentgrep search 'scope:all model:gpt* caching'
 ```
 
-Prompts from any `gpt`-prefixed model that mention `caching`. The
+Conversation records from any `gpt`-prefixed model that mention `caching`. The
 `model:gpt*` wildcard is an anchored, case-insensitive glob.
 
 ```console
-$ agentgrep search 'model:* ruff'
+$ agentgrep search 'scope:all model:* ruff'
 ```
 
-Prompts that recorded any model and mention `ruff` — `model:*` tests
-presence, not a value.
+Conversation records that captured any model and mention `ruff` —
+`model:*` tests presence, not a value.
 
 ```console
 $ agentgrep grep agent:codex bliss

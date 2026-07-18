@@ -15,6 +15,14 @@
    (specificity 1,0,0) refine on top. Equal-specificity ties resolve in favor
    of this app stylesheet over widget DEFAULT_CSS. */
 
+/* Native ANSI stays enabled for pi-like terminal transparency. Override
+   Textual's own :ansi rule with a semantic pair: dark inherits the terminal;
+   light paints a coherent canvas and foreground. */
+App:ansi, Screen:ansi {
+    background: $ag-canvas;
+    color: $ag-canvas-text;
+}
+
 /* ====================================================================
    Text entry — Input, MaskedInput, TextArea
    ==================================================================== */
@@ -32,13 +40,13 @@ Input, MaskedInput, TextArea {
     /* pi runs the text flush to column 0; a single cell of side padding is a
        gentler experiment. Set `padding: 0` for pi-exact flush. */
     padding: 0 1;
-    /* Terminal-default background (see the OptionList rule above). */
-    background: ansi_default;
+    background: $ag-canvas;
 }
 Input:focus, MaskedInput:focus, TextArea:focus {
     border: none;
     border-top: solid $accent;
     border-bottom: solid $accent;
+    background-tint: $foreground 0%;
 }
 
 /* Backup variant: the boxed (rounded, all-around) input we shipped first — add
@@ -57,11 +65,8 @@ Input.-boxed:focus, MaskedInput.-boxed:focus, TextArea.-boxed:focus {
    ==================================================================== */
 OptionList, ListView, DataTable, Tree, SelectionList {
     border: round $ag-faint;
-    /* `ansi_default` = the terminal's own background (SGR 49), so the panes are
-       transparent like pi/claude-code rather than a painted surface. Requires
-       App.ansi_color = True (set in app.py); item backgrounds below stay
-       truecolor. */
-    background: ansi_default;
+    /* Terminal-transparent in dark mode, explicitly painted in light mode. */
+    background: $ag-canvas;
     padding: 0 1;
     /* pi/vim-style: no scrollbar (a terminal column is 1 cell minimum, and pi
        draws none) — scroll position lives in the statusline instead. Scrolling
@@ -202,7 +207,7 @@ HeaderTitle {
 Footer {
     /* Terminal-default background so the key bar blends with the terminal,
        pi/claude-code-style; the accent key glyphs carry the contrast. */
-    background: ansi_default;
+    background: $ag-canvas;
 }
 Footer > .footer-key--key {
     color: $accent;
@@ -301,7 +306,7 @@ Screen {
     display: none;
     content-align: center middle;
     text-align: center;
-    background: ansi_default;
+    background: $ag-canvas;
     color: $accent;
 }
 #ctrlc-gutter.-shown {
@@ -309,6 +314,8 @@ Screen {
 }
 #search {
     height: 3;
+    border-subtitle-align: right;
+    border-subtitle-color: $ag-muted;
 }
 /* The top search prompt carries NO border label (it's the primary entry, kept
    bare); its rule instead acts as a live search-state indicator. Dynamic
@@ -343,13 +350,9 @@ Screen {
     width: 32;
     max-height: 10;
     border: round $accent;
-    /* `ansi_default` (SGR 49, the terminal's own background) matches the panes,
-       inputs, and results list instead of painting a foreign `$surface` slate
-       box over them. It is opaque — unlike `transparent` (alpha 0), it occludes
-       the results text the popup floats over, so the candidates stay legible.
-       (`transparent` would blend against the DOM parent, not this overlay's
-       backdrop.) Requires App.ansi_color = True, set in app.py. */
-    background: ansi_default;
+    /* Match the pane canvas instead of painting a foreign `$surface` box. It
+       remains opaque so candidates stay legible over the underlying results. */
+    background: $ag-canvas;
 }
 /* Slash-command menu (the search dropdown in command mode): pi's flush,
    borderless list — an aligned name column + dim descriptions — instead of the
@@ -469,10 +472,9 @@ Screen {
     padding: 0;
     color: $text-muted;
 }
-/* No box — the results pane is delineated by its #results-header rule. We
-   still cancel the two parts of OptionList's focus rule that fight
-   our per-span semantic colors: the ``$foreground 5%`` background-tint and the
-   bright ``$block-cursor-*`` cursor-row recolor. */
+/* No box — the results pane is delineated by its #results-header rule. Cancel
+   the focus background tint so it does not fight the rows' semantic colors;
+   the highlighted component keeps Textual's cursor palette. */
 #results {
     border: none;
 }
@@ -492,6 +494,9 @@ Screen {
    legible while the user types in the search/filter box above it. */
 #results > .option-list--option-highlighted {
     text-style: bold;
+}
+#results > .option-list--option-hover {
+    background: $block-hover-background;
 }
 
 /* pi-style section headers (a left label embedded in a full-width rule) stand in
@@ -517,9 +522,38 @@ Screen {
     display: none;
     height: 1fr;
     width: 1fr;
-    content-align: center middle;
-    text-align: center;
+    align: center middle;
     color: $ag-dim;
+}
+#empty-welcome {
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    border: round $ag-faint;
+    padding: 1 3;
+    margin-bottom: 1;
+    color: $text;
+    text-align: center;
+}
+#empty-lead, #empty-examples {
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    text-align: center;
+}
+#empty-lead {
+    margin-bottom: 1;
+}
+HudLayout.-compact-height #empty-welcome,
+HudLayout.-compact-width #empty-welcome {
+    padding: 0 1;
+    margin-bottom: 0;
+}
+HudLayout.-compact-height #empty-lead {
+    margin-bottom: 0;
+}
+HudLayout.-compact-width #empty-lead {
+    display: none;
 }
 #body.-empty #filter-header,
 #body.-empty #results-header,
@@ -563,12 +597,12 @@ Screen {
 /* Transparent screen (by preference): the explorer shows through behind the
    dialog for full context. NOTE: a solid background here would mask the
    explorer — keep this transparent. */
-HistoryRecall {
+HistoryRecall, HistoryRecall:ansi {
     background: transparent;
 }
 #history-dialog {
     border: round $ag-faint;
-    background: ansi_default;
+    background: $ag-canvas;
     padding: 0 1;
 }
 #history-title {
@@ -597,7 +631,7 @@ HistoryRecall {
 #history-filter {
     border: none;
     border-top: solid $ag-faint;
-    background: ansi_default;
+    background: $ag-canvas;
 }
 #history-filter:focus {
     border: none;

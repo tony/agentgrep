@@ -17,7 +17,8 @@ if t.TYPE_CHECKING:
     import pathlib
 
     from agentgrep.progress import SearchControl
-    from agentgrep.records import SearchQuery
+    from agentgrep.records import SearchQuery, SearchScope
+    from agentgrep.ui._history import HistoryEntry
     from agentgrep.ui._seams import SearchInvoker
 
 __all__ = ["UiContext"]
@@ -34,17 +35,29 @@ class UiContext:
     invoker : SearchInvoker
         The narrow engine seam (ADR 0012 RW-1); the only path to a search.
     query : SearchQuery
-        The launch query. Empty ``terms`` means browse mode.
+        The launch query. A plan with no terms, compiled predicate, or origin
+        filter opens in idle/browse mode.
     control : SearchControl
         The initial cooperative-cancel flag; a layout swaps in a fresh one
         per search, so this is only the seed.
+    base_scope : SearchScope
+        Discovery scope that an interactive query without a ``scope:``
+        predicate returns to. This can differ from the launch query's
+        effective scope.
     initial_search_text : str | None, optional
         Initial value of a layout's primary input. ``None`` defaults to the
         space-joined ``query.terms``.
+    history : tuple[HistoryEntry, ...], optional
+        Preloaded query-history snapshot for layouts that expose recall.
+    history_disabled : bool, optional
+        Whether persistent query history is disabled for this session.
     """
 
     home: pathlib.Path
     invoker: SearchInvoker
     query: SearchQuery
     control: SearchControl
+    base_scope: SearchScope
     initial_search_text: str | None = None
+    history: tuple[HistoryEntry, ...] = ()
+    history_disabled: bool = False

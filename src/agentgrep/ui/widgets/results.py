@@ -1,27 +1,33 @@
 """The streaming results list widget.
 
-``SearchResultsList`` is an ``OptionList`` subclass that renders normalized
-records as colored rows. It imports Textual at the top but is imported only from
-inside ``build_streaming_ui_app`` (and the tests), so ``import agentgrep`` stays
-free of Textual (ADR 0010); the widget is unit-testable in isolation.
+``SearchResultsList`` stores the complete ordered result model but renders it
+through Textual's fixed-height ``ScrollView`` line API. Textual therefore asks
+for only the rows in the viewport rather than materializing one ``Option`` per
+record on the message pump.
 """
 
 from __future__ import annotations
 
+import collections
 import typing as t
 from collections import abc as cabc
 
 import rich.text as rich_text
-from textual.widgets import OptionList
-from textual.widgets.option_list import Option, OptionDoesNotExist
+from rich.segment import Segment
+from rich.style import Style
+from rich.styled import Styled
+from textual import events
+from textual.geometry import Region, Size
+from textual.reactive import reactive
+from textual.scroll_view import ScrollView
+from textual.strip import Strip
 
-from agentgrep._engine.orchestration import cached_haystack
 from agentgrep._text import format_compact_path
 from agentgrep.discovery import format_timestamp_tig
 from agentgrep.records import SearchRecord
-from agentgrep.ui import theme as ui_theme
+from agentgrep.ui import _runtime, theme as ui_theme
 from agentgrep.ui.format import scroll_percent
-from agentgrep.ui.widgets.messages import ResultsScrollChanged
+from agentgrep.ui.widgets.messages import ResultHighlighted, ResultsScrollChanged
 
 __all__ = ["SearchResultsList"]
 
@@ -32,23 +38,29 @@ __all__ = ["SearchResultsList"]
 _TITLE_STYLE = ""
 
 
-class SearchResultsList(OptionList, can_focus=True):
-    """``OptionList`` subclass for streaming agentgrep search records.
+class SearchResultsList(ScrollView, can_focus=True):
+    """Fixed-height virtual results list with one globally-highlighted row."""
 
-    ``OptionList`` is Textual's proven cursor-navigable virtual list. It
-    ships with working Tab focus, a visible cursor highlight via the
-    ``option-list--option-highlighted`` CSS class, and posts an
-    ``OptionHighlighted`` message on cursor movement — all the things our
-    previous custom widget had to wire up manually and failed at in the
-    real terminal.
-
-    Adding records via ``append_records`` / ``set_records`` runs on the
-    event-loop thread because the worker uses ``app.call_from_thread`` to
-    invoke these methods. That keeps the streaming transport off the
-    Textual message bus so keystroke + timer events never queue behind it.
+    ALLOW_SELECT = False
+    COMPONENT_CLASSES: t.ClassVar[set[str]] = {
+        "option-list--option",
+        "option-list--option-highlighted",
+        "option-list--option-hover",
+    }
+    DEFAULT_CSS = """
+    SearchResultsList {
+        background: $ag-canvas;
+        padding: 0 1;
+        scrollbar-size: 0 0;
+    }
     """
-
     BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+        ("up", "cursor_up", ""),
+        ("down", "cursor_down", ""),
+        ("home", "first", ""),
+        ("end", "last", ""),
+        ("pageup", "page_up", ""),
+        ("pagedown", "page_down", ""),
         ("k", "cursor_up", "Up"),
         ("j", "cursor_down", "Down"),
         ("l", "focus_detail", "Detail"),
@@ -59,6 +71,11 @@ class SearchResultsList(OptionList, can_focus=True):
         ("ctrl+u", "cursor_half_page_up", "½ Up"),
     ]
 
+    highlighted: reactive[int | None] = reactive(None, repaint=False)
+
+    _RENDER_CACHE_MAX: t.ClassVar[int] = 2_048
+    _STRIP_CACHE_MAX: t.ClassVar[int] = 2_048
+
     def __init__(
         self,
         *,
@@ -67,28 +84,44 @@ class SearchResultsList(OptionList, can_focus=True):
         super().__init__(id=id)
         self._records: list[SearchRecord] = []
         self._record_ids: set[int] = set()
+        self._generation = 0
+        self._next_highlight_programmatic = False
+        self._hovered: int | None = None
         # Rows bake theme hex, so the palette name participates in the key.
-        # Filtering can then reuse rows without resurfacing stale colors after
-        # a theme switch. Agentgrep has two fixed palettes, bounding retention
-        # to at most two renderings per retained record.
-        self._render_cache: dict[tuple[str, int], rich_text.Text] = {}
+        # The LRU cap keeps filtering and theme switches from retaining one
+        # renderable per result in an arbitrarily large history store.
+        self._render_cache: collections.OrderedDict[
+            tuple[str, int],
+            tuple[SearchRecord, rich_text.Text],
+        ] = collections.OrderedDict()
+        self._strip_cache: collections.OrderedDict[
+            tuple[str, int, Style, int],
+            tuple[SearchRecord, Strip],
+        ] = collections.OrderedDict()
 
+    @property
+    def option_count(self) -> int:
+        """Return the number of result rows."""
+        return len(self._records)
+
+    @property
+    def generation(self) -> int:
+        """Return the generation of the current complete result model."""
+        return self._generation
+
+    def uses_records(self, records: list[SearchRecord]) -> bool:
+        """Return whether ``records`` is the widget's current backing list."""
+        return self._records is records
+
+    @_runtime.pump_only
     def append_records(self, records: cabc.Sequence[SearchRecord]) -> None:
-        """Append a batch of records — invoked via ``app.call_from_thread``.
-
-        Eagerly warms :func:`cached_haystack` for each new record so the
-        cost is paid during streaming (when the user is already watching
-        the spinner) rather than during the next filter keystroke.
-        """
+        """Append records without building row renderables on the pump."""
         if not records:
             return
         self._records.extend(records)
-        for record in records:
-            self._record_ids.add(id(record))
-            cached_haystack(record)
-        self.add_options(
-            [Option(self._render_record(r), id=str(id(r))) for r in records],
-        )
+        self._record_ids.update(id(record) for record in records)
+        self._sync_virtual_size()
+        self.refresh()
         # Records now exist — leave the app's pre-search bare-canvas state so the
         # panes are visible (idempotent; the live search flow also does this at
         # launch).
@@ -96,101 +129,69 @@ class SearchResultsList(OptionList, can_focus=True):
         if callable(reveal):
             reveal(empty=False)
 
-    def set_records(self, records: cabc.Sequence[SearchRecord]) -> int:
-        """Apply a new filter result by patching the existing options.
-
-        For the common "user typed another character" narrowing case the
-        method removes the now-unmatched options without rebuilding the
-        list — keeps rendering O(removed) instead of O(total) and never
-        touches the haystack cache. Falls back to a full rebuild when
-        the new set introduces records not currently shown (widening) or
-        when more than half of the current options would be removed
-        (where ``remove_option_at_index`` would do worse than a single
-        ``clear_options`` + ``add_options`` pair).
-
-        Returns the number of programmatic ``OptionHighlighted`` messages
-        Textual queued while applying the record update.
-        """
-        new_records = list(records)
-        new_ids: set[int] = {id(record) for record in new_records}
-        self._record_ids = new_ids
-        current_records = self._records
-        if not current_records:
-            self._rebuild_options(new_records, record_ids=new_ids)
-            return 0
-        current_index_by_id: dict[int, int] = {
-            id(record): idx for idx, record in enumerate(current_records)
-        }
-        additions = [record for record in new_records if id(record) not in current_index_by_id]
-        if additions:
-            self._rebuild_options(new_records, record_ids=new_ids)
-            return 0
-        to_remove_indices = sorted(
-            (
-                current_index_by_id[id(record)]
-                for record in current_records
-                if id(record) not in new_ids
-            ),
-            reverse=True,
-        )
-        if len(to_remove_indices) > len(current_records) // 2:
-            # More than half goes — a single clear+rebuild is cheaper
-            # than N ``remove_option_at_index`` calls (each shifts the
-            # internal options list).
-            self._rebuild_options(new_records, record_ids=new_ids)
-            return 0
-        programmatic_highlights = 0
-        for idx in to_remove_indices:
-            before_highlighted = t.cast("int | None", getattr(self, "highlighted", None))
-            self.remove_option_at_index(idx)
-            after_highlighted = t.cast("int | None", getattr(self, "highlighted", None))
-            if after_highlighted is not None and after_highlighted != before_highlighted:
-                programmatic_highlights += 1
-        self._records = new_records
-        return programmatic_highlights
-
-    def _rebuild_options(
+    @_runtime.pump_only
+    def set_records(
         self,
-        records: cabc.Sequence[SearchRecord],
+        records: list[SearchRecord],
         *,
-        record_ids: set[int] | None = None,
+        record_ids: set[int],
     ) -> None:
-        """Full clear + rebuild path. Used when delta-apply isn't safe."""
-        self._records = list(records)
-        self._record_ids = (
-            record_ids if record_ids is not None else {id(record) for record in self._records}
-        )
-        self.clear_options()
-        if self._records:
-            for record in self._records:
-                cached_haystack(record)
-            self.add_options(
-                [Option(self._render_record(r), id=str(id(r))) for r in self._records],
-            )
+        """Adopt a worker-prepared result model without rendering its rows."""
+        self._generation += 1
+        self._records = records
+        self._record_ids = record_ids
+        self._set_hovered(None)
+        self._sync_virtual_size()
 
-    def prepare_theme_rerender(self) -> cabc.Sequence[SearchRecord]:
-        """Return the current record sequence for a bounded theme repaint."""
-        return self._records
+        highlighted = self.highlighted
+        if not self._records:
+            if highlighted is not None:
+                self._next_highlight_programmatic = True
+                self.highlighted = None
+            self.scroll_home(animate=False, immediate=True)
+        elif highlighted is not None:
+            target = max(0, min(highlighted, len(self._records) - 1))
+            if target == highlighted:
+                self._post_result_highlighted(target, programmatic=True)
+            else:
+                self._next_highlight_programmatic = True
+                self.highlighted = target
 
-    def apply_theme_rerender(self, records: cabc.Sequence[SearchRecord]) -> None:
-        """Replace one bounded record slice with current-theme row prompts."""
-        for record in records:
-            try:
-                index = self.get_option_index(str(id(record)))
-            except OptionDoesNotExist:
-                continue
-            self.replace_option_prompt_at_index(index, self._render_record(record))
+        self.refresh()
 
+    @_runtime.pump_only
+    def validate_highlighted(self, highlighted: int | None) -> int | None:
+        """Clamp the global cursor to the current result model."""
+        if highlighted is None or not self._records:
+            return None
+        return max(0, min(len(self._records) - 1, highlighted))
+
+    @_runtime.pump_only
+    def refresh_theme(self) -> None:
+        """Invalidate visible lines after the application theme changes."""
+        self.refresh()
+
+    @_runtime.pump_only
     def clear(self) -> None:
-        """Empty the list."""
+        """Empty the list and release cached renderables."""
+        self._generation += 1
         self._records = []
         self._record_ids.clear()
         self._render_cache.clear()
-        self.clear_options()
+        self._strip_cache.clear()
+        self._set_hovered(None)
+        self.highlighted = None
+        self._sync_virtual_size()
+        self.scroll_home(animate=False, immediate=True)
+        self.refresh()
 
     def contains_record(self, record: SearchRecord) -> bool:
         """Return whether ``record`` is in the current filtered result set."""
         return id(record) in self._record_ids
+
+    def _sync_virtual_size(self) -> None:
+        """Publish the current fixed-height row extent to ``ScrollView``."""
+        self.virtual_size = Size(max(1, self.size.width), len(self._records))
 
     def _scroll_percent(self) -> int:
         """Compute the current scroll percent, clamped to ``[0, 100]``."""
@@ -200,15 +201,9 @@ class SearchResultsList(OptionList, can_focus=True):
         )
 
     def _post_scroll_changed(self, cursor: int | None = None) -> None:
-        """Post a :class:`ResultsScrollChanged` snapshot to the app.
-
-        ``cursor`` defaults to the widget's current ``highlighted``
-        reactive but accepts an explicit override so watchers can pass
-        the freshly-set value through without racing the reactive
-        dispatch.
-        """
+        """Post a :class:`ResultsScrollChanged` snapshot to the app."""
         if cursor is None:
-            cursor = t.cast("int | None", getattr(self, "highlighted", None))
+            cursor = self.highlighted
         self.post_message(
             ResultsScrollChanged(
                 cursor=cursor,
@@ -217,28 +212,170 @@ class SearchResultsList(OptionList, can_focus=True):
             ),
         )
 
+    @_runtime.pump_only
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Re-render the status line on scroll. Inherited base does the actual scroll."""
-        base = getattr(super(), "watch_scroll_y", None)
-        if callable(base):
-            base(old_value, new_value)
+        """Re-render the viewport and status line on scroll."""
+        super().watch_scroll_y(old_value, new_value)
+        self._set_hovered(None)
         self._post_scroll_changed()
 
-    def watch_highlighted(self, highlighted: int | None) -> None:
-        """Re-render the status line on cursor move."""
-        base = getattr(super(), "watch_highlighted", None)
-        if callable(base):
-            base(highlighted)
+    @_runtime.pump_only
+    def watch_highlighted(
+        self,
+        old_highlighted: int | None,
+        highlighted: int | None,
+    ) -> None:
+        """Refresh cursor rows, keep the cursor visible, and post detail state."""
+        programmatic = self._next_highlight_programmatic
+        self._next_highlight_programmatic = False
+        if old_highlighted is not None:
+            self.refresh_line(old_highlighted)
+        if highlighted is not None:
+            self.refresh_line(highlighted)
+            if 0 <= highlighted < len(self._records):
+                self.scroll_to_region(
+                    Region(0, highlighted, max(1, self.size.width), 1),
+                    animate=False,
+                    force=True,
+                    immediate=True,
+                    x_axis=False,
+                )
+                self._post_result_highlighted(
+                    highlighted,
+                    programmatic=programmatic,
+                )
         self._post_scroll_changed(cursor=highlighted)
 
+    @_runtime.pump_only
+    def _post_result_highlighted(self, index: int, *, programmatic: bool) -> None:
+        """Post one generation-scoped result highlight message."""
+        self.post_message(
+            ResultHighlighted(
+                record=self._records[index],
+                index=index,
+                generation=self._generation,
+                programmatic=programmatic,
+            ),
+        )
+
+    @_runtime.pump_only
+    def on_resize(self, _event: events.Resize) -> None:
+        """Keep virtual width aligned with the current content viewport."""
+        self._sync_virtual_size()
+        self.refresh()
+
+    @_runtime.pump_only
+    def on_click(self, event: events.Click) -> None:
+        """Move the global cursor to the clicked visible row."""
+        offset = event.get_content_offset(self)
+        if offset is None:
+            return
+        index = self.scroll_offset.y + offset.y
+        if 0 <= index < len(self._records):
+            self.focus()
+            if index == self.highlighted:
+                self._post_result_highlighted(index, programmatic=False)
+            else:
+                self.highlighted = index
+
+    @_runtime.pump_only
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Apply the hover component to the row under the pointer."""
+        offset = event.get_content_offset(self)
+        if offset is None:
+            self._set_hovered(None)
+            return
+        index = self.scroll_offset.y + offset.y
+        self._set_hovered(index if 0 <= index < len(self._records) else None)
+
+    @_runtime.pump_only
+    def on_leave(self, _event: events.Leave) -> None:
+        """Clear the row hover when the pointer leaves the results."""
+        self._set_hovered(None)
+
+    def _set_hovered(self, index: int | None) -> None:
+        """Refresh only the rows affected by a hover transition."""
+        previous = self._hovered
+        if previous == index:
+            return
+        self._hovered = index
+        if previous is not None:
+            self.refresh_line(previous)
+        if index is not None:
+            self.refresh_line(index)
+
+    @_runtime.pump_only
+    def render_line(self, y: int) -> Strip:
+        """Render one visible fixed-height row requested by ``ScrollView``."""
+        width = max(0, self.size.width)
+        index = self.scroll_offset.y + y
+        if width == 0 or not 0 <= index < len(self._records):
+            return Strip.blank(width, self.visual_style.rich_style)
+
+        if index == self.highlighted:
+            component = "option-list--option-highlighted"
+        elif index == self._hovered:
+            component = "option-list--option-hover"
+        else:
+            component = "option-list--option"
+        style = self.get_component_rich_style(component)
+        record = self._records[index]
+        cache_key = (str(self.app.theme), width, style, id(record))
+        cached = self._strip_cache.get(cache_key)
+        if cached is not None and cached[0] is record:
+            self._strip_cache.move_to_end(cache_key)
+            return cached[1]
+        options = self.app.console.options.update(
+            width=width,
+            min_width=width,
+            max_width=width,
+            overflow="ellipsis",
+            no_wrap=True,
+            height=1,
+        )
+        row = self._render_record(record)
+        if index == self.highlighted:
+            # Rich's field spans otherwise override the component foreground and
+            # can lose contrast against the selected-row background. The copy is
+            # paid only on a selected strip-cache miss.
+            row = row.copy()
+            row.stylize(style, 0, len(row))
+        lines = self.app.console.render_lines(
+            Styled(row, style),
+            options,
+            pad=True,
+        )
+        if not lines:
+            strip = Strip.blank(width, style)
+        else:
+            # Text with an explicitly empty span style may leave a Rich segment's
+            # style as ``None``. Textual filters expect every custom line segment to
+            # carry a concrete style, so inherit the row component style here.
+            segments = [
+                segment
+                if segment.style is not None
+                else Segment(segment.text, style, segment.control)
+                for segment in lines[0]
+            ]
+            strip = Strip(segments, width)
+        self._strip_cache[cache_key] = (record, strip)
+        self._strip_cache.move_to_end(cache_key)
+        while len(self._strip_cache) > self._STRIP_CACHE_MAX:
+            self._strip_cache.popitem(last=False)
+        return strip
+
     def _render_record(self, record: SearchRecord) -> rich_text.Text:
-        """Return the rendered row, memoized by palette and record identity."""
+        """Return one rendered row from the bounded palette/identity LRU."""
         cache_key = (str(self.app.theme), id(record))
         cached = self._render_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        if cached is not None and cached[0] is record:
+            self._render_cache.move_to_end(cache_key)
+            return cached[1]
         row = self._build_row(record)
-        self._render_cache[cache_key] = row
+        self._render_cache[cache_key] = (record, row)
+        self._render_cache.move_to_end(cache_key)
+        while len(self._render_cache) > self._RENDER_CACHE_MAX:
+            self._render_cache.popitem(last=False)
         return row
 
     def _build_row(self, record: SearchRecord) -> rich_text.Text:
@@ -271,46 +408,78 @@ class SearchResultsList(OptionList, can_focus=True):
         text.append(path_text, style=muted_style)
         return text
 
+    @_runtime.pump_only
     def action_cursor_up(self) -> None:
         """Release focus to the filter input when the cursor is at row 0."""
         if self.highlighted in (None, 0):
             self.app.action_focus_previous()
         else:
-            super().action_cursor_up()
+            self.highlighted -= 1
 
+    @_runtime.pump_only
+    def action_cursor_down(self) -> None:
+        """Move the cursor down one row, selecting row zero from no cursor."""
+        if not self._records:
+            return
+        current = self.highlighted
+        self.highlighted = 0 if current is None else min(len(self._records) - 1, current + 1)
+
+    @_runtime.pump_only
     def action_focus_detail(self) -> None:
-        """Focus the detail pane (vim-style ``l``), opening it if stacked.
-
-        Routes through the app's ``_focus_detail`` so a collapsed
-        stacked pane is revealed before focus lands — focusing it
-        directly would move focus into a ``display: none`` pane that
-        never appears.
-        """
+        """Focus the detail pane, opening it first when stacked."""
         t.cast("t.Any", self.screen)._focus_detail()
 
+    @_runtime.pump_only
+    def action_first(self) -> None:
+        """Move the cursor to the first row."""
+        if self._records:
+            self.highlighted = 0
+
+    @_runtime.pump_only
+    def action_last(self) -> None:
+        """Move the cursor to the final row."""
+        if self._records:
+            self.highlighted = len(self._records) - 1
+
+    @_runtime.pump_only
     def action_cursor_top(self) -> None:
         """Jump the highlight to the first row (vim-style ``g``)."""
         self.action_first()
 
+    @_runtime.pump_only
     def action_cursor_bottom(self) -> None:
         """Jump the highlight to the last row (vim-style ``G``)."""
         self.action_last()
 
     def _cursor_jump(self, delta: int) -> None:
         """Move the highlight by ``delta`` rows, clamped to list bounds."""
-        row_count = len(self._records)
-        if row_count == 0:
+        if not self._records:
             return
         current = self.highlighted if self.highlighted is not None else 0
-        target = max(0, min(row_count - 1, current + delta))
-        self.highlighted = target
+        self.highlighted = max(0, min(len(self._records) - 1, current + delta))
 
+    @_runtime.pump_only
     def action_cursor_half_page_down(self) -> None:
-        """Advance the highlight by half the visible viewport height (vim ``Ctrl-D``)."""
-        half = max(1, self.size.height // 2)
-        self._cursor_jump(half)
+        """Advance the highlight by half the viewport height (vim ``Ctrl-D``)."""
+        self._cursor_jump(max(1, self.size.height // 2))
 
+    @_runtime.pump_only
     def action_cursor_half_page_up(self) -> None:
-        """Move the highlight up by half the visible viewport height (vim ``Ctrl-U``)."""
-        half = max(1, self.size.height // 2)
-        self._cursor_jump(-half)
+        """Move the highlight up by half the viewport height (vim ``Ctrl-U``)."""
+        self._cursor_jump(-max(1, self.size.height // 2))
+
+    @_runtime.pump_only
+    def action_page_down(self) -> None:
+        """Advance the cursor by one viewport."""
+        if self.highlighted is None:
+            self.action_last()
+        else:
+            self._cursor_jump(max(1, self.size.height))
+
+    @_runtime.pump_only
+    def action_page_up(self) -> None:
+        """Move the cursor up by one viewport."""
+        if self.highlighted is None:
+            self.action_first()
+        else:
+            self._cursor_jump(-max(1, self.size.height))

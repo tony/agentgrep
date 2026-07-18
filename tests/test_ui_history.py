@@ -8,6 +8,7 @@ with ``tmp_path`` and ``monkeypatch`` — no app or Pilot required.
 
 from __future__ import annotations
 
+import json
 import stat
 import typing as t
 
@@ -119,6 +120,17 @@ def test_load_tolerates_corruption(tmp_path: pathlib.Path) -> None:
     )
     entries = _history.load_history(path)
     assert [e.text for e in entries] == ["good", "ok"]
+
+
+def test_load_bounds_foreign_history_text(tmp_path: pathlib.Path) -> None:
+    """A legacy or hand-written row cannot inject an oversized modal entry."""
+    path = tmp_path / "h.jsonl"
+    path.write_text(
+        json.dumps({"text": "x" * 10_000, "ts": 1}) + "\n",
+        encoding="utf-8",
+    )
+    [entry] = _history.load_history(path)
+    assert len(entry.text) == _history.QUERY_TEXT_MAX_CHARS
 
 
 class CorruptTimestampCase(t.NamedTuple):

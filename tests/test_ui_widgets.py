@@ -8,23 +8,33 @@ widgets directly (no ``run_test`` Pilot) and assert their pure behavior.
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 import typing as t
 
+import pytest
 from rich.cells import cell_len
+from rich.style import Style
+from textual.app import App, ComposeResult
+from textual.scroll_view import ScrollView
 from textual.widgets import Input, OptionList, Static
 
 from agentgrep.progress import FilterRequestedPayload, ProgressSnapshot
 from agentgrep.records import SearchQuery, SearchRecord
+from agentgrep.ui._history import HistoryEntry
 from agentgrep.ui.format import phase_label
 from agentgrep.ui.widgets import (
     CompletionDropdown,
+    DetailFindInput,
+    DetailFindRequested,
     DetailScroll,
+    FilterCompleted,
     FilterHeader,
     FilterInput,
     FilterRequested,
     MeterWidget,
     PaneHeader,
+    ResultHighlighted,
     ResultsHeader,
     ResultsScrollChanged,
     SearchingPanel,
@@ -32,6 +42,8 @@ from agentgrep.ui.widgets import (
     SearchResultsList,
     SpinnerWidget,
 )
+from agentgrep.ui.widgets.history import _ROW_TEXT_MAX_CHARS, HistoryRecall
+from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
 
 def _make_record(text: str = "bliss") -> SearchRecord:
@@ -58,6 +70,15 @@ def _make_query(*terms: str) -> SearchQuery:
         case_sensitive=False,
         agents=(),
         limit=None,
+    )
+
+
+def _set_records(results: SearchResultsList, records: t.Iterable[SearchRecord]) -> None:
+    """Adopt one test-prepared result model."""
+    prepared = list(records)
+    results.set_records(
+        prepared,
+        record_ids={id(record) for record in prepared},
     )
 
 
@@ -121,13 +142,41 @@ def test_messages_carry_their_payloads() -> None:
     """The message classes carry their payloads / snapshot fields."""
     event = FilterRequested(payload=FilterRequestedPayload(text="bliss"))
     assert event.payload.text == "bliss"
+    record = _make_record()
+    completed = FilterCompleted(
+        text="bliss",
+        records=[record],
+        record_ids={id(record)},
+        generation=2,
+        records_generation=3,
+    )
+    assert (
+        completed.text,
+        completed.records,
+        completed.record_ids,
+        completed.generation,
+        completed.records_generation,
+    ) == ("bliss", [record], {id(record)}, 2, 3)
+    highlighted = ResultHighlighted(
+        record=record,
+        index=3,
+        generation=7,
+        programmatic=True,
+    )
+    assert (
+        highlighted.record,
+        highlighted.index,
+        highlighted.generation,
+        highlighted.programmatic,
+    ) == (record, 3, 7, True)
     snapshot = ResultsScrollChanged(cursor=2, total=10, percent=20)
     assert (snapshot.cursor, snapshot.total, snapshot.percent) == (2, 10, 20)
 
 
-def test_results_list_is_optionlist_subclass_starting_empty() -> None:
-    """The results list is an OptionList subclass starting empty."""
-    assert issubclass(SearchResultsList, OptionList)
+def test_results_list_is_scrollview_subclass_starting_empty() -> None:
+    """The results list is a line-rendered ScrollView starting empty."""
+    assert issubclass(SearchResultsList, ScrollView)
+    assert not issubclass(SearchResultsList, OptionList)
     results = SearchResultsList(id="results")
     assert results._records == []
     results.append_records([])  # empty batch is a no-op, no app required
@@ -160,6 +209,162 @@ def test_inputs_are_input_subclasses() -> None:
     assert issubclass(FilterInput, Input)
     assert issubclass(SearchInput, Input)
     assert FilterInput._DEBOUNCE_SECONDS == 0.15
+
+
+def test_interactive_widgets_use_public_textual_handlers() -> None:
+    """Custom widgets avoid Textual's private key and value hooks."""
+    for widget_type in (CompletionDropdown, DetailFindInput, FilterInput, SearchInput):
+        assert "_on_key" not in widget_type.__dict__
+        assert "on_key" in widget_type.__dict__
+    for widget_type in (DetailFindInput, FilterInput, SearchInput):
+        assert "_watch_value" not in widget_type.__dict__
+        assert "on_input_changed" in widget_type.__dict__
+
+
+async def test_search_input_submit_hint_tracks_nonblank_value() -> None:
+    """The border affordance follows initial, typed, and loaded query text."""
+
+    class InputHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield SearchInput(id="search")
+            yield SearchInput(value="ready", id="initial")
+
+    app = InputHarness()
+    async with app.run_test(size=(40, 8)) as pilot:
+        search = app.query_one("#search", SearchInput)
+        initial = app.query_one("#initial", SearchInput)
+
+        assert not search.border_subtitle
+        assert initial.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+
+        search.value = "agent:claude"
+        await pilot.pause()
+        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+
+        search.value = "   "
+        await pilot.pause()
+        assert not search.border_subtitle
+
+        search.load_query("role:user")
+        await pilot.pause()
+        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "x" * INPUT_MAX_LENGTH,
+        "界" * INPUT_MAX_LENGTH,
+        "e\N{COMBINING ACUTE ACCENT}" * (INPUT_MAX_LENGTH // 2),
+    ),
+    ids=("ascii", "wide", "combining"),
+)
+async def test_search_input_submit_hint_fits_supported_minimum_width(query: str) -> None:
+    """The full hint fits the existing 16-column compact boundary."""
+
+    class InputHarness(App[None]):
+        CSS = """
+        Input {
+            border: none;
+            border-top: solid red;
+            border-bottom: solid red;
+            border-subtitle-align: right;
+            padding: 0 1;
+        }
+        """
+
+        def compose(self) -> ComposeResult:
+            yield SearchInput(id="search")
+
+    app = InputHarness()
+    async with app.run_test(size=(16, 4)) as pilot:
+        await pilot.pause()
+        search = app.query_one("#search", SearchInput)
+        assert not search.border_subtitle
+        search.load_query(query)
+        await pilot.pause()
+        assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
+        assert search.cursor_position == len(query)
+        assert 0 <= search.cursor_screen_offset.x < 16
+        update = app.screen._compositor.render_full_update()
+        bottom_rule = "".join(strip.text for strip in update.strips[2])
+        assert bottom_rule == "──Press Enter ↵─"
+
+
+async def test_inputs_bound_text_processed_on_the_pump() -> None:
+    """Typed, initial, and restored input text share one finite budget."""
+    oversized = "x" * (INPUT_MAX_LENGTH + 1)
+
+    class InputHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield SearchInput(value=oversized, id="search")
+            yield FilterInput(id="filter")
+            yield DetailFindInput(id="detail-find")
+
+    app = InputHarness()
+    async with app.run_test() as pilot:
+        search = app.query_one("#search", SearchInput)
+        filter_input = app.query_one("#filter", FilterInput)
+        detail_find = app.query_one("#detail-find", DetailFindInput)
+
+        assert search.max_length == INPUT_MAX_LENGTH
+        assert search.value == oversized[:INPUT_MAX_LENGTH]
+        assert filter_input.max_length == INPUT_MAX_LENGTH
+        assert detail_find.max_length == INPUT_MAX_LENGTH
+
+        search.value = oversized
+        filter_input.value = oversized
+        detail_find.value = oversized
+        await pilot.pause()
+        assert search.value == oversized[:INPUT_MAX_LENGTH]
+        assert filter_input.value == oversized[:INPUT_MAX_LENGTH]
+        assert detail_find.value == oversized[:INPUT_MAX_LENGTH]
+
+        search.load_query(oversized)
+        detail_find.load_query("first")
+        detail_find.load_query(oversized)
+        await pilot.pause()
+        assert search.value == oversized[:INPUT_MAX_LENGTH]
+        assert detail_find.value == oversized[:INPUT_MAX_LENGTH]
+        assert detail_find._debounce_timer is None
+
+
+async def test_detail_find_restore_cancels_queued_user_request() -> None:
+    """A restored value cannot leave an earlier user debounce armed."""
+    seen: list[str] = []
+
+    class InputHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield DetailFindInput(id="detail-find")
+
+        def on_detail_find_requested(self, message: DetailFindRequested) -> None:
+            seen.append(message.text)
+
+    app = InputHarness()
+    async with app.run_test() as pilot:
+        detail_find = app.query_one("#detail-find", DetailFindInput)
+        detail_find.value = "typed-before-restore"
+        detail_find.load_query("restored")
+        await pilot.pause(DetailFindInput._DEBOUNCE_SECONDS * 2)
+
+        assert detail_find.value == "restored"
+        assert seen == []
+        assert detail_find._debounce_timer is None
+
+
+async def test_history_filter_bounds_seed_text() -> None:
+    """History filtering cannot restore an unbounded query onto the pump."""
+    oversized = "x" * (INPUT_MAX_LENGTH + 1)
+    app = App[None]()
+
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            HistoryRecall([HistoryEntry(oversized, 1.0)], seed=oversized),
+        )
+        await pilot.pause()
+        history_filter = app.screen.query_one("#history-filter", Input)
+        assert history_filter.max_length == _ROW_TEXT_MAX_CHARS
+        assert history_filter.value == oversized[:_ROW_TEXT_MAX_CHARS]
 
 
 def test_format_relative_time_units() -> None:
@@ -423,11 +628,149 @@ async def test_results_streamed_row_is_pinned(
         assert results._render_record(_make_record()).plain == snapshot
 
 
+async def test_set_records_defers_row_rendering_to_visible_lines(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing a large result set builds only rows requested by the viewport."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        built = 0
+        original = results._build_row
+
+        def count_build(record: SearchRecord) -> t.Any:
+            nonlocal built
+            built += 1
+            return original(record)
+
+        monkeypatch.setattr(results, "_build_row", count_build)
+        records = [_make_record(f"row {index}") for index in range(1_000)]
+
+        _set_records(results, records)
+
+        assert built == 0
+        await pilot.pause()
+        assert 0 < built <= results.size.height
+
+
+async def test_results_highlight_clamps_and_posts_typed_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Out-of-range cursors clamp before emitting their record and index."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    messages: list[ResultHighlighted] = []
+
+    def capture(message: object) -> None:
+        if isinstance(message, ResultHighlighted):
+            messages.append(message)
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24), message_hook=capture) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        records = [_make_record(f"row {index}") for index in range(3)]
+        _set_records(results, records)
+
+        results.highlighted = -7
+        await pilot.pause()
+        assert results.highlighted == 0
+        assert (messages[-1].record, messages[-1].index) == (records[0], 0)
+        assert messages[-1].generation == results.generation
+        assert messages[-1].programmatic is False
+
+        results.highlighted = 99
+        await pilot.pause()
+        assert results.highlighted == 2
+        assert (messages[-1].record, messages[-1].index) == (records[2], 2)
+        assert messages[-1].generation == results.generation
+        assert messages[-1].programmatic is False
+
+
+async def test_results_page_keys_match_option_list_from_no_cursor(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Page keys retain Textual's first/last behavior before selection."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        records = [_make_record(f"row {index}") for index in range(50)]
+        _set_records(results, records)
+        await pilot.pause()
+
+        results.action_page_down()
+        assert results.highlighted == len(records) - 1
+
+        results.highlighted = None
+        results.action_page_up()
+        assert results.highlighted == 0
+
+
+async def test_results_hover_and_click_track_scrolled_rows(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mouse hover and click map viewport rows to the scrolled model."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        _set_records(results, [_make_record(f"row {index}") for index in range(100)])
+        await pilot.pause()
+        results.scroll_to(y=20, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        assert results.scroll_offset.y > 0
+
+        row_y = 2
+        index = results.scroll_offset.y + row_y
+        assert await pilot.hover(results, offset=(4, row_y)) is True
+        await pilot.pause()
+        assert results._hovered == index
+        assert results.highlighted is None
+
+        components: list[str] = []
+        get_style = results.get_component_rich_style
+
+        def capture_component(component: str) -> Style:
+            components.append(component)
+            return get_style(component)
+
+        monkeypatch.setattr(results, "get_component_rich_style", capture_component)
+        results.render_line(row_y)
+        assert components[-1] == "option-list--option-hover"
+
+        results.highlighted = index
+        await pilot.pause()
+        results.render_line(row_y)
+        assert components[-1] == "option-list--option-highlighted"
+
+        results.highlighted = None
+        assert await pilot.click(results, offset=(4, row_y)) is True
+        await pilot.pause()
+        assert results.highlighted == index
+
+        assert await pilot.hover("#filter") is True
+        await pilot.pause()
+        assert results._hovered is None
+
+
 async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) -> None:
-    """A full rebuild reuses cached row renders rather than re-rendering them.
+    """Replacing the model reuses cached rows rather than re-rendering them.
 
     ``_render_record`` dominates the filter re-apply cost, and the rows were
-    already rendered during streaming, so a rebuild must reuse them by record id
+    already rendered during streaming, so replacement must reuse them by record id
     instead of rebuilding every ``Text`` (the filter-widen pump stall, #1).
     """
     from agentgrep.progress import SearchControl
@@ -437,12 +780,147 @@ async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) 
     async with app.run_test():
         results = app.screen.query_one(SearchResultsList)
         records = [_make_record(f"row {i}") for i in range(8)]
-        results.set_records(records)  # initial render populates the row cache
-        before = [results.get_option_at_index(i).prompt for i in range(results.option_count)]
-        results._rebuild_options(records)  # a filter widen rebuilds the whole list
-        after = [results.get_option_at_index(i).prompt for i in range(results.option_count)]
+        _set_records(results, records)
+        before = [results._render_record(record) for record in records]
+        _set_records(results, records)
+        after = [results._render_record(record) for record in records]
         assert results.option_count == len(records)
         assert all(a is b for a, b in zip(before, after, strict=True))
+
+
+async def test_results_render_cache_evicts_oldest_rows(tmp_path: pathlib.Path) -> None:
+    """Rendering beyond the row-cache limit evicts the least-recently used row."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test():
+        results = app.screen.query_one(SearchResultsList)
+        records = [_make_record(f"row {index}") for index in range(results._RENDER_CACHE_MAX + 1)]
+        for record in records[:-1]:
+            results._render_record(record)
+        results._render_record(records[0])
+        results._render_record(records[-1])
+
+        theme_name = str(app.theme)
+        assert len(results._render_cache) == results._RENDER_CACHE_MAX
+        assert (theme_name, id(records[0])) in results._render_cache
+        assert (theme_name, id(records[1])) not in results._render_cache
+        assert (theme_name, id(records[-1])) in results._render_cache
+
+
+async def test_results_line_cache_reuses_final_strip(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rendering an unchanged row reuses the completed fixed-width Strip."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        _set_records(results, [_make_record()])
+        await pilot.pause()
+        results._strip_cache.clear()
+        render_lines_calls = 0
+        original = app.console.render_lines
+
+        def count_render_lines(*args: t.Any, **kwargs: t.Any) -> t.Any:
+            nonlocal render_lines_calls
+            render_lines_calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(app.console, "render_lines", count_render_lines)
+        first = results.render_line(0)
+        second = results.render_line(0)
+
+        assert second is first
+        assert render_lines_calls == 1
+
+
+async def test_results_line_cache_invalidates_render_inputs(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Theme, width, effective style, and record identity key final rows."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui import theme as ui_theme
+    from agentgrep.ui.app import build_streaming_ui_app
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        first_record = _make_record("same row")
+        _set_records(results, [first_record])
+        await pilot.pause()
+        results._strip_cache.clear()
+
+        base_style = results.get_component_rich_style("option-list--option")
+        styles = [base_style]
+        monkeypatch.setattr(
+            results,
+            "get_component_rich_style",
+            lambda _component: styles[0],
+        )
+        base = results.render_line(0)
+        assert results.render_line(0) is base
+
+        styles[0] = base_style + Style(reverse=True)
+        restyled = results.render_line(0)
+        assert restyled is not base
+        assert results.render_line(0) is restyled
+
+        app.theme = (
+            ui_theme.LIGHT_THEME_NAME
+            if str(app.theme) == ui_theme.DARK_THEME_NAME
+            else ui_theme.DARK_THEME_NAME
+        )
+        await pilot.pause()
+        themed = results.render_line(0)
+        assert themed is not restyled
+
+        old_width = results.size.width
+        await pilot.resize_terminal(120, 24)
+        await pilot.pause()
+        assert results.size.width != old_width
+        resized = results.render_line(0)
+        assert resized is not themed
+
+        _set_records(results, [_make_record("same row")])
+        replaced = results.render_line(0)
+        assert replaced is not resized
+
+
+async def test_results_caches_verify_record_identity_on_key_collision(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An identity-key collision cannot return another record's cached row."""
+    from agentgrep.progress import SearchControl
+    from agentgrep.ui.app import build_streaming_ui_app
+    from agentgrep.ui.widgets import results as results_module
+
+    app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
+    async with app.run_test(size=(80, 24)) as pilot:
+        results = app.screen.query_one(SearchResultsList)
+        app.screen._set_empty_state(empty=False)
+        old_record = dataclasses.replace(_make_record(), title="old cached row")
+        new_record = dataclasses.replace(_make_record(), title="new live row")
+        monkeypatch.setattr(results_module, "id", lambda _record: 1, raising=False)
+
+        _set_records(results, [old_record])
+        await pilot.pause()
+        old_strip = results.render_line(0)
+
+        _set_records(results, [new_record])
+        new_strip = results.render_line(0)
+
+        assert new_strip is not old_strip
+        assert "new live row" in new_strip.text
+        assert "old cached row" not in new_strip.text
 
 
 def test_detail_scroll_is_focusable_vertical_scroll() -> None:

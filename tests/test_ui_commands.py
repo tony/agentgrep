@@ -18,7 +18,7 @@ def test_registry_has_common_layout_commands() -> None:
     assert by_name["clear"].aliases == ("new", "reset")
     assert by_name["exit"].aliases == ("quit",)
     assert by_name["help"].aliases == ()
-    assert by_name["theme"].argument_hint == "[dark|light]"
+    assert by_name["theme"].argument_hint == "[name]"
     assert by_name["theme"].accepts_args is True
     assert by_name["screenshot"].aliases == ()
     assert by_name["screenshot"].accepts_args is False
@@ -107,7 +107,7 @@ def test_command_menu_label_includes_argument_hint() -> None:
     """The menu displays argument guidance without using it as dispatch policy."""
     theme = commands.resolve_command("theme")
     assert theme is not None
-    assert commands.command_menu_label(theme) == "theme [dark|light]"
+    assert commands.command_menu_label(theme) == "theme [name]"
 
 
 def test_zoom_commands_use_layout_safe_named_hooks() -> None:

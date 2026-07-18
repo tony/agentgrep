@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from agentgrep.mcp._library import (
     SERVER_VERSION,
     AgentSelector,
+    CatalogAgentSelector,
     FindRecordLike,
     SearchRecordLike,
     SearchScopeName,
@@ -344,7 +345,7 @@ class StoreDescriptorModel(AgentGrepModel):
 class ListStoresRequest(AgentGrepModel):
     """Validated list-stores request payload."""
 
-    agent: AgentSelector = "all"
+    agent: CatalogAgentSelector = "all"
     role_filter: str | None = None
     search_default_only: bool = False
 
@@ -414,6 +415,9 @@ class DiscoverySummaryResponse(AgentGrepModel):
     sources_by_kind: dict[str, int]
 
 
+VALIDATE_QUERY_INPUT_ERROR = "provide terms, query, or both"
+
+
 class ValidateQueryRequest(AgentGrepModel):
     """Validated validate-query request payload.
 
@@ -430,8 +434,7 @@ class ValidateQueryRequest(AgentGrepModel):
     def _require_terms_or_query(self) -> ValidateQueryRequest:
         """Require at least one of ``terms`` or ``query``."""
         if not self.terms and self.query is None:
-            message = "provide terms, query, or both"
-            raise ValueError(message)
+            raise ValueError(VALIDATE_QUERY_INPUT_ERROR)
         return self
 
 

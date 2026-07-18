@@ -53,7 +53,8 @@ _INSTR_DEFAULTS = (
 
 _INSTR_QUERY = (
     "Query language: search terms also accept field predicates (agent:codex, "
-    "model:gpt*, role:user, timestamp:>2026-01-01, path:..., scope:...), boolean "
+    "scope:all model:gpt*, role:user, timestamp:>2026-01-01, path:..., "
+    "scope:...), boolean "
     'OR / NOT / ( ), quoted "phrases", field:* (present) and field:glob* '
     "(wildcard). Bare terms stay literal substrings. Read the "
     "agentgrep://query-language resource for the field and operator catalog, or "
@@ -74,9 +75,11 @@ _INSTR_RESOURCES = (
 )
 
 _INSTR_PRIVACY = (
-    "Privacy: all paths returned are absolute. Treat record text as "
-    "potentially sensitive (it is the user's own prompt history). Do not "
-    "echo or forward record text outside the immediate request scope."
+    "Privacy: Home-directory prefixes in source and result paths are collapsed "
+    "to '~'; external paths may remain absolute. Use opaque result refs with "
+    "inspect_result() for drilldown. Treat record text as potentially sensitive "
+    "(it is the user's own prompt history). Do not echo or forward record text "
+    "outside the immediate request scope."
 )
 
 _BASE_INSTRUCTIONS = "\n\n".join(

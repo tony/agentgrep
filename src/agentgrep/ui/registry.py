@@ -39,6 +39,7 @@ class LayoutSpec:
     name: str
     summary: str
     loader: cabc.Callable[[], type[LayoutScreen]]
+    uses_history: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -52,10 +53,10 @@ class WorkflowSpec:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _UiComposition:
-    """One validated layout/workflow pair for the internal App shell."""
+    """One resolved layout/workflow pair for the internal App shell."""
 
-    layout: LayoutSpec
-    workflow: WorkflowSpec
+    layout_type: type[LayoutScreen]
+    workflow_type: type[Workflow]
 
 
 def _load_hud() -> type[LayoutScreen]:
@@ -84,7 +85,12 @@ def _load_browse() -> type[Workflow]:
 
 #: The built-in layouts, in display order. The first is the default.
 LAYOUTS: tuple[LayoutSpec, ...] = (
-    LayoutSpec("hud", "Search box, streaming results list, and detail pane", _load_hud),
+    LayoutSpec(
+        "hud",
+        "Search box, streaming results list, and detail pane",
+        _load_hud,
+        uses_history=True,
+    ),
     LayoutSpec("greplog", "Append-only streaming grep log", _load_greplog),
 )
 

@@ -8,7 +8,11 @@ rendered field list and :func:`agentgrep.query.default_registry`.
 
 from __future__ import annotations
 
-from agentgrep.query import default_registry
+from agentgrep.query import (
+    default_registry,
+    parse_query,
+    scope_widened_for_ast,
+)
 from agentgrep.query.help import (
     query_language_fields,
     query_language_operators,
@@ -52,3 +56,18 @@ def test_operators_include_phrase_exists_and_wildcard() -> None:
     syntaxes = " ".join(op.syntax for op in query_language_operators())
     for marker in ('"', "field:*", "*"):
         assert marker in syntaxes
+
+
+def test_model_wildcard_example_opts_into_conversations() -> None:
+    """Copying the model wildcard example cannot silently search prompts only."""
+    wildcard = next(op for op in query_language_operators() if op.syntax == "field:glob*")
+    assert wildcard.example == "scope:all model:gpt*"
+
+
+def test_exists_example_works_in_the_default_prompt_scope() -> None:
+    """Copying the exists example cannot target conversation-only metadata."""
+    exists = next(op for op in query_language_operators() if op.syntax == "field:*")
+    ast = parse_query(exists.example, default_registry())
+
+    assert exists.example == "agent:*"
+    assert scope_widened_for_ast(ast, "prompts") == "prompts"

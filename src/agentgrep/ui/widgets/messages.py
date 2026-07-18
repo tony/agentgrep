@@ -18,10 +18,10 @@ import typing as t
 from textual.message import Message
 
 from agentgrep.progress import (
-    FilterCompletedPayload,
     FilterRequestedPayload,
     SearchRequestedPayload,
 )
+from agentgrep.records import SearchRecord
 
 __all__ = [
     "DetailFindRequested",
@@ -29,8 +29,10 @@ __all__ = [
     "DetailScrollChanged",
     "FilterCompleted",
     "FilterRequested",
+    "ResultHighlighted",
     "ResultsScrollChanged",
     "SearchRequested",
+    "WelcomeQuerySelected",
 ]
 
 
@@ -61,9 +63,21 @@ class FilterRequested(Message):
 class FilterCompleted(Message):
     """Worker-completed filter result posted back to the main thread."""
 
-    def __init__(self, payload: FilterCompletedPayload) -> None:
+    def __init__(
+        self,
+        *,
+        text: str,
+        records: list[SearchRecord],
+        record_ids: set[int],
+        generation: int,
+        records_generation: int,
+    ) -> None:
         super().__init__()
-        self.payload = payload
+        self.text = text
+        self.records = records
+        self.record_ids = record_ids
+        self.generation = generation
+        self.records_generation = records_generation
 
 
 class SearchRequested(Message):
@@ -72,6 +86,32 @@ class SearchRequested(Message):
     def __init__(self, payload: SearchRequestedPayload) -> None:
         super().__init__()
         self.payload = payload
+
+
+class WelcomeQuerySelected(Message):
+    """A fixed query example was clicked on the idle welcome canvas."""
+
+    def __init__(self, index: int) -> None:
+        super().__init__()
+        self.index = index
+
+
+class ResultHighlighted(Message):
+    """Posted when the globally highlighted result row changes."""
+
+    def __init__(
+        self,
+        *,
+        record: SearchRecord,
+        index: int,
+        generation: int,
+        programmatic: bool,
+    ) -> None:
+        super().__init__()
+        self.record = record
+        self.index = index
+        self.generation = generation
+        self.programmatic = programmatic
 
 
 class ResultsScrollChanged(Message):

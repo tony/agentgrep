@@ -13,7 +13,7 @@ import re
 import typing as t
 
 import pytest
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 
 import agentgrep
 from agentgrep import mcp as _agentgrep_mcp_module
@@ -1423,6 +1423,30 @@ async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> Non
         assert adapter_id in advertised_adapters, adapter_id
 
 
+def test_mcp_capabilities_hide_backend_executable_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Capability metadata exposes backend names without machine-local paths."""
+    import agentgrep
+    from agentgrep.mcp import resources
+
+    monkeypatch.setattr(
+        resources.agentgrep,
+        "select_backends",
+        lambda: agentgrep.BackendSelection(
+            find_tool="/private/tooling/fd",
+            grep_tool="/opt/tools/rg",
+            json_tool=None,
+        ),
+    )
+
+    backends = resources.build_capabilities().backends
+
+    assert backends.find_tool == "fd"
+    assert backends.grep_tool == "rg"
+    assert backends.json_tool is None
+
+
 async def test_mcp_prompt_guides_search() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -1588,6 +1612,26 @@ def test_mcp_instructions_carry_every_segment_header() -> None:
         assert marker in rendered, marker
 
 
+def test_mcp_instructions_describe_path_privacy_boundaries() -> None:
+    """Handshake privacy guidance does not overpromise path redaction."""
+    from agentgrep.mcp.instructions import _build_instructions
+
+    rendered = _build_instructions()
+    assert "all paths returned are absolute" not in rendered
+    assert "Home-directory prefixes" in rendered
+    assert "external paths may remain absolute" in rendered
+    assert "opaque result refs" in rendered
+
+
+def test_mcp_instructions_scope_model_example() -> None:
+    """Handshake guidance makes the conversation-only model example effective."""
+    from agentgrep.mcp.instructions import _build_instructions
+
+    rendered = _build_instructions()
+    assert "scope:all model:gpt*" in rendered
+    assert "agent:codex, model:gpt*" not in rendered
+
+
 @pytest.mark.parametrize(
     AgentProductNameCase._fields,
     AGENT_PRODUCT_NAME_CASES,
@@ -1612,6 +1656,15 @@ def test_agent_product_name_map_tracks_agent_name_literal() -> None:
     assert set(AGENT_PRODUCT_NAMES) == set(t.get_args(agentgrep.AgentName))
 
 
+def test_catalog_agent_selector_tracks_store_catalog() -> None:
+    """The MCP catalog filter accepts every agent emitted by the catalog."""
+    from agentgrep.mcp import CatalogAgentSelector
+    from agentgrep.store_catalog import CATALOG
+
+    catalog_agents = {descriptor.agent for descriptor in CATALOG.stores}
+    assert set(t.get_args(CatalogAgentSelector)) == catalog_agents | {"all"}
+
+
 async def test_mcp_list_stores_returns_catalog_entries() -> None:
     """``list_stores`` enumerates the StoreCatalog."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1634,6 +1687,18 @@ async def test_mcp_list_stores_filters_by_agent() -> None:
     data = tool_payload(result)
     assert data["total"] >= 1
     assert {s["agent"] for s in data["stores"]} == {"cursor-cli"}
+
+
+async def test_mcp_list_stores_filters_catalog_only_agent() -> None:
+    """Catalog filtering accepts an unsupported agent emitted by the catalog."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("list_stores", {"agent": "windsurf"})
+
+    data = tool_payload(result)
+    assert data["total"] >= 1
+    assert {store["agent"] for store in data["stores"]} == {"windsurf"}
 
 
 async def test_mcp_get_store_descriptor_known_and_unknown() -> None:
@@ -1833,9 +1898,23 @@ async def test_mcp_validate_query_validates_query_language() -> None:
     assert "agent" in (bad_data["error_message"] or "")
 
 
+async def test_mcp_validate_query_empty_returns_guidance() -> None:
+    """An empty validation request returns a structured usage diagnostic."""
+    agentgrep_mcp = load_agentgrep_mcp_module()
+
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        result = await client.call_tool("validate_query", {})
+
+    data = tool_payload(result)
+    assert data["matches"] is False
+    assert data["regex_valid"] is True
+    assert data["query_valid"] is None
+    assert data["error_message"] == "provide terms, query, or both"
+
+
 async def test_mcp_query_language_resource_lists_every_field() -> None:
     """The query-language resource lists each registry field and operators."""
-    from agentgrep.query import default_registry
+    from agentgrep.query import default_registry, parse_query, scope_widened_for_ast
 
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -1845,7 +1924,12 @@ async def test_mcp_query_language_resource_lists_every_field() -> None:
     payload = t.cast("dict[str, t.Any]", json.loads(extract_resource_text(contents)))
     field_names = {field["name"] for field in payload["fields"]}
     assert field_names == set(default_registry().known_names())
-    assert any(op["syntax"] == "field:*" for op in payload["operators"])
+    exists = next(op for op in payload["operators"] if op["syntax"] == "field:*")
+    exists_ast = parse_query(exists["example"], default_registry())
+    assert exists["example"] == "agent:*"
+    assert scope_widened_for_ast(exists_ast, "prompts") == "prompts"
+    wildcard = next(op for op in payload["operators"] if op["syntax"] == "field:glob*")
+    assert wildcard["example"] == "scope:all model:gpt*"
     assert payload["summary"]
 
 
@@ -1859,6 +1943,59 @@ async def test_mcp_search_tool_description_mentions_query_language() -> None:
     search = next(tool for tool in tools if tool.name == "search")
     description = t.cast("str | None", t.cast("t.Any", search).description)
     assert "query language" in (description or "")
+
+
+async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
+    """Every docs-only tool shim mirrors its live MCP input schema."""
+    from docs._ext import agentgrep_fastmcp as docs_tools
+
+    def without_examples(value: t.Any) -> t.Any:
+        if isinstance(value, dict):
+            return {key: without_examples(item) for key, item in value.items() if key != "examples"}
+        if isinstance(value, list):
+            return [without_examples(item) for item in value]
+        return value
+
+    agentgrep_mcp = load_agentgrep_mcp_module()
+    async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        live_tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    docs_server = FastMCP("agentgrep docs schema")
+    for tool in live_tools:
+        docs_server.tool(name=tool.name)(getattr(docs_tools, tool.name))
+    async with Client(docs_server) as client:
+        documented_tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    documented_by_name = {tool.name: tool for tool in documented_tools}
+    description_mismatches: list[str] = []
+    for live_tool in live_tools:
+        documented = documented_by_name[live_tool.name]
+        assert without_examples(t.cast("t.Any", documented).inputSchema) == without_examples(
+            t.cast("t.Any", live_tool).inputSchema,
+        ), live_tool.name
+        live_description = " ".join(
+            (t.cast("t.Any", live_tool).description or "").split(),
+        )
+        documented_description = " ".join(
+            (t.cast("t.Any", documented).description or "").split(),
+        )
+        if documented_description != live_description:
+            description_mismatches.append(live_tool.name)
+    assert description_mismatches == []
+
+
+async def test_docs_list_stores_agent_examples_are_valid_selectors() -> None:
+    """Documented agent examples stay inside the MCP selector enum."""
+    from docs._ext import agentgrep_fastmcp as docs_tools
+
+    docs_server = FastMCP("agentgrep docs examples")
+    docs_server.tool(name="list_stores")(docs_tools.list_stores)
+    async with Client(docs_server) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+
+    schema = t.cast("dict[str, t.Any]", t.cast("t.Any", tools[0]).inputSchema)
+    agent_schema = t.cast("dict[str, t.Any]", schema["properties"]["agent"])
+    assert set(agent_schema["examples"]) <= set(agent_schema["enum"])
 
 
 async def test_mcp_recent_sessions_filters_by_mtime(
@@ -2062,20 +2199,27 @@ async def test_mcp_store_formats_resource() -> None:
     assert all(row["description"] for row in rows)
 
 
-async def test_mcp_capabilities_advertises_new_resources() -> None:
-    """The capabilities resource must list the three new resource URIs."""
+async def test_mcp_capabilities_match_registered_surface() -> None:
+    """Capabilities exactly match the live tool, resource, and prompt surface."""
     agentgrep_mcp = load_agentgrep_mcp_module()
 
     async with Client(agentgrep_mcp.build_mcp_server()) as client:
+        tools = t.cast("list[ToolLike]", await client.list_tools())
+        resources = t.cast("list[ResourceLike]", await client.list_resources())
+        templates = t.cast(
+            "list[ResourceTemplateLike]",
+            await client.list_resource_templates(),
+        )
+        prompts = t.cast("list[PromptLike]", await client.list_prompts())
         text = extract_resource_text(await client.read_resource("agentgrep://capabilities"))
 
     data = t.cast("dict[str, t.Any]", json.loads(text))
-    advertised = set(data["resources"])
-    assert {
-        "agentgrep://catalog",
-        "agentgrep://store-roles",
-        "agentgrep://store-formats",
-    } <= advertised
+    assert set(data["tools"]) == {tool.name for tool in tools}
+    assert set(data["resources"]) == {
+        *(str(resource.uri) for resource in resources),
+        *(template.uriTemplate for template in templates),
+    }
+    assert set(data["prompts"]) == {prompt.name for prompt in prompts}
 
 
 class McpTermTokenizationCase(t.NamedTuple):

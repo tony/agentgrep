@@ -76,12 +76,15 @@ _OPERATORS: tuple[OperatorDoc, ...] = (
     OperatorDoc(
         syntax="field:*",
         description="Field is present and non-empty.",
-        example="model:*",
+        example="agent:*",
     ),
     OperatorDoc(
         syntax="field:glob*",
-        description="Wildcard (* / ?) on text and string fields, anchored.",
-        example="model:gpt*",
+        description=(
+            "Wildcard (* / ?) on text and string fields, anchored; "
+            "model filters require conversation discovery."
+        ),
+        example="scope:all model:gpt*",
     ),
     OperatorDoc(
         syntax="field:>v / field:<=v",

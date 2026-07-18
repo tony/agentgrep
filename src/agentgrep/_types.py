@@ -172,6 +172,7 @@ class StreamingAppLike(t.Protocol):
         *,
         name: str = ...,
         group: str = ...,
+        description: str = ...,
         thread: bool = ...,
         exclusive: bool = ...,
     ) -> object:

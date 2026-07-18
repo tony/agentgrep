@@ -67,6 +67,11 @@ def list_source_models(agent: AgentSelector = "all") -> list[SourceRecordModel]:
     return [SourceRecordModel.from_source(source) for source in sources]
 
 
+def _backend_name(path: str | None) -> str | None:
+    """Return a selected executable's name without its machine-local path."""
+    return None if path is None else pathlib.Path(path).name
+
+
 def build_capabilities() -> CapabilitiesModel:
     """Build a typed capability summary."""
     backends = agentgrep.select_backends()
@@ -92,14 +97,15 @@ def build_capabilities() -> CapabilitiesModel:
             "agentgrep://sources",
             "agentgrep://sources/{agent}",
             "agentgrep://catalog",
+            "agentgrep://query-language",
             "agentgrep://store-roles",
             "agentgrep://store-formats",
         ],
         prompts=["search_prompts", "search_conversations", "inspect_stores"],
         backends=BackendAvailabilityModel(
-            find_tool=backends.find_tool,
-            grep_tool=backends.grep_tool,
-            json_tool=backends.json_tool,
+            find_tool=_backend_name(backends.find_tool),
+            grep_tool=_backend_name(backends.grep_tool),
+            json_tool=_backend_name(backends.json_tool),
         ),
     )
 

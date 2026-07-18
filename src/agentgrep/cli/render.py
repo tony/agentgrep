@@ -9,6 +9,7 @@ in :mod:`agentgrep.cli.renderers`.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import pathlib
 import sys
@@ -51,7 +52,7 @@ from agentgrep.progress import (
     SearchProgress,
     noop_search_progress,
 )
-from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord
+from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord, SearchScope
 
 __all__ = [
     "GrepSummary",
@@ -80,6 +81,27 @@ __all__ = [
     "stream_find_results",
     "stream_grep_results",
 ]
+
+
+def _launch_ui(
+    query: SearchQuery,
+    *,
+    initial_search_text: str | None = None,
+    base_scope: SearchScope | None = None,
+) -> None:
+    """Launch the UI and translate factory validation into a CLI diagnostic."""
+    from agentgrep.ui.app import UiQueryTooLongError
+
+    try:
+        run_ui(
+            pathlib.Path.home(),
+            query,
+            control=SearchControl(),
+            initial_search_text=initial_search_text,
+            base_scope=base_scope,
+        )
+    except UiQueryTooLongError as error:
+        raise SystemExit(str(error)) from None
 
 
 def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
@@ -211,11 +233,10 @@ def run_find_command(args: FindArgs) -> int:
             limit=args.limit,
             compiled=args.compiled,
         )
-        run_ui(
-            pathlib.Path.home(),
+        _launch_ui(
             query,
-            control=SearchControl(),
             initial_search_text=args.raw_query or None,
+            base_scope="all",
         )
         return 0
 
@@ -253,9 +274,10 @@ def run_find_command(args: FindArgs) -> int:
 
 def run_ui_command(args: UIArgs) -> int:
     """Execute ``agentgrep ui``."""
-    initial_terms = tuple(args.initial_query.split()) if args.initial_query else ()
-    query = SearchQuery(
-        terms=initial_terms,
+    from agentgrep.query import build_query_from_input, default_registry
+
+    base = SearchQuery(
+        terms=(),
         scope="prompts",
         any_term=False,
         regex=False,
@@ -263,10 +285,15 @@ def run_ui_command(args: UIArgs) -> int:
         agents=AGENT_CHOICES,
         limit=None,
     )
-    run_ui(
-        pathlib.Path.home(),
+    result = build_query_from_input(args.initial_query, base, default_registry())
+    query = result.query or dataclasses.replace(
+        base,
+        terms=tuple(args.initial_query.split()),
+    )
+    _launch_ui(
         query,
-        control=SearchControl(),
+        initial_search_text=args.initial_query or None,
+        base_scope="prompts",
     )
     return 0
 
@@ -300,11 +327,10 @@ def run_search_command(args: SearchArgs) -> int:
         origin_filter=args.origin_filter,
     )
     if args.output_mode == "ui":
-        run_ui(
-            pathlib.Path.home(),
+        _launch_ui(
             query,
-            control=SearchControl(),
             initial_search_text=args.raw_query or None,
+            base_scope=args.base_scope,
         )
         return 0
     if args.output_mode in ("json", "ndjson"):
@@ -633,11 +659,10 @@ def run_grep_command(args: GrepArgs) -> int:
         raise SystemExit(msg)
     query = build_grep_query(args)
     if args.output_mode == "ui":
-        run_ui(
-            pathlib.Path.home(),
+        _launch_ui(
             query,
-            control=SearchControl(),
             initial_search_text=args.raw_query or None,
+            base_scope=args.base_scope,
         )
         return 0
     if not _grep_path_is_eager(args):

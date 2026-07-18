@@ -137,6 +137,32 @@ async def test_greplog_write_chunk_does_not_warm_haystack_on_pump(
         assert len(layout.query_one("#greplog").lines) == 1
 
 
+async def test_greplog_writes_each_chunk_in_one_batch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One bounded record chunk causes one public ``RichLog.write`` call."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    records = tuple(_record(tmp_path, index, f"row {index}") for index in range(3))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        log = layout.query_one("#greplog")
+        writes: list[object] = []
+        original = log.write
+
+        def spy(content: object, *args: object, **kwargs: object) -> object:
+            writes.append(content)
+            return original(content, *args, **kwargs)
+
+        monkeypatch.setattr(log, "write", spy)
+        layout._write_chunk(records)
+
+        assert len(writes) == 1
+        assert str(writes[0]).count("\n") == len(records) - 1
+        assert len(log.lines) == len(records)
+
+
 async def test_greplog_finished_sets_status_line(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -149,6 +175,22 @@ async def test_greplog_finished_sets_status_line(
         layout._apply_finished("complete", 5, 1.2, None)
         await pilot.pause()
         assert "5" in str(layout.query_one("#greplog-status").render())
+
+
+async def test_greplog_error_status_treats_markup_as_text(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bracketed backend error is displayed literally."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._apply_finished("error", 0, 1.2, "[red]backend[/red]")
+        await pilot.pause()
+        assert str(layout.query_one("#greplog-status").render()) == (
+            "grep failed: [red]backend[/red]"
+        )
 
 
 async def test_greplog_renders_lifecycle_and_heartbeat_progress(
@@ -362,6 +404,45 @@ async def test_greplog_stale_filter_results_are_dropped(
         assert len(layout.query_one("#greplog").lines) == expected_lines
 
 
+async def test_greplog_filter_chunks_stop_after_generation_change(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A yielded filter repaint cannot append after a newer filter wins."""
+    from agentgrep.ui import _runtime
+    from agentgrep.ui.layouts import greplog as greplog_mod
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    entered_yield = asyncio.Event()
+    release_yield = asyncio.Event()
+
+    async def pause_between_chunks() -> None:
+        entered_yield.set()
+        await release_yield.wait()
+
+    monkeypatch.setattr(_runtime, "_sleep_zero", pause_between_chunks)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        records = tuple(
+            _record(tmp_path, index, f"old row {index}")
+            for index in range(greplog_mod._APPLY_CHUNK_SIZE * 2 + 1)
+        )
+        generation = layout._filter_generation
+        apply_task = asyncio.create_task(layout._apply_log_filter(generation, records))
+        await asyncio.wait_for(entered_yield.wait(), timeout=2)
+
+        layout._filter_generation += 1
+        log = layout.query_one("#greplog")
+        log.clear()
+        log.write("new view")
+        release_yield.set()
+        await apply_task
+
+        assert len(log.lines) == 1
+        assert "new view" in log.lines[0].text
+
+
 class ActiveFilterBatchCase(t.NamedTuple):
     """A streamed batch that arrives while a browse filter is active."""
 
@@ -406,6 +487,98 @@ async def test_greplog_streaming_batches_respect_active_filter(
         await pilot.pause(0.2)
         assert len(layout._records) == case.expected_records
         assert len(layout.query_one("#greplog").lines) == case.expected_lines
+
+
+async def test_greplog_active_filter_scans_each_streamed_record_once(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An active filter projects new batches without rescanning its prefix."""
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    initial = [_record(tmp_path, index, f"needle {index}") for index in range(100)]
+    later = [_record(tmp_path, 100 + index, f"needle {100 + index}") for index in range(10)]
+
+    class CountingMatcher:
+        calls = 0
+
+        def matches(self, record: SearchRecord) -> bool:
+            self.calls += 1
+            return "needle" in record.text
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        matcher = CountingMatcher()
+        layout._records.extend(initial)
+        layout._filter_matcher = matcher
+        layout._refresh_filter_log(matcher)
+        for _ in range(100):
+            if len(layout.query_one("#greplog").lines) == len(initial):
+                break
+            await asyncio.sleep(0.01)
+
+        await layout._apply_event(
+            layout._generation,
+            StreamingRecordsBatch(records=tuple(later), total=len(initial) + len(later)),
+        )
+        for _ in range(100):
+            if len(layout.query_one("#greplog").lines) == len(initial) + len(later):
+                break
+            await asyncio.sleep(0.01)
+
+        expected = len(initial) + len(later)
+        assert len(layout.query_one("#greplog").lines) == expected
+        assert matcher.calls == expected
+
+
+async def test_greplog_clear_filter_does_not_duplicate_streamed_tail(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch arriving during an unfiltered repaint is projected only once."""
+    from agentgrep.ui import _runtime
+    from agentgrep.ui.layouts import greplog as greplog_mod
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    entered_yield = asyncio.Event()
+    release_yield = asyncio.Event()
+
+    async def pause_between_chunks() -> None:
+        entered_yield.set()
+        await release_yield.wait()
+
+    monkeypatch.setattr(_runtime, "_sleep_zero", pause_between_chunks)
+    initial = [
+        _record(tmp_path, index, f"initial {index}")
+        for index in range(greplog_mod._APPLY_CHUNK_SIZE * 2 + 1)
+    ]
+    tail = [_record(tmp_path, len(initial) + index, f"tail {index}") for index in range(2)]
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._records.extend(initial)
+        layout.filter_loaded("")
+        await asyncio.wait_for(entered_yield.wait(), timeout=2)
+
+        await layout._apply_event(
+            layout._generation,
+            StreamingRecordsBatch(records=tuple(tail), total=len(initial) + len(tail)),
+        )
+        release_yield.set()
+        for _ in range(200):
+            if layout._filter_scan_generation is None and layout._filter_scanned_count == len(
+                initial
+            ) + len(tail):
+                break
+            await asyncio.sleep(0.01)
+
+        lines = tuple(line.text for line in layout.query_one("#greplog").lines)
+        assert len(lines) == len(initial) + len(tail)
+        assert [index for index, line in enumerate(lines) if "tail " in line] == [
+            len(initial),
+            len(initial) + 1,
+        ]
 
 
 class InterleavedFilterCase(t.NamedTuple):
@@ -485,3 +658,39 @@ async def test_greplog_search_input_does_not_crash_on_keys(
         await pilot.press("ctrl+c")  # with text -> screen._handle_input_ctrl_c clears it
         await pilot.pause()
         assert layout._search_input.value == ""
+
+
+async def test_greplog_search_highlighting_follows_active_theme(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A layout mounted in light mode keeps query colors in sync thereafter."""
+    from agentgrep.ui import theme
+
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.theme = theme.LIGHT_THEME_NAME
+        await pilot.pause()
+        layout = await _mount_greplog(app, pilot)
+        layout._search_input.value = "agent:claude"
+        await pilot.pause()
+
+        assert any("#007f7f" in str(span.style) for span in layout._search_input._value.spans)
+
+        app.theme = theme.DARK_THEME_NAME
+        await pilot.pause()
+        assert any("#5fd7af" in str(span.style) for span in layout._search_input._value.spans)
+
+
+def test_greplog_summary_slices_before_line_splitting(tmp_path: pathlib.Path) -> None:
+    """Compact log projection never scans an entire oversized record body."""
+    from agentgrep.ui.layouts.greplog import _format_log_line
+
+    class GuardedText(str):
+        def splitlines(self, keepends: bool = False) -> list[str]:
+            del keepends
+            raise AssertionError
+
+    record = _record(tmp_path, 0, GuardedText("summary\n" + "x" * 1_000_000))
+    assert "summary" in _format_log_line(record)

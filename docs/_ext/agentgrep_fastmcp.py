@@ -15,6 +15,7 @@ from pydantic import Field
 
 from agentgrep.mcp import (
     AgentSelector,
+    CatalogAgentSelector,
     FindToolResponse,
     SearchScopeName,
     SearchToolResponse,
@@ -29,6 +30,7 @@ from agentgrep.mcp.models import (
     StoreDescriptorModel,
     ValidateQueryResponse,
 )
+from agentgrep.query.help import query_language_summary
 
 READONLY_TAGS = {"readonly", "agentgrep"}
 DOCS_ONLY_MESSAGE = "Documentation signature only."
@@ -39,7 +41,7 @@ async def search(
         list[str] | None,
         Field(
             default=None,
-            description="One or more literal search terms (AND-matched).",
+            description=f"Search terms. {query_language_summary()}",
         ),
     ] = None,
     agent: t.Annotated[
@@ -69,8 +71,33 @@ async def search(
             description="Opaque page cursor returned by a previous search response.",
         ),
     ] = None,
+    cwd: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Only return records whose recorded cwd matches this path.",
+        ),
+    ] = None,
+    repo: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Only return records whose recorded repository root matches this path.",
+        ),
+    ] = None,
+    branch: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Only return records whose recorded git branch matches this name.",
+        ),
+    ] = None,
 ) -> SearchToolResponse:
-    """Search normalized prompts or conversations across local agent stores."""
+    """Search normalized prompts by default; opt into conversations with scope.
+
+    Terms accept agentgrep's query language (field predicates, booleans,
+    phrases, and wildcards); see agentgrep://query-language.
+    """
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
 
@@ -124,11 +151,11 @@ t.cast(t.Any, find).__fastmcp__ = types.SimpleNamespace(
 
 async def list_stores(
     agent: t.Annotated[
-        str,
+        CatalogAgentSelector,
         Field(
             default="all",
-            description="Filter to one agent or 'all' for every catalog entry.",
-            examples=["all", "claude", "cursor"],
+            description=("Filter to one catalog agent, including catalog-only agents, or 'all'."),
+            examples=["all", "claude", "windsurf"],
         ),
     ] = "all",
     role_filter: t.Annotated[
@@ -194,7 +221,7 @@ async def inspect_record_sample(
         str,
         Field(
             min_length=1,
-            description="Absolute path to the source file.",
+            description="Path returned by list_sources; '~' home prefixes are accepted.",
         ),
     ],
     sample_size: t.Annotated[
@@ -255,13 +282,24 @@ async def list_sources(
         Field(description="Limit discovery to one agent or scan every agent."),
     ] = "all",
     path_kind_filter: t.Annotated[
-        t.Literal["history_file", "session_file", "sqlite_db"] | None,
+        t.Literal["history_file", "session_file", "sqlite_db", "store_file"] | None,
         Field(default=None, description="Filter by path kind."),
     ] = None,
     source_kind_filter: t.Annotated[
-        t.Literal["json", "jsonl", "sqlite"] | None,
+        t.Literal["json", "jsonl", "sqlite", "text", "opaque"] | None,
         Field(default=None, description="Filter by on-disk source kind."),
     ] = None,
+    coverage_filter: t.Annotated[
+        t.Literal["default_search", "inspectable", "catalog_only", "private"] | None,
+        Field(default=None, description="Filter by coverage level."),
+    ] = None,
+    include_non_default: t.Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Include non-default inventory sources when true.",
+        ),
+    ] = False,
     limit: t.Annotated[
         int | None,
         Field(default=None, ge=1, description="Maximum number of sources to return."),
@@ -337,23 +375,36 @@ t.cast(t.Any, summarize_discovery).__fastmcp__ = types.SimpleNamespace(
 
 async def validate_query(
     terms: t.Annotated[
-        list[str],
+        list[str] | None,
         Field(
-            min_length=1,
-            description="One or more literal search terms (AND-matched).",
-            examples=[["alpha"], ["foo", "bar"]],
+            default=None,
+            description="Literal/regex terms to test against sample_text.",
         ),
-    ],
+    ] = None,
+    query: t.Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Query-language string to parse and compile; reports "
+                "query_valid and any parse/compile error."
+            ),
+        ),
+    ] = None,
     sample_text: t.Annotated[
         str,
-        Field(description="Sample text to test the query against."),
-    ],
+        Field(description="Sample text to test terms against."),
+    ] = "",
     case_sensitive: t.Annotated[
         bool,
         Field(description="Perform case-sensitive matching."),
     ] = False,
 ) -> ValidateQueryResponse:
-    """Dry-run a query against sample text without searching files."""
+    """Dry-run terms against sample text and/or validate query-language syntax.
+
+    Supported syntax includes field predicates, booleans, and phrases; no
+    files are searched.
+    """
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
 

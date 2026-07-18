@@ -286,6 +286,7 @@ class LayoutScreen(_SCREEN_BASE):
             ),
             name="screenshot",
             group="screenshot",
+            description="export screenshot",
             thread=True,
             exclusive=True,
         )
@@ -348,27 +349,25 @@ class LayoutScreen(_SCREEN_BASE):
 
     @_runtime.pump_only
     def select_theme(self, argument: str) -> bool:
-        """Toggle or directly select agentgrep's dark/light theme."""
+        """Open the picker or directly select one owned theme profile."""
         choice = argument.strip().lower()
         if not choice:
-            target = (
-                ui_theme.LIGHT_THEME_NAME
-                if self.app.theme == ui_theme.DARK_THEME_NAME
-                else ui_theme.DARK_THEME_NAME
-            )
-        elif choice == "dark":
-            target = ui_theme.DARK_THEME_NAME
-        elif choice == "light":
-            target = ui_theme.LIGHT_THEME_NAME
-        else:
+            return bool(self.app.open_theme_picker())
+        aliases = {
+            "dark": ui_theme.DARK_THEME_NAME,
+            "light": ui_theme.LIGHT_THEME_NAME,
+            "tokyo": ui_theme.TOKYO_NIGHT_THEME_NAME,
+            "tokyo-night": ui_theme.TOKYO_NIGHT_THEME_NAME,
+        }
+        target = aliases.get(choice, choice)
+        if target not in ui_theme.THEME_PROFILE_BY_NAME:
             self.notify(
-                "Theme must be dark or light.",
+                "Theme must be dark or light, or tokyo-night.",
                 title="Theme",
                 severity="warning",
             )
             return False
-        self.app.theme = target
-        return True
+        return bool(self.app.select_theme(target))
 
     # --- input control defaults (the shared SearchInput reaches these) --------
     # SearchInput.on_key routes ctrl-c and the non-ctrl-c "disarm" through

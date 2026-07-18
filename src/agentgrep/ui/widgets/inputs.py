@@ -8,23 +8,45 @@ agentgrep`` stays free of Textual (ADR 0010).
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import typing as t
 
 from rich.highlighter import Highlighter
 from textual import events
+from textual.binding import Binding, BindingType
+from textual.content import Content
+from textual.geometry import Region
 from textual.suggester import Suggester
 from textual.timer import Timer
 from textual.widgets import Input
 
 from agentgrep.progress import FilterRequestedPayload, SearchRequestedPayload
+from agentgrep.ui import _runtime
+from agentgrep.ui._history import QUERY_TEXT_MAX_CHARS
 from agentgrep.ui.widgets.messages import (
     DetailFindRequested,
     FilterRequested,
     SearchRequested,
 )
 
-__all__ = ["DetailFindInput", "FilterInput", "SearchInput"]
+__all__ = ["INPUT_MAX_LENGTH", "DetailFindInput", "FilterInput", "SearchInput"]
+
+INPUT_MAX_LENGTH = QUERY_TEXT_MAX_CHARS
+"""Maximum text processed by an interactive input on the message pump."""
+
+_SUBMIT_HINT = Content.assemble("Press ", ("Enter", "bold $accent"), " ↵")
+
+_HIDDEN_EDITING_ALIASES = (
+    Binding("shift+backspace", "delete_left", "Delete character left", show=False),
+    Binding("shift+delete", "delete_right", "Delete character right", show=False),
+)
+
+
+def _consume_key(event: events.Key) -> None:
+    """Stop bubbling and suppress Textual's base-class key action."""
+    event.stop()
+    event.prevent_default()
 
 
 def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:
@@ -38,9 +60,7 @@ def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:
     """
     if str(getattr(event, "key", "")) != "ctrl+c":
         return False
-    stop = getattr(event, "stop", None)
-    if callable(stop):
-        stop()
+    _consume_key(event)
     t.cast("t.Any", widget.screen)._handle_input_ctrl_c(widget)
     return True
 
@@ -50,7 +70,16 @@ def _disarm_confirm_exit(widget: Input) -> None:
     t.cast("t.Any", widget.screen)._disarm_confirm_exit()
 
 
-class FilterInput(Input):
+class _BoundedInput(Input):
+    """Input whose reactive value invariant also covers programmatic writes."""
+
+    @_runtime.pump_only
+    def validate_value(self, value: str) -> str:
+        """Clamp every reactive assignment to the interactive text budget."""
+        return value[:INPUT_MAX_LENGTH]
+
+
+class FilterInput(_BoundedInput):
     """``Input`` subclass with debounced filter + cursor-or-focus arrows.
 
     The base ``Input.Changed`` event still fires immediately on each
@@ -69,7 +98,8 @@ class FilterInput(Input):
 
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
 
-    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
+        *_HIDDEN_EDITING_ALIASES,
         ("down", "release_down", "Results"),
     ]
 
@@ -84,14 +114,16 @@ class FilterInput(Input):
         super().__init__(
             placeholder=placeholder,
             id=id,
+            max_length=INPUT_MAX_LENGTH,
             suggester=suggester,
             highlighter=highlighter,
         )
         self._debounce_timer: Timer | None = None
 
-    def _watch_value(self, value: str) -> None:
-        """Post normal ``Input.Changed`` and arm a debounced ``FilterRequested``."""
-        super()._watch_value(value)
+    @_runtime.pump_only
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Arm a debounced ``FilterRequested`` after a public change event."""
+        value = event.value
         if self._debounce_timer is not None:
             self._debounce_timer.stop()
         self._debounce_timer = self.set_timer(
@@ -101,18 +133,17 @@ class FilterInput(Input):
             ),
         )
 
-    async def _on_key(self, event: events.Key) -> None:
+    @_runtime.pump_only
+    async def on_key(self, event: events.Key) -> None:
         """Down/up route between cursor-jump and focus-release per spec."""
         key = str(getattr(event, "key", ""))
         cursor = int(getattr(self, "cursor_position", 0))
         value = str(getattr(self, "value", ""))
-        stop = getattr(event, "stop", None)
         dropdown = t.cast("t.Any", getattr(self.screen, "_filter_dropdown", None))
         dropdown_open = dropdown is not None and bool(dropdown.display)
         if dropdown_open and key in {"escape", "ctrl+c"}:
             # Dismiss the dropdown, keep editing — don't quit.
-            if callable(stop):
-                stop()
+            _consume_key(event)
             dropdown.display = False
             return
         if _staged_ctrl_c(self, event):
@@ -124,32 +155,27 @@ class FilterInput(Input):
         if key == "down":
             if dropdown_open and dropdown.option_count:
                 # An open completion picker captures Down: jump into it.
-                if callable(stop):
-                    stop()
+                _consume_key(event)
                 dropdown.focus()
                 dropdown.highlighted = 0
                 return
             if value and cursor < len(value):
                 self.cursor_position = len(value)
-                if callable(stop):
-                    stop()
+                _consume_key(event)
                 return
             # Empty or at end — release focus to next widget (DataTable)
-            if callable(stop):
-                stop()
+            _consume_key(event)
             self.app.action_focus_next()
             return
         if key == "up":
             if value and cursor > 0:
                 self.cursor_position = 0
-                if callable(stop):
-                    stop()
+                _consume_key(event)
                 return
             # Empty or at start — release focus up to the top search bar
             # so plain ``up`` navigates filter → search without reaching
             # for Ctrl-K. Mirrors the symmetric ``down`` → results path.
-            if callable(stop):
-                stop()
+            _consume_key(event)
             with contextlib.suppress(Exception):
                 self.app.query_one("#search").focus()
             return
@@ -159,19 +185,18 @@ class FilterInput(Input):
             # walk through it character-by-character. Route through the
             # app's ``_focus_detail`` so a collapsed stacked pane is
             # revealed before focus lands.
-            if callable(stop):
-                stop()
+            _consume_key(event)
             with contextlib.suppress(Exception):
                 t.cast("t.Any", self.screen)._focus_detail()
             return
-        await super()._on_key(event)
 
+    @_runtime.pump_only
     def action_release_down(self) -> None:
-        """Footer-binding fallback (``_on_key`` handles the real release)."""
+        """Footer-binding fallback (``on_key`` handles the real release)."""
         self.app.action_focus_next()
 
 
-class DetailFindInput(Input):
+class DetailFindInput(_BoundedInput):
     """``Input`` for find-in-detail, docked at the bottom of the detail pane.
 
     Separate from the search and filter inputs: typing posts a debounced
@@ -183,6 +208,7 @@ class DetailFindInput(Input):
     """
 
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.12
+    BINDINGS: t.ClassVar[list[BindingType]] = [*_HIDDEN_EDITING_ALIASES]
 
     def __init__(
         self,
@@ -190,8 +216,13 @@ class DetailFindInput(Input):
         placeholder: str = "",
         id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
     ) -> None:
-        super().__init__(placeholder=placeholder, id=id)
+        super().__init__(
+            placeholder=placeholder,
+            id=id,
+            max_length=INPUT_MAX_LENGTH,
+        )
         self._debounce_timer: Timer | None = None
+        self._suppressed_change_values: collections.deque[str] = collections.deque()
 
     def load_query(self, value: str) -> None:
         """Set the value without posting a :class:`DetailFindRequested`.
@@ -199,7 +230,10 @@ class DetailFindInput(Input):
         Used when restoring a record's remembered find query so the restore
         doesn't re-run the find (and reset the match cursor) via the debounce.
         """
-        self.value = value
+        bounded = value[:INPUT_MAX_LENGTH]
+        if bounded != self.value:
+            self._suppressed_change_values.append(bounded)
+            self.value = bounded
         self.cancel_pending_request()
 
     def cancel_pending_request(self) -> None:
@@ -208,23 +242,26 @@ class DetailFindInput(Input):
             self._debounce_timer.stop()
             self._debounce_timer = None
 
-    def _watch_value(self, value: str) -> None:
-        """Post the normal ``Input.Changed`` and arm a debounced find request."""
-        super()._watch_value(value)
+    @_runtime.pump_only
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Arm a debounced find request after a public change event."""
+        value = event.value
         self.cancel_pending_request()
+        if self._suppressed_change_values and value == self._suppressed_change_values[0]:
+            self._suppressed_change_values.popleft()
+            return
         self._debounce_timer = self.set_timer(
             self._DEBOUNCE_SECONDS,
             lambda: self.post_message(DetailFindRequested(text=value)),
         )
 
-    async def _on_key(self, event: events.Key) -> None:
+    @_runtime.pump_only
+    async def on_key(self, event: events.Key) -> None:
         """``esc`` closes; ``ctrl+c`` clears then closes; ``enter``/``down``/``up`` step."""
         key = str(getattr(event, "key", ""))
-        stop = getattr(event, "stop", None)
         app = t.cast("t.Any", self.screen)
         if key == "escape":
-            if callable(stop):
-                stop()
+            _consume_key(event)
             app._close_detail_find()
             return
         # Staged ctrl+c: clear the query first; an empty box closes the bar
@@ -232,18 +269,16 @@ class DetailFindInput(Input):
         if _staged_ctrl_c(self, event):
             return
         if key in {"enter", "down", "up"}:
-            if callable(stop):
-                stop()
+            _consume_key(event)
             self.cancel_pending_request()
             value = str(getattr(self, "value", "") or "")
             if value != app._detail_find_query:
                 app._run_detail_find(value, reset_cursor=True)
             app._detail_find_step(1 if key in {"enter", "down"} else -1)
             return
-        await super()._on_key(event)
 
 
-class SearchInput(Input):
+class SearchInput(_BoundedInput):
     """``Input`` subclass that fires :class:`SearchRequested` on Enter.
 
     Keystrokes update the input text immediately so the cursor stays
@@ -254,7 +289,8 @@ class SearchInput(Input):
     worker before spawning a fresh one.
     """
 
-    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
+        *_HIDDEN_EDITING_ALIASES,
         ("down", "release_down", "Filter"),
     ]
 
@@ -269,14 +305,30 @@ class SearchInput(Input):
         label: str | None = None,
     ) -> None:
         super().__init__(
-            value=value,
+            value=value[:INPUT_MAX_LENGTH],
             placeholder=placeholder,
             id=id,
+            max_length=INPUT_MAX_LENGTH,
             suggester=suggester,
             highlighter=highlighter,
         )
         self._label = label
 
+    def load_query(self, value: str) -> None:
+        """Load a bounded query and place the cursor at its end."""
+        self.value = value[:INPUT_MAX_LENGTH]
+        self.cursor_position = len(self.value)
+        self.scroll_to_region(
+            Region(self.content_width, 0, width=1, height=1),
+            force=True,
+            animate=False,
+        )
+
+    def _sync_submit_hint(self, value: str) -> None:
+        """Show the submit affordance only while a nonblank query is ready."""
+        self.border_subtitle = _SUBMIT_HINT if value.strip() else None
+
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Paint ``label`` into the top rule as the pi label-in-the-rule.
 
@@ -291,7 +343,14 @@ class SearchInput(Input):
         """
         if self._label is not None:
             self.border_title = self._label
+        self._sync_submit_hint(self.value)
 
+    @_runtime.pump_only
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Keep the border submit affordance synchronized with query text."""
+        self._sync_submit_hint(event.value)
+
+    @_runtime.pump_only
     def on_input_submitted(self, event: object) -> None:
         """Enter pressed — dispatch a :class:`SearchRequested` for the current value."""
         stop = getattr(event, "stop", None)
@@ -302,18 +361,17 @@ class SearchInput(Input):
             SearchRequested(payload=SearchRequestedPayload(text=value)),
         )
 
-    async def _on_key(self, event: events.Key) -> None:
+    @_runtime.pump_only
+    async def on_key(self, event: events.Key) -> None:
         """``down`` releases focus to the filter; ``up`` is a no-op (top widget)."""
         key = str(getattr(event, "key", ""))
         cursor = int(getattr(self, "cursor_position", 0))
         value = str(getattr(self, "value", ""))
-        stop = getattr(event, "stop", None)
         dropdown = t.cast("t.Any", getattr(self.screen, "_enum_dropdown", None))
         dropdown_open = dropdown is not None and bool(dropdown.display)
         if dropdown_open and key in {"escape", "ctrl+c"}:
             # Dismiss the dropdown, keep editing — don't quit or stop search.
-            if callable(stop):
-                stop()
+            _consume_key(event)
             dropdown.display = False
             return
         if _staged_ctrl_c(self, event):
@@ -325,8 +383,7 @@ class SearchInput(Input):
             if getattr(app, "_command_matches", ()):
                 # Command menu: run the highlighted command rather than submit
                 # the partial "/c" (which would flash an unknown-command error).
-                if callable(stop):
-                    stop()
+                _consume_key(event)
                 app._run_command_at(int(getattr(dropdown, "highlighted", 0) or 0))
                 return
             # Keyword completion: close the picker; the normal submit proceeds.
@@ -334,31 +391,26 @@ class SearchInput(Input):
         if key == "down":
             if dropdown_open and dropdown.option_count:
                 # An open enum picker captures Down: jump into it.
-                if callable(stop):
-                    stop()
+                _consume_key(event)
                 dropdown.focus()
                 dropdown.highlighted = 0
                 return
             if value and cursor < len(value):
                 self.cursor_position = len(value)
-                if callable(stop):
-                    stop()
+                _consume_key(event)
                 return
-            if callable(stop):
-                stop()
+            _consume_key(event)
             self.app.action_focus_next()
             return
         if key == "up":
             if value and cursor > 0:
                 self.cursor_position = 0
-                if callable(stop):
-                    stop()
+                _consume_key(event)
                 return
-            if callable(stop):
-                stop()
+            _consume_key(event)
             return
-        await super()._on_key(event)
 
+    @_runtime.pump_only
     def action_release_down(self) -> None:
-        """Footer-binding fallback (``_on_key`` handles the real release)."""
+        """Footer-binding fallback (``on_key`` handles the real release)."""
         self.app.action_focus_next()

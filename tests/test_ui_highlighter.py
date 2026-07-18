@@ -17,10 +17,10 @@ from rich.text import Text
 from agentgrep.ui.highlighter import QueryHighlighter
 
 
-def _styled_spans(query: str) -> set[tuple[str, str]]:
+def _styled_spans(query: str, *, dark: bool = True) -> set[tuple[str, str]]:
     """Return ``{(token_text, style)}`` for a highlighted query."""
     text = Text(query)
-    QueryHighlighter().highlight(text)
+    QueryHighlighter(dark=dark).highlight(text)
     return {(text.plain[span.start : span.end], str(span.style)) for span in text.spans}
 
 
@@ -90,3 +90,32 @@ def test_query_highlighter_empty_is_noop() -> None:
     text = Text("")
     QueryHighlighter().highlight(text)
     assert not text.spans
+
+
+def test_query_highlighter_styles_both_empty_phrase_quotes() -> None:
+    """An empty quoted phrase keeps both delimiters visible."""
+    text = Text('""')
+    QueryHighlighter().highlight(text)
+
+    assert [(span.start, span.end, str(span.style)) for span in text.spans] == [
+        (0, 1, "color(245)"),
+        (1, 2, "color(245)"),
+    ]
+
+
+def test_query_highlighter_light_palette_uses_readable_semantic_hues() -> None:
+    """The light palette preserves syntax roles with dark foregrounds."""
+    spans = _styled_spans(
+        '-agent:codex OR model:gpt* timestamp:>2026-01-01 "exact phrase"',
+        dark=False,
+    )
+    assert {
+        ("-", "bold #9b2242"),
+        ("agent", "#007f7f"),
+        (":", "#202020"),
+        ("codex", "#202020"),
+        ("OR", "bold #502000"),
+        ("*", "bold #000080"),
+        (">", "#502000"),
+        ("exact phrase", "#202020"),
+    }.issubset(spans)

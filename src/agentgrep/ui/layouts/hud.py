@@ -10,6 +10,7 @@ the tests), so ``import agentgrep`` stays Textual-free (ADR 0010).
 from __future__ import annotations
 
 import collections
+import contextlib
 import dataclasses
 import functools
 import json
@@ -23,18 +24,23 @@ from rich.console import Group as _RichGroup
 from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
-from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.binding import Binding, BindingType
+from textual.containers import Center, Horizontal, Vertical
+from textual.content import Content
+from textual.reactive import reactive
+from textual.style import Style
+from textual.timer import Timer
 from textual.widgets import Footer, Static
+from textual.worker import Worker, WorkerCancelled
 
 from agentgrep._engine.orchestration import clear_haystack_cache
 from agentgrep._text import (
+    DETAIL_BODY_MAX_CHARS,
     DETAIL_BODY_MAX_LINES,
     detect_content_format,
     find_first_match_line,
     format_compact_path,
     format_display_path,
-    highlight_matches,
     truncate_lines,
 )
 from agentgrep._types import (
@@ -42,7 +48,6 @@ from agentgrep._types import (
     StreamingAppLike,
 )
 from agentgrep.progress import (
-    FilterCompletedPayload,
     ProgressSnapshot,
     SearchControl,
     StreamingRecordsBatch,
@@ -68,6 +73,7 @@ from agentgrep.ui.format import scroll_percent
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import (
+    WELCOME_QUERY_INDEX_META,
     CompletionDropdown,
     DetailFindInput,
     DetailFindRequested,
@@ -80,6 +86,7 @@ from agentgrep.ui.widgets import (
     FilterRequested,
     HistoryRecall,
     PaneHeader,
+    ResultHighlighted,
     ResultsHeader,
     ResultsScrollChanged,
     SearchingPanel,
@@ -87,9 +94,12 @@ from agentgrep.ui.widgets import (
     SearchRequested,
     SearchResultsList,
     SlowSourceDiagnosticsRow,
+    WelcomeExamples,
+    WelcomeQuerySelected,
 )
 
 if t.TYPE_CHECKING:
+    from agentgrep._engine.matching import CompiledRecordMatcher
     from agentgrep.ui.workflows import Workflow
 
 
@@ -101,6 +111,172 @@ class _DetailMatchStyles(t.NamedTuple):
 
 
 _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
+_DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]]
+_DetailBody = tuple[object, str]
+_DETAIL_RICH_FORMAT_MAX_CHARS = 2048
+_DETAIL_HIGHLIGHT_MAX_TERMS = 32
+_DETAIL_HIGHLIGHT_MAX_MATCHES = 256
+_DETAIL_HIGHLIGHT_MAX_TERM_CHARS = 256
+_DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS = 2048
+_STREAM_FILTER_MAX_TEXT_CHARS = 2 << 20
+_RichSyntaxType = _RichSyntax
+
+_WELCOME_QUERIES = (
+    "agent:claude",
+    "scope:all model:gpt*",
+    "role:user",
+    "timestamp:>2026-01-01",
+    '"exact phrase"',
+)
+_WELCOME_QUERY_ROWS = ((0, 1, 2), (3, 4))
+_WELCOME_BRAND_SHINE = (1, 2, 3, 4, 5, 4, 3, 2, 1)
+_WELCOME_SHINE_INTERVAL = 0.08
+
+
+def _welcome_wordmark(offset: int = 0) -> Content:
+    """Build one frame of the theme-aware welcome wordmark."""
+    return Content.assemble(
+        "Welcome to ",
+        *(
+            (
+                character,
+                "bold $ag-brand-shine-"
+                f"{_WELCOME_BRAND_SHINE[(index + offset) % len(_WELCOME_BRAND_SHINE)]}",
+            )
+            for index, character in enumerate("agentgrep")
+        ),
+    )
+
+
+class _WelcomeWordmark(Static):
+    """Fixed-size welcome wordmark with a paint-only shine frame."""
+
+    shine_offset: reactive[int] = reactive(0, layout=False, repaint=True)
+
+    @_runtime.pump_only
+    def render(self) -> Content:
+        """Render the current theme-token frame without changing geometry."""
+        return _welcome_wordmark(self.shine_offset)
+
+
+def _welcome_query_examples(highlighter: QueryHighlighter | None = None) -> Content:
+    """Build syntax-colored examples with bounded click metadata."""
+    examples = Text()
+    click_ranges: list[tuple[int, int, int]] = []
+    active_highlighter = highlighter or QueryHighlighter()
+    for row_number, row in enumerate(_WELCOME_QUERY_ROWS):
+        if row_number:
+            examples.append("\n")
+        for column, index in enumerate(row):
+            if column:
+                examples.append("   ")
+            query = _WELCOME_QUERIES[index]
+            hint = Text(query)
+            active_highlighter.highlight(hint)
+            start = len(examples)
+            examples.append_text(hint)
+            click_ranges.append((start, len(examples), index))
+
+    content = Content.from_rich_text(examples)
+    for start, end, index in click_ranges:
+        content = content.stylize(
+            Style.from_meta({WELCOME_QUERY_INDEX_META: index}),
+            start,
+            end,
+        )
+    return content
+
+
+def _bounded_literal_terms(
+    terms: cabc.Sequence[str],
+    *,
+    case_sensitive: bool,
+) -> tuple[str, ...]:
+    """Deduplicate decorative literal terms within a fixed presentation budget."""
+    result: list[str] = []
+    seen: set[str] = set()
+    total_chars = 0
+    for term in terms:
+        if not term or len(term) > _DETAIL_HIGHLIGHT_MAX_TERM_CHARS:
+            continue
+        key = term if case_sensitive else term.casefold()
+        if key in seen:
+            continue
+        if total_chars + len(term) > _DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS:
+            break
+        seen.add(key)
+        result.append(term)
+        total_chars += len(term)
+        if len(result) >= _DETAIL_HIGHLIGHT_MAX_TERMS:
+            break
+    return tuple(result)
+
+
+def _stream_filter_chunks(
+    records: cabc.Sequence[SearchRecord],
+    *,
+    max_records: int,
+    max_chars: int,
+) -> cabc.Iterator[tuple[SearchRecord, ...]]:
+    """Yield record slices bounded by count and projected body characters."""
+    chunk: list[SearchRecord] = []
+    chunk_chars = 0
+    for record in records:
+        record_chars = min(len(record.text), max_chars)
+        if chunk and (len(chunk) >= max_records or chunk_chars + record_chars > max_chars):
+            yield tuple(chunk)
+            chunk = []
+            chunk_chars = 0
+        chunk.append(record)
+        chunk_chars += record_chars
+    if chunk:
+        yield tuple(chunk)
+
+
+def _apply_bounded_literal_highlights(
+    text: Text,
+    source: str,
+    terms: cabc.Sequence[str],
+    *,
+    case_sensitive: bool,
+    style: str,
+) -> None:
+    """Apply a bounded number of literal match spans to ``text``."""
+    flags = 0 if case_sensitive else re.IGNORECASE
+    remaining = _DETAIL_HIGHLIGHT_MAX_MATCHES
+    for term in _bounded_literal_terms(terms, case_sensitive=case_sensitive):
+        compiled = re.compile(re.escape(term), flags)
+        for match in compiled.finditer(source):
+            text.stylize(style, match.start(), match.end())
+            remaining -= 1
+            if remaining == 0:
+                return
+
+
+def _json_pretty_print_is_bounded(text: str) -> bool:
+    """Return whether two-space indentation has a conservative output budget."""
+    depth = 0
+    max_depth = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            max_depth = max(max_depth, depth)
+        elif char in "]}":
+            depth = max(0, depth - 1)
+    estimated_max = len(text) * (2 * max_depth + 3)
+    return estimated_max <= DETAIL_BODY_MAX_CHARS
 
 
 class HudLayout(LayoutScreen):
@@ -114,7 +290,7 @@ class HudLayout(LayoutScreen):
     # ``ctrl+k`` = kill-to-end-of-line). Trade-off accepted per user
     # request: filter loses ``ctrl+k``; ``ctrl+u`` and ``ctrl+w`` are
     # untouched and remain readline-compatible.
-    BINDINGS: t.ClassVar[list[t.Any]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
         ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
@@ -151,6 +327,8 @@ class HudLayout(LayoutScreen):
     # ~50 cells to stay readable. Distinct from the statusline
     # breakpoint above, which measures the results column alone.
     _SPLIT_BREAKPOINT: t.ClassVar[int] = 100
+    _WELCOME_COMPACT_WIDTH: t.ClassVar[int] = 20
+    _WELCOME_COMPACT_HEIGHT: t.ClassVar[int] = 18
 
     def __init__(self, ctx: UiContext, workflow: Workflow) -> None:
         super().__init__(ctx, workflow)
@@ -160,7 +338,7 @@ class HudLayout(LayoutScreen):
         # widens the per-search scope to "all"; this stable base is what
         # a search without a ``scope:`` predicate reverts to, so the
         # widening never persists across searches.
-        self._user_scope = ctx.query.scope
+        self._user_scope = ctx.base_scope
         self.control = ctx.control
         self._invoker = ctx.invoker
         self.initial_search_text: str | None = ctx.initial_search_text
@@ -172,16 +350,16 @@ class HudLayout(LayoutScreen):
         self._last_snapshot: ProgressSnapshot | None = None
         self._active_source_snapshots: dict[int, ProgressSnapshot] = {}
         self._searching_panel: SearchingPanel | None = None
-        # Persisted search-input history (agentgrep's only self-written
-        # state — under XDG_STATE_HOME, never a searched store). Loaded once
-        # at construction; the recall modal reads this in-memory snapshot.
-        self._history_disabled = _history.history_disabled()
+        self._welcome_widget: _WelcomeWordmark | None = None
+        self._welcome_examples: WelcomeExamples | None = None
+        self._welcome_shine_timer: Timer | None = None
+        # Persisted search-input history (agentgrep's only self-written state —
+        # under XDG_STATE_HOME, never a searched store). The factory loads the
+        # snapshot before Textual starts; the recall modal only reads memory.
+        self._history_disabled = ctx.history_disabled
         self._history_path = _history.history_path(self.home)
-        self._history: list[_history.HistoryEntry] = (
-            [] if self._history_disabled else _history.load_history(self._history_path)
-        )
+        self._history = list(ctx.history)
         self._last_recorded_text = self._history[0].text if self._history else ""
-        self._theme_generation: int = 0
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -197,12 +375,16 @@ class HudLayout(LayoutScreen):
         self._completion_suggester = QuerySuggester(default_registry())
         # One highlighter syntax-colors the typed query on both inputs.
         self._query_highlighter = QueryHighlighter()
+        self._theme_refresh_pending = False
+        self._rendered_theme_name: str | None = None
         self._enum_values: tuple[str, ...] = ()
         self._filter_dropdown: t.Any = None
         self._filter_dropdown_values: tuple[str, ...] = ()
         # Compiled record matcher for the current (query-aware) filter
         # text; ``None`` means no active filter (all records pass).
-        self._filter_matcher: t.Any = None
+        self._filter_matcher: CompiledRecordMatcher | None = None
+        self._filter_generation = 0
+        self._records_generation = 0
         self._resize_debounce_timer: object | None = None
         self._current_detail_record: SearchRecord | None = None
         self._detail_scroll: t.Any = None
@@ -214,13 +396,11 @@ class HudLayout(LayoutScreen):
         # Responsive split: True when the detail pane is stacked
         # below the results rather than beside them. ``_detail_opened``
         # is the tig-style "user selected a row" gate that reveals the
-        # stacked detail; programmatic highlights caused by filter-list
-        # patching (``_pending_autohighlights``) must not trip it.
+        # stacked detail; programmatic filter highlights must not trip it.
         self._stacked: bool = False
         self._detail_opened: bool = False
         self._zoomed_pane: t.Literal["results", "detail"] | None = None
         self._last_content_pane: t.Literal["results", "detail"] = "results"
-        self._pending_autohighlights: int = 0
         # Literal terms of the active filter, highlighted in the detail
         # pane in a distinct color from the search-query terms.
         self._filter_terms: tuple[str, ...] = ()
@@ -230,9 +410,11 @@ class HudLayout(LayoutScreen):
         # highlighted match line. Bounded so a long browsing session
         # can't grow them without limit.
         self._detail_body_cache: collections.OrderedDict[
-            tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]],
-            tuple[object, str],
+            _DetailCacheKey,
+            tuple[SearchRecord, object, str],
         ] = collections.OrderedDict()
+        self._presented_detail_cache_key: _DetailCacheKey | None = None
+        self._detail_build_generation = 0
         # Per-record detail scroll memory: id(record) -> scroll_y. A
         # revisited record restores its position; a record opened for the
         # first time opens at the top. Bounded like the body cache.
@@ -254,9 +436,10 @@ class HudLayout(LayoutScreen):
         # printed JSON for json bodies, the raw body otherwise. Find matches
         # and scroll work against this so offsets line up with what is shown.
         self._detail_find_source: str = ""
+        self._detail_find_json_syntax = False
         # Cached syntax+search+filter find body; the find-match overlay changes
-        # per keystroke but this base does not, so it is built once per
-        # highlight state and copied (invalidated in _present_detail).
+        # per keystroke but this base does not. A presented Text is retained;
+        # other renderables are converted once per highlight state, then copied.
         self._detail_find_base: Text | None = None
         self._detail_find_base_key: _DetailFindBaseKey | None = None
         # Per-record find memory, mirroring _detail_scroll_positions:
@@ -277,7 +460,7 @@ class HudLayout(LayoutScreen):
         return self._started_at
 
     @_runtime.pump_only
-    async def _on_theme_changed(self, _theme: object) -> None:
+    def _on_theme_changed(self, _theme: object) -> None:
         """Rebuild Rich-baked surfaces when the palette switches.
 
         The chrome recolors automatically through TCSS, but the results
@@ -287,23 +470,16 @@ class HudLayout(LayoutScreen):
         """
         if not self.is_mounted:
             return
-        self._theme_generation += 1
-        generation = self._theme_generation
+        if self.app.theme == self._rendered_theme_name:
+            self._theme_refresh_pending = False
+            return
+        if self.app.screen is not self:
+            self._theme_refresh_pending = True
+            return
+        self._refresh_query_highlighting(dark=bool(getattr(_theme, "dark", True)))
         results = self._results
         if results is not None:
-            records = results.prepare_theme_rerender()
-
-            def apply_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
-                if self._theme_repaint_is_live(generation, results):
-                    results.apply_theme_rerender(chunk)
-
-            await _runtime.stream_apply(
-                records,
-                apply_chunk,
-                chunk_size=self._APPLY_CHUNK_SIZE,
-            )
-        if not self._theme_repaint_is_live(generation, results):
-            return
+            results.refresh_theme()
         if self._filter_header is not None:
             self._filter_header.refresh_theme()
         if self._searching_panel is not None:
@@ -311,14 +487,25 @@ class HudLayout(LayoutScreen):
         self._detail_body_cache.clear()
         if self._current_detail_record is not None:
             self.show_detail(self._current_detail_record)
+        self._rendered_theme_name = self.app.theme
 
-    def _theme_repaint_is_live(
-        self,
-        generation: int,
-        results: SearchResultsList | None,
-    ) -> bool:
-        """Return whether one yielded theme repaint still owns the live HUD."""
-        return self.is_mounted and generation == self._theme_generation and results is self._results
+    @_runtime.pump_only
+    def _refresh_query_highlighting(self, *, dark: bool) -> None:
+        """Repaint the shared query grammar with the active theme palette."""
+        self._query_highlighter.set_theme(
+            dark=dark,
+            theme_variables=(
+                self.app.theme_variables
+                if self.app.theme in ui_theme.THEME_PROFILE_BY_NAME
+                else None
+            ),
+        )
+        if self._search_input is not None:
+            self._search_input.refresh()
+        if self._filter_input is not None:
+            self._filter_input.refresh()
+        if self._welcome_examples is not None:
+            self._welcome_examples.update(_welcome_query_examples(self._query_highlighter))
 
     def compose(self) -> cabc.Iterator[object]:
         """Build the widget tree (search → body[results-col, detail-col] → footer).
@@ -377,12 +564,17 @@ class HudLayout(LayoutScreen):
                 # Shown only in the pre-search bare-canvas state (CSS hides
                 # it otherwise); a dim, centered hint teaching the query
                 # language at the moment of highest intent.
-                yield Static(
-                    "try a search to begin\n\n"
-                    "agent:claude   model:gpt*   role:user\n"
-                    'timestamp:>2026-01-01   "exact phrase"',
-                    id="empty-hint",
-                )
+                with Vertical(id="empty-hint"):
+                    with Center():
+                        yield _WelcomeWordmark(id="empty-welcome")
+                    with Center():
+                        yield Static("try a search to begin", id="empty-lead")
+                    with Center():
+                        yield WelcomeExamples(
+                            _welcome_query_examples(self._query_highlighter),
+                            id="empty-examples",
+                            markup=False,
+                        )
                 # Shown only while a search runs before its first result
                 # (CSS hides it otherwise): a centered spinner + phase verb
                 # + counts + elapsed, collapsed to the results list the
@@ -395,7 +587,7 @@ class HudLayout(LayoutScreen):
                 # Find-in-detail bar: hidden until `/` or ctrl+f opens it
                 # (only with a record loaded); separate from #search/#filter.
                 yield DetailFindInput(placeholder="Find in detail", id="detail-find")
-                yield Static("", id="detail-statusline")
+                yield Static("", id="detail-statusline", markup=False)
         yield Footer()
         # Transient gutter for the "press ctrl-c again to exit" confirm; a
         # flash-layer Static that overlays the footer only while shown.
@@ -427,6 +619,14 @@ class HudLayout(LayoutScreen):
             "SearchingPanel",
             streaming.query_one("#searching-panel"),
         )
+        self._welcome_widget = t.cast(
+            "_WelcomeWordmark",
+            streaming.query_one("#empty-welcome", _WelcomeWordmark),
+        )
+        self._welcome_examples = t.cast(
+            "WelcomeExamples",
+            streaming.query_one("#empty-examples", WelcomeExamples),
+        )
         self._detail_header = streaming.query_one("#detail-header")
         self._detail_row = t.cast(
             "SlowSourceDiagnosticsRow",
@@ -444,6 +644,7 @@ class HudLayout(LayoutScreen):
             "SearchInput",
             streaming.query_one("#search"),
         )
+        self._refresh_query_highlighting(dark=bool(self.app.current_theme.dark))
         self._detail_find_input = t.cast(
             "DetailFindInput",
             streaming.query_one("#detail-find"),
@@ -470,17 +671,22 @@ class HudLayout(LayoutScreen):
         # Rebuild Rich-baked rows/detail when the active color palette changes.
         # The pump-thread bind and watchdog are owned by the App shell (it owns
         # the pump).
+        self._rendered_theme_name = self.app.theme
         self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._apply_responsive_layout()
         # Attach the workflow (base.on_mount): it seeds the initial dispatch —
         # a launch search or the idle bare canvas — now that the widgets exist.
         super().on_mount()
-        # Focus the filter when a search is running, else the search box so the
-        # user can start typing immediately.
-        if self.search_query.terms:
-            self._filter_input.focus()
-        else:
-            self._search_input.focus()
+        self._welcome_shine_timer = self.set_interval(
+            _WELCOME_SHINE_INTERVAL,
+            self._animate_welcome_wordmark,
+            name="welcome-shine",
+            pause=True,
+        )
+        self._sync_welcome_shine_timer()
+        # The primary search input stays visible in every launch state. Keep
+        # mount focus there even when an initial search hides the filter.
+        self._search_input.focus()
         self._update_pane_focus()
 
     def _set_empty_state(self, *, empty: bool) -> None:
@@ -492,6 +698,14 @@ class HudLayout(LayoutScreen):
         ``searching`` view.
         """
         self._set_results_view("empty" if empty else "results")
+
+    @_runtime.pump_only
+    def on_welcome_query_selected(self, message: WelcomeQuerySelected) -> None:
+        """Load and focus one fixed welcome query without submitting it."""
+        if self._search_input is None or not (0 <= message.index < len(_WELCOME_QUERIES)):
+            return
+        self._search_input.load_query(_WELCOME_QUERIES[message.index])
+        self._search_input.focus()
 
     def _set_results_view(self, view: str) -> None:
         """Switch the results region between empty / searching / results.
@@ -512,6 +726,55 @@ class HudLayout(LayoutScreen):
             body.set_class(view == "searching", "-searching")
         if view != "searching" and self._searching_panel is not None:
             self._searching_panel.go_idle()
+        self._sync_welcome_shine_timer()
+
+    @_runtime.pump_only
+    def on_screen_suspend(self) -> None:
+        """Pause the welcome shine while another screen covers this layout."""
+        if self._welcome_shine_timer is not None:
+            self._welcome_shine_timer.pause()
+
+    @_runtime.pump_only
+    def on_screen_resume(self) -> None:
+        """Apply a coalesced theme preview, then restore the welcome shine."""
+        if self._theme_refresh_pending:
+            self._theme_refresh_pending = False
+            self._on_theme_changed(self.app.current_theme)
+        self._sync_welcome_shine_timer()
+
+    @_runtime.pump_only
+    def _sync_welcome_shine_timer(self) -> None:
+        """Match the shine timer to active-screen and empty-view state."""
+        if self._welcome_shine_timer is None:
+            return
+        body = self._body
+        if (
+            self.app.animation_level == "full"
+            and self.is_active
+            and body is not None
+            and body.has_class("-empty")
+        ):
+            self._welcome_shine_timer.resume()
+        else:
+            self._welcome_shine_timer.pause()
+
+    @_runtime.pump_only
+    def _animate_welcome_wordmark(self) -> None:
+        """Advance the bounded welcome shine while its timer is active."""
+        body = self._body
+        if (
+            self._welcome_widget is None
+            or self.app.animation_level != "full"
+            or not self.is_active
+            or body is None
+            or not body.has_class("-empty")
+        ):
+            self._sync_welcome_shine_timer()
+            return
+        if not self.app.app_focus:
+            return
+        current_offset = self._welcome_widget.shine_offset
+        self._welcome_widget.shine_offset = (current_offset + 1) % len(_WELCOME_BRAND_SHINE)
 
     def on_descendant_focus(self, event: object) -> None:
         """Recolor the active pane's section header when focus moves."""
@@ -586,8 +849,12 @@ class HudLayout(LayoutScreen):
         old control first so the new worker starts with a clean slate.
         """
         self.control = SearchControl()
+        self._filter_generation += 1
+        self._records_generation += 1
+        self._detail_build_generation += 1
         clear_haystack_cache()
         self._detail_body_cache.clear()
+        self._presented_detail_cache_key = None
         self._detail_scroll_positions.clear()
         self._detail_find_state.clear()
         # A fresh search wipes the detail; close any open find bar.
@@ -602,7 +869,6 @@ class HudLayout(LayoutScreen):
         # A fresh search re-collapses the stacked detail pane until
         # the user selects a row again.
         self._detail_opened = False
-        self._pending_autohighlights = 0
         if self._results is not None:
             self._results.clear()
         self._apply_responsive_layout()
@@ -784,7 +1050,7 @@ class HudLayout(LayoutScreen):
         else:
             new_value = apply_word_choice(text, values[index])
         target_input.value = new_value
-        target_input.cursor_position = len(new_value)
+        target_input.cursor_position = len(target_input.value)
         dropdown.display = False
         target_input.focus()
 
@@ -796,12 +1062,13 @@ class HudLayout(LayoutScreen):
         try:
             self._invoker.run(self.search_query, control=self.control, emit=emit)
         except BaseException as exc:
-            self.app.call_from_thread(
-                self._apply_finished,
-                "error",
-                len(self.all_records),
-                0.0,
-                str(exc),
+            emit(
+                StreamingSearchFinished(
+                    outcome="error",
+                    total=0,
+                    elapsed=0.0,
+                    error=exc,
+                ),
             )
 
     @_runtime.pump_only
@@ -869,6 +1136,7 @@ class HudLayout(LayoutScreen):
             ),
             name="history",
             group="history",
+            description="write search history",
             thread=True,
             # Not exclusive: unlike search/filter/detail, a later submit
             # must not cancel an earlier append before it reaches disk.
@@ -913,8 +1181,7 @@ class HudLayout(LayoutScreen):
         if not query or self._search_input is None:
             return
         target = t.cast("t.Any", self._search_input)
-        target.value = query
-        target.cursor_position = len(query)
+        target.load_query(query)
         target.focus()
 
     def _build_search_query(self, text: str) -> SearchQuery:
@@ -942,16 +1209,7 @@ class HudLayout(LayoutScreen):
         # search box stays editable. The error message stays
         # accessible on the result for future UI surfacing.
         terms = tuple(text.split()) if text else ()
-        return SearchQuery(
-            terms=terms,
-            scope=self.search_query.scope,
-            any_term=self.search_query.any_term,
-            regex=self.search_query.regex,
-            case_sensitive=self.search_query.case_sensitive,
-            agents=self.search_query.agents,
-            limit=self.search_query.limit,
-            dedupe=self.search_query.dedupe,
-        )
+        return dataclasses.replace(base, terms=terms, compiled=None)
 
     _APPLY_CHUNK_SIZE: t.ClassVar[int] = 200
 
@@ -971,25 +1229,74 @@ class HudLayout(LayoutScreen):
         chunks — so a 5000-record batch can't freeze the UI for the duration
         of a single apply (NB-4).
         """
-        self.all_records.extend(records)
+        filter_generation = self._filter_generation
+        filter_matcher = self._filter_matcher
+        if records:
+            self.all_records.extend(records)
+            self._records_generation += 1
         # Results are arriving — collapse the centered searching panel to
         # the results list (idempotent; a batch driven directly, e.g. in
         # tests, switches here too).
         self._set_results_view("results")
-        matching = [record for record in records if self._matches_filter(record)]
-        if matching and self._results is not None:
+        if records and self._results is not None:
             results = self._results
 
             def _append_chunk(chunk: cabc.Sequence[SearchRecord]) -> None:
+                if filter_generation != self._filter_generation:
+                    return
                 results.append_records(chunk)
-                self.filtered_records.extend(chunk)
+                if not results.uses_records(self.filtered_records):
+                    self.filtered_records.extend(chunk)
 
-            await _runtime.stream_apply(
-                matching,
-                _append_chunk,
-                chunk_size=self._APPLY_CHUNK_SIZE,
-            )
+            if filter_matcher is None:
+                await _runtime.stream_apply(
+                    records,
+                    _append_chunk,
+                    chunk_size=self._APPLY_CHUNK_SIZE,
+                )
+            else:
+                streaming = t.cast("StreamingAppLike", t.cast("object", self))
+                for record_chunk in _stream_filter_chunks(
+                    records,
+                    max_records=self._APPLY_CHUNK_SIZE,
+                    max_chars=_STREAM_FILTER_MAX_TEXT_CHARS,
+                ):
+                    worker = t.cast(
+                        "Worker[tuple[SearchRecord, ...]]",
+                        streaming.run_worker(
+                            functools.partial(
+                                self._match_stream_chunk,
+                                filter_matcher,
+                                record_chunk,
+                            ),
+                            name="stream filter",
+                            group="stream-filter",
+                            description="match streamed records",
+                            thread=True,
+                            exclusive=True,
+                        ),
+                    )
+                    try:
+                        matching = await worker.wait()
+                    except WorkerCancelled:
+                        return
+                    if filter_generation != self._filter_generation:
+                        return
+                    await _runtime.stream_apply(
+                        matching,
+                        _append_chunk,
+                        chunk_size=self._APPLY_CHUNK_SIZE,
+                    )
         self._refresh_results_status_right()
+
+    @_runtime.offload
+    def _match_stream_chunk(
+        self,
+        matcher: CompiledRecordMatcher,
+        records: tuple[SearchRecord, ...],
+    ) -> tuple[SearchRecord, ...]:
+        """Project one bounded streaming slice through an active filter."""
+        return tuple(record for record in records if matcher.matches(record))
 
     @_runtime.pump_only
     def _apply_source_progress(self, event: UiProgressSnapshot) -> None:
@@ -1042,15 +1349,16 @@ class HudLayout(LayoutScreen):
             self._filter_header.set_snapshot(snapshot)
 
     def _apply_responsive_layout(self) -> None:
-        """Flip the detail pane between right (wide) and bottom (narrow).
+        """Apply welcome compaction and wide/stacked detail geometry.
 
+        The welcome canvas sheds spacing at its width and height boundaries.
         Below :data:`_SPLIT_BREAKPOINT` cells the body stacks the panes
         (results on top, detail below) and the detail stays collapsed
         until the user selects a row — matching tig, which moves its
         diff view to the bottom on narrow screens and opens it on
-        selection. Wide statuslines keep the detail on the right and
-        always visible. Idempotent and cheap: only touches a class
-        when the target state changes.
+        selection. Wide statuslines keep the detail on the right and always
+        visible. Idempotent and cheap: only touches classes when their target
+        state changes.
         """
         if self._body is None or self._detail_column is None:
             return
@@ -1059,6 +1367,9 @@ class HudLayout(LayoutScreen):
         # and the detail would flash visible before the first resize
         # collapsed it. ``self.size`` is known from the driver at mount.
         width = int(getattr(self.size, "width", 0) or 0)
+        height = int(getattr(self.size, "height", 0) or 0)
+        self.set_class(0 < width <= self._WELCOME_COMPACT_WIDTH, "-compact-width")
+        self.set_class(0 < height <= self._WELCOME_COMPACT_HEIGHT, "-compact-height")
         stacked = 0 < width < self._SPLIT_BREAKPOINT
         self._stacked = stacked
         body = t.cast("t.Any", self._body)
@@ -1216,19 +1527,28 @@ class HudLayout(LayoutScreen):
         # The filter's literal terms get highlighted in the detail pane in
         # a distinct color from the search-query terms.
         self._filter_terms = tuple(matcher.query.terms) if matcher is not None else ()
+        self._filter_generation += 1
+        generation = self._filter_generation
+        records_generation = self._records_generation
+        records = tuple(self.all_records)
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.run_worker(
-            lambda captured_text=text, captured_matcher=matcher: self._run_filter_worker(
-                captured_text,
-                captured_matcher,
+            functools.partial(
+                self._run_filter_worker,
+                text,
+                matcher,
+                records,
+                generation,
+                records_generation,
             ),
             name="filter",
             group="filter",
+            description="filter loaded records",
             thread=True,
             exclusive=True,
         )
 
-    def _build_filter_matcher(self, text: str) -> t.Any:
+    def _build_filter_matcher(self, text: str) -> CompiledRecordMatcher | None:
         """Compile a record matcher for the filter text, or ``None`` if empty.
 
         The filter accepts the same query language as search, applied
@@ -1267,22 +1587,33 @@ class HudLayout(LayoutScreen):
         return compile_record_matcher(query)
 
     @_runtime.offload
-    def _run_filter_worker(self, text: str, matcher: t.Any) -> None:
+    def _run_filter_worker(
+        self,
+        text: str,
+        matcher: CompiledRecordMatcher | None,
+        records: tuple[SearchRecord, ...],
+        generation: int,
+        records_generation: int,
+    ) -> None:
         """Compute the filtered list on a background thread; post a ``FilterCompleted``.
 
-        Runs in a worker thread; safe to scan ``self.all_records`` since
-        list reads under CPython are GIL-protected. The main thread guards
-        against stale results by comparing the captured text against the
-        current input value in :meth:`on_filter_completed`.
+        Match a pump-owned immutable snapshot. The pump advances the records
+        generation on every mutation, so a snapshot superseded by a streamed
+        batch is discarded and retried in :meth:`on_filter_completed`.
         """
         if matcher is None:
-            matching: tuple[SearchRecord, ...] = tuple(self.all_records)
+            matching = list(records)
         else:
-            matching = tuple(record for record in self.all_records if matcher.matches(record))
+            matching = [record for record in records if matcher.matches(record)]
+        record_ids = {id(record) for record in matching}
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
         streaming.post_message(
             FilterCompleted(
-                payload=FilterCompletedPayload(text=text, matching=matching),
+                text=text,
+                records=matching,
+                record_ids=record_ids,
+                generation=generation,
+                records_generation=records_generation,
             ),
         )
 
@@ -1290,65 +1621,85 @@ class HudLayout(LayoutScreen):
     def on_filter_completed(self, message: FilterCompleted) -> None:
         """Apply the worker's filter result if it matches the current input.
 
-        Skips :meth:`show_detail` when the top filtered record is already
-        the one being displayed — detail rendering (Rich Text header,
-        JSON/Markdown body, scroll-to-match) is one of the heavier
-        main-thread units per filter pass.
+        Reuses the current detail only when its render key still matches.
+        Changed highlight state is rebuilt inline only for bounded small
+        bodies; large uncached bodies remain offloaded by :meth:`show_detail`.
         """
-        payload = message.payload
-        if self._filter_input is not None and payload.text != self._filter_input.value:
+        if message.generation != self._filter_generation:
             return
-        self.filtered_records = list(payload.matching)
+        if self._filter_input is not None and message.text != self._filter_input.value:
+            return
+        if message.records_generation != self._records_generation:
+            self.filter_loaded(message.text)
+            return
+        self.filtered_records = message.records
         if self._results is not None:
-            # Only suppress the programmatic highlights Textual actually
-            # queued while patching the list. Non-empty filter results do
-            # not guarantee a highlight message will be emitted.
-            self._pending_autohighlights = self._results.set_records(payload.matching)
+            self._results.set_records(
+                message.records,
+                record_ids=message.record_ids,
+            )
             self._refresh_results_status_right()
         if self._detail is not None:
             if self.filtered_records:
-                top = self.filtered_records[0]
-                if top is not self._current_detail_record:
-                    self.show_detail(top)
+                highlighted = self._results.highlighted if self._results is not None else None
+                row_index = highlighted if highlighted is not None else 0
+                record = self.filtered_records[row_index]
+                detail_key = self._detail_cache_key(self.search_query.terms, record)
+                if (
+                    record is not self._current_detail_record
+                    or detail_key != self._presented_detail_cache_key
+                ):
+                    self.show_detail(record)
             else:
+                find_had_focus = self.app.focused is self._detail_find_input
+                if self._detail_find_active:
+                    self._remember_detail_find()
+                self._detail_build_generation += 1
+                self._reset_detail_find_state()
+                self._current_detail_record = None
+                self._detail_opened = False
+                self._presented_detail_cache_key = None
+                self._detail_body_text = ""
+                self._detail_header_text = None
+                self._detail_find_source = ""
+                self._detail_find_json_syntax = False
+                self._detail_find_base = None
+                self._detail_find_base_key = None
                 self._detail.update(
                     "No results." if self._search_done else "No matches yet.",
                 )
+                self._refresh_detail_statusline()
+                if find_had_focus and self._filter_input is not None:
+                    self._filter_input.focus()
         # Empty results collapse the stacked detail; a populated list
         # keeps whatever open state the user already chose.
         self._apply_responsive_layout()
 
-    def on_option_list_option_highlighted(self, event: object) -> None:
-        """Update the detail pane and footer on OptionList cursor move.
+    @_runtime.pump_only
+    def on_result_highlighted(self, message: ResultHighlighted) -> None:
+        """Update the detail pane and footer on a result cursor move.
 
         Guards against the redundant re-render that fires when
-        ``set_records`` rebuilds the list and Textual re-emits the
-        highlight for the same row that's already in the detail pane.
+        a queued highlight belongs to a superseded filtered result set.
         """
-        option_list = getattr(event, "option_list", None)
-        if option_list is self._enum_dropdown or option_list is self._filter_dropdown:
-            # The completion dropdowns are separate OptionLists; their
-            # highlights must not drive the results detail pane.
-            return
-        option_index = getattr(event, "option_index", None)
-        if option_index is None:
+        row_index = message.index
+        results = self._results
+        if results is None or message.generation != results.generation:
             self._refresh_results_status_right()
             return
-        row_index = int(option_index)
-        if self._pending_autohighlights > 0:
-            # A programmatic highlight after a filter pass — update
-            # content (so the wide pane stays populated) but don't treat
-            # it as the user opening the stacked detail.
-            self._pending_autohighlights -= 1
-        else:
+        if not (
+            0 <= row_index < len(self.filtered_records)
+            and self.filtered_records[row_index] is message.record
+        ):
+            self._refresh_results_status_right()
+            return
+        if not message.programmatic:
             # A genuine cursor move: open the stacked detail pane and
             # keep it open for the rest of this result set (tig-style).
             self._detail_opened = True
             self._apply_responsive_layout()
-        if 0 <= row_index < len(self.filtered_records):
-            record = self.filtered_records[row_index]
-            if record is not self._current_detail_record:
-                self.show_detail(record)
+        if message.record is not self._current_detail_record:
+            self.show_detail(message.record)
         self._refresh_results_status_right(
             cursor=row_index,
             visible=len(self.filtered_records),
@@ -1460,16 +1811,17 @@ class HudLayout(LayoutScreen):
     def show_detail(self, record: SearchRecord) -> None:
         """Render ``record`` with colored labels + format-aware body + scroll-to-match.
 
-        The body is truncated to :data:`DETAIL_BODY_MAX_LINES` lines (the
-        ``VerticalScroll`` wrapper handles letting the user scroll within
-        the visible window). The body renderable is chosen by
+        The body is truncated to :data:`DETAIL_BODY_MAX_CHARS` characters and
+        :data:`DETAIL_BODY_MAX_LINES` lines (the ``VerticalScroll`` wrapper
+        handles letting the user scroll within the visible window). The body
+        renderable is chosen by
         :func:`detect_content_format`:
 
-        * JSON bodies are pretty-printed and rendered via
-          :class:`rich.syntax.Syntax` with ``ansi_dark`` theming.
-        * Markdown bodies render via :class:`rich.markdown.Markdown`.
-        * Everything else keeps the existing ``Text`` + ``highlight_regex``
-          flow so search-term matches stay bold-yellow.
+        * Small JSON bodies are pretty-printed and rendered via
+          :class:`rich.syntax.Syntax` with active light/dark theming.
+        * Small Markdown bodies render via :class:`rich.markdown.Markdown`.
+        * Larger formatted bodies and plain text use bounded ``Text``
+          highlighting so search-term matches stay responsive.
 
         A record opened for the first time lands at the top; a record
         viewed before restores the scroll position the user left it at (see
@@ -1494,6 +1846,8 @@ class HudLayout(LayoutScreen):
         # Showing a record means results exist — leave the bare-canvas state.
         self._set_empty_state(empty=False)
         self._current_detail_record = record
+        self._detail_build_generation += 1
+        detail_generation = self._detail_build_generation
         width = max(20, self._detail.size.width or 80)
         theme_vars = self.app.theme_variables
         agent_color = ui_theme.resolve(
@@ -1543,26 +1897,58 @@ class HudLayout(LayoutScreen):
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
         header.append("\n")
-        body_truncated = truncate_lines(record.text, DETAIL_BODY_MAX_LINES)
-        query_terms = list(self.search_query.terms)
+        body_truncated = truncate_lines(
+            record.text,
+            DETAIL_BODY_MAX_LINES,
+            max_chars=DETAIL_BODY_MAX_CHARS,
+        )
+        query_terms = tuple(self.search_query.terms)
+        case_sensitive = self.search_query.case_sensitive
+        regex = self.search_query.regex
+        filter_terms = self._filter_terms
+        cache_key = self._detail_cache_key(query_terms, record)
         # Keep the header + body text so find-in-detail can re-highlight the
         # body (without rebuilding the header) and scroll to matches.
         self._detail_header_text = header
         self._detail_body_text = body_truncated
         self._detail_find_source = ""
+        self._detail_find_json_syntax = False
         match_styles = _DetailMatchStyles(
             search=self._match_style("search"),
             filter=self._match_style("filter"),
         )
-        if (
-            self._detail_body_is_cached(query_terms)
-            or len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
-        ):
+        syntax_theme = ui_theme.detail_syntax_theme(
+            dark=self.app.current_theme.dark,
+            theme_name=self.app.theme,
+        )
+        cached = self._cached_detail_body(record, cache_key)
+        if cached is not None:
             self._present_detail(
                 record,
                 header,
-                self._build_detail_body(body_truncated, query_terms, match_styles),
+                cached,
                 query_terms,
+                generation=detail_generation,
+                cache_key=cache_key,
+            )
+            return
+        json_like = body_truncated.lstrip(" \t\r\n").startswith(("{", "["))
+        if len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD and not json_like:
+            self._present_detail(
+                record,
+                header,
+                self._build_detail_body(
+                    body_truncated,
+                    query_terms,
+                    match_styles,
+                    case_sensitive=case_sensitive,
+                    regex=regex,
+                    filter_terms=filter_terms,
+                    syntax_theme=syntax_theme,
+                ),
+                query_terms,
+                generation=detail_generation,
+                cache_key=cache_key,
             )
             return
         # Large, uncached body: show the header now and build the heavy
@@ -1579,17 +1965,43 @@ class HudLayout(LayoutScreen):
                 body_truncated,
                 query_terms,
                 match_styles,
+                syntax_theme,
+                detail_generation,
+                cache_key,
+                case_sensitive,
+                regex,
+                filter_terms,
             ),
             name="detail",
             group="detail",
+            description="build detail body",
             thread=True,
             exclusive=True,
         )
 
     def _detail_body_is_cached(self, query_terms: cabc.Sequence[str]) -> bool:
         """Return whether the detail body for the current record is memoized."""
-        cache_key = self._detail_cache_key(query_terms)
-        return cache_key is not None and cache_key in self._detail_body_cache
+        record = self._current_detail_record
+        cache_key = self._detail_cache_key(query_terms, record)
+        return record is not None and self._cached_detail_body(record, cache_key) is not None
+
+    def _cached_detail_body(
+        self,
+        record: SearchRecord,
+        cache_key: _DetailCacheKey | None,
+    ) -> _DetailBody | None:
+        """Return a retained-record cache hit, rejecting a reused object id."""
+        if cache_key is None:
+            return None
+        cached = self._detail_body_cache.get(cache_key)
+        if cached is None:
+            return None
+        cached_record, renderable, source = cached
+        if cached_record is not record:
+            del self._detail_body_cache[cache_key]
+            return None
+        self._detail_body_cache.move_to_end(cache_key)
+        return renderable, source
 
     @_runtime.offload
     def _build_detail_in_thread(
@@ -1599,15 +2011,33 @@ class HudLayout(LayoutScreen):
         body_truncated: str,
         query_terms: cabc.Sequence[str],
         match_styles: _DetailMatchStyles,
+        syntax_theme: str,
+        generation: int,
+        cache_key: _DetailCacheKey | None,
+        case_sensitive: bool,
+        regex: bool,
+        filter_terms: tuple[str, ...],
     ) -> None:
         """Build the detail body off the UI thread, then apply it on the loop."""
-        body = self._build_detail_body(body_truncated, query_terms, match_styles)
-        self.app.call_from_thread(
-            self._present_detail,
-            record,
-            header,
-            body,
+        body = self._build_detail_body(
+            body_truncated,
             query_terms,
+            match_styles,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            filter_terms=filter_terms,
+            syntax_theme=syntax_theme,
+        )
+        self.app.call_from_thread(
+            functools.partial(
+                self._present_detail,
+                record,
+                header,
+                body,
+                query_terms,
+                generation=generation,
+                cache_key=cache_key,
+            ),
         )
 
     @_runtime.pump_only
@@ -1615,8 +2045,11 @@ class HudLayout(LayoutScreen):
         self,
         record: SearchRecord,
         header: object,
-        body: tuple[object, str],
+        body: _DetailBody,
         query_terms: cabc.Sequence[str],
+        *,
+        generation: int | None = None,
+        cache_key: _DetailCacheKey | None = None,
     ) -> None:
         """Render ``body`` into the detail pane unless ``record`` is superseded.
 
@@ -1624,14 +2057,42 @@ class HudLayout(LayoutScreen):
         ``call_from_thread`` for off-thread builds); the identity check
         drops a stale build whose record the cursor has already left.
         """
-        if self._detail is None or self._current_detail_record is not record:
+        if (
+            self._detail is None
+            or self._current_detail_record is not record
+            or (generation is not None and generation != self._detail_build_generation)
+        ):
             return
         body_renderable, body_for_scroll = body
+        if cache_key is not None:
+            self._detail_body_cache[cache_key] = (record, body_renderable, body_for_scroll)
+            self._detail_body_cache.move_to_end(cache_key)
+            if len(self._detail_body_cache) > self._DETAIL_CACHE_MAX:
+                self._detail_body_cache.popitem(last=False)
+        self._presented_detail_cache_key = cache_key
         # The displayed text find searches/scrolls against — formatted JSON
         # for json bodies, the raw body otherwise.
         self._detail_find_source = body_for_scroll
-        self._detail_find_base = None  # a fresh body invalidates the find base
-        self._detail_find_base_key = None
+        self._detail_find_json_syntax = isinstance(body_renderable, _RichSyntaxType)
+        if isinstance(body_renderable, Text):
+            if cache_key is None:
+                highlight_state = (
+                    tuple(query_terms),
+                    self.search_query.case_sensitive,
+                    self.search_query.regex,
+                    self._filter_terms,
+                )
+            else:
+                _, terms, case_sensitive, regex, filter_terms = cache_key
+                highlight_state = (terms, case_sensitive, regex, filter_terms)
+            self._detail_find_base = body_renderable
+            self._detail_find_base_key = (
+                body_for_scroll,
+                *highlight_state,
+            )
+        else:
+            self._detail_find_base = None
+            self._detail_find_base_key = None
         self._detail.update(_RichGroup(t.cast("t.Any", header), t.cast("t.Any", body_renderable)))
         self._restore_detail_scroll(record)
         self._refresh_detail_statusline()
@@ -1644,7 +2105,8 @@ class HudLayout(LayoutScreen):
     def _detail_cache_key(
         self,
         query_terms: cabc.Sequence[str],
-    ) -> tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]] | None:
+        record: SearchRecord | None = None,
+    ) -> _DetailCacheKey | None:
         """Compose the LRU key for the current record + query + filter.
 
         Returns ``None`` when there is no current record (e.g. detail
@@ -1652,7 +2114,7 @@ class HudLayout(LayoutScreen):
         to skip the cache entirely. The filter terms are part of the key
         so changing the filter re-renders the filter-term highlights.
         """
-        record = self._current_detail_record
+        record = record if record is not None else self._current_detail_record
         if record is None:
             return None
         return (
@@ -1688,22 +2150,30 @@ class HudLayout(LayoutScreen):
             foreground = ui_theme.resolve(theme_vars, "ag-match-search")
             return f"bold {foreground}".rstrip() if foreground else "bold yellow"
         if kind == "find":
-            # All find matches: a purple fill, distinct from search-gold and
-            # filter-accent.
-            color = ui_theme.resolve(theme_vars, "ag-model")
-            return f"bold black on {color}" if color else "bold black on magenta"
+            background = ui_theme.resolve(theme_vars, "ag-match-find-bg")
+            foreground = ui_theme.resolve(theme_vars, "ag-match-find-fg")
+            if background and foreground:
+                return f"bold {foreground} on {background}"
+            return "bold black on magenta"
         if kind == "find-current":
-            # The match the find cursor is on: a brighter gold fill so it
-            # stands out from the other (purple) find matches.
-            color = ui_theme.resolve(theme_vars, "ag-match-search")
-            return f"bold black on {color}" if color else "bold black on yellow"
+            background = ui_theme.resolve(theme_vars, "ag-match-find-current-bg")
+            foreground = ui_theme.resolve(theme_vars, "ag-match-find-current-fg")
+            if background and foreground:
+                return f"bold {foreground} on {background}"
+            return "bold black on yellow"
         background = ui_theme.resolve(theme_vars, "ag-match-filter-bg")
         foreground = ui_theme.resolve(theme_vars, "ag-match-filter-fg")
         if background and foreground:
             return f"bold {foreground} on {background}"
         return "bold black on cyan"
 
-    def _apply_filter_highlight(self, text: t.Any, style: str | None = None) -> None:
+    def _apply_filter_highlight(
+        self,
+        text: t.Any,
+        style: str | None = None,
+        *,
+        terms: cabc.Sequence[str] | None = None,
+    ) -> None:
         """Overlay the filter's literal terms onto ``text`` in a distinct color.
 
         Applied after the search-term highlight so filter matches stand out
@@ -1711,85 +2181,127 @@ class HudLayout(LayoutScreen):
         too; field predicates contribute no literal terms.
         """
         style = style if style is not None else self._match_style("filter")
-        for term in self._filter_terms:
-            if not term:
-                continue
-            try:
-                compiled = re.compile(re.escape(term), re.IGNORECASE)
-            except re.error:
-                continue
-            text.highlight_regex(compiled, style=style)
+        source = str(getattr(text, "plain", ""))
+        _apply_bounded_literal_highlights(
+            text,
+            source,
+            self._filter_terms if terms is None else terms,
+            case_sensitive=False,
+            style=style,
+        )
 
     def _build_detail_body(
         self,
         body_text: str,
         query_terms: cabc.Sequence[str],
         match_styles: _DetailMatchStyles | None = None,
-    ) -> tuple[object, str]:
+        *,
+        case_sensitive: bool | None = None,
+        regex: bool | None = None,
+        filter_terms: cabc.Sequence[str] | None = None,
+        syntax_theme: str = "ansi_dark",
+    ) -> _DetailBody:
         """Return ``(renderable, body_text_for_match_search)`` for ``body_text``.
 
         The second tuple element is whatever text the caller's
         ``find_first_match_line`` should scan. For JSON we pretty-print
         and return the formatted text so the line index lines up with
-        what the user actually sees rendered. Result is memoized per
-        ``(record, query)`` so scrolling back to a previously-viewed
-        record never re-parses the JSON body.
+        what the user actually sees rendered. This computation is detached:
+        the pump validates its generation and owns the shared LRU.
         """
-        cache_key = self._detail_cache_key(query_terms)
-        if cache_key is not None:
-            cached = self._detail_body_cache.get(cache_key)
-            if cached is not None:
-                self._detail_body_cache.move_to_end(cache_key)
-                return cached
+        effective_case_sensitive = (
+            self.search_query.case_sensitive if case_sensitive is None else case_sensitive
+        )
+        effective_regex = self.search_query.regex if regex is None else regex
+        safe_query_terms = (
+            ()
+            if effective_regex
+            else _bounded_literal_terms(
+                query_terms,
+                case_sensitive=effective_case_sensitive,
+            )
+        )
         fmt = detect_content_format(body_text)
-        result: tuple[object, str]
+        result: _DetailBody
         if fmt == "json":
-            try:
-                formatted = json.dumps(
-                    json.loads(body_text),
-                    indent=2,
-                    ensure_ascii=False,
-                )
-            except json.JSONDecodeError, ValueError:
-                formatted = body_text
+            formatted = body_text
+            if _json_pretty_print_is_bounded(body_text):
+                with contextlib.suppress(RecursionError, ValueError):
+                    formatted = json.dumps(
+                        json.loads(body_text),
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+            formatted = truncate_lines(
+                formatted,
+                DETAIL_BODY_MAX_LINES,
+                max_chars=DETAIL_BODY_MAX_CHARS,
+            )
             match_line = find_first_match_line(
                 formatted,
-                query_terms,
-                case_sensitive=self.search_query.case_sensitive,
-                regex=self.search_query.regex,
+                safe_query_terms,
+                case_sensitive=effective_case_sensitive,
+                regex=False,
             )
             highlight_lines = {match_line + 1} if match_line is not None else None
-            syntax = _RichSyntax(
-                formatted,
-                "json",
-                theme="ansi_dark",
-                word_wrap=True,
-                highlight_lines=highlight_lines,
-            )
-            result = (syntax, formatted)
+            if len(formatted) <= _DETAIL_RICH_FORMAT_MAX_CHARS:
+                renderable: object = _RichSyntax(
+                    formatted,
+                    "json",
+                    theme=syntax_theme,
+                    word_wrap=True,
+                    highlight_lines=highlight_lines,
+                )
+            else:
+                plain = Text(formatted, no_wrap=False)
+                _apply_bounded_literal_highlights(
+                    plain,
+                    formatted,
+                    safe_query_terms,
+                    case_sensitive=effective_case_sensitive,
+                    style=match_styles.search if match_styles else self._match_style("search"),
+                )
+                self._apply_filter_highlight(
+                    plain,
+                    match_styles.filter if match_styles else None,
+                    terms=filter_terms,
+                )
+                renderable = plain
+            result = (renderable, formatted)
         elif fmt == "markdown":
-            result = (
-                _RichMarkdown(body_text, code_theme="ansi_dark"),
-                body_text,
-            )
+            if len(body_text) <= _DETAIL_RICH_FORMAT_MAX_CHARS:
+                renderable = _RichMarkdown(body_text, code_theme=syntax_theme)
+            else:
+                plain = Text(body_text, no_wrap=False)
+                _apply_bounded_literal_highlights(
+                    plain,
+                    body_text,
+                    safe_query_terms,
+                    case_sensitive=effective_case_sensitive,
+                    style=match_styles.search if match_styles else self._match_style("search"),
+                )
+                self._apply_filter_highlight(
+                    plain,
+                    match_styles.filter if match_styles else None,
+                    terms=filter_terms,
+                )
+                renderable = plain
+            result = (renderable, body_text)
         else:
-            highlighted = highlight_matches(
+            highlighted = Text(body_text, no_wrap=False)
+            _apply_bounded_literal_highlights(
+                highlighted,
                 body_text,
-                query_terms,
-                case_sensitive=self.search_query.case_sensitive,
-                regex=self.search_query.regex,
+                safe_query_terms,
+                case_sensitive=effective_case_sensitive,
                 style=match_styles.search if match_styles else self._match_style("search"),
             )
             self._apply_filter_highlight(
                 highlighted,
                 match_styles.filter if match_styles else None,
+                terms=filter_terms,
             )
             result = (highlighted, body_text)
-        if cache_key is not None:
-            self._detail_body_cache[cache_key] = result
-            self._detail_body_cache.move_to_end(cache_key)
-            if len(self._detail_body_cache) > self._DETAIL_CACHE_MAX:
-                self._detail_body_cache.popitem(last=False)
         return result
 
     def _restore_detail_scroll(self, record: SearchRecord) -> None:
@@ -1929,11 +2441,11 @@ class HudLayout(LayoutScreen):
     def _detail_find_base_for(self, source: str) -> Text:
         """Return the syntax+search+filter body for ``source`` and highlight state.
 
-        For JSON the body is syntax-highlighted via :class:`rich.syntax.Syntax`
-        so token colors survive find; other formats use ``highlight_matches``.
-        The find-match overlay changes per keystroke/step but this base does
-        not, so building it once and copying keeps the per-keystroke cost off a
-        full-body ``Syntax`` re-highlight. Invalidated in :meth:`_present_detail`.
+        Small JSON bodies are syntax-highlighted via :class:`rich.syntax.Syntax`
+        so token colors survive find. Other renderables use bounded literal
+        highlighting. The find-match overlay changes per keystroke/step but
+        this base does not, so retaining or building it once keeps repeated
+        highlighting off the message pump.
         """
         key = (
             source,
@@ -1945,16 +2457,21 @@ class HudLayout(LayoutScreen):
         cached = self._detail_find_base
         if cached is not None and self._detail_find_base_key == key:
             return cached
-        if detect_content_format(source) == "json":
-            text = _RichSyntax(source, "json", theme="ansi_dark", word_wrap=True).highlight(source)
+        if self._detail_find_json_syntax:
+            syntax_theme = ui_theme.detail_syntax_theme(
+                dark=self.app.current_theme.dark,
+                theme_name=self.app.theme,
+            )
+            text = _RichSyntax(source, "json", theme=syntax_theme, word_wrap=True).highlight(source)
             text.no_wrap = False
             self._apply_search_highlight(text)
         else:
-            text = highlight_matches(
+            text = Text(source, no_wrap=False)
+            _apply_bounded_literal_highlights(
+                text,
                 source,
-                list(self.search_query.terms),
+                () if self.search_query.regex else self.search_query.terms,
                 case_sensitive=self.search_query.case_sensitive,
-                regex=self.search_query.regex,
                 style=self._match_style("search"),
             )
         self._apply_filter_highlight(text)
@@ -1965,21 +2482,20 @@ class HudLayout(LayoutScreen):
     def _apply_search_highlight(self, text: t.Any) -> None:
         """Overlay the active search-query terms onto ``text`` (for the JSON path).
 
-        The plain-text path bakes these via ``highlight_matches``; on the
-        Syntax-highlighted JSON ``Text`` they are layered with the same
-        regex/style so search terms read consistently in both paths.
+        The plain-text path bakes these through the bounded literal helper; on
+        the Syntax-highlighted JSON ``Text`` literal terms are layered with
+        the same style. Regex terms are omitted because presentation must not
+        re-run an untrusted pattern on the message pump.
         """
-        style = self._match_style("search")
-        for term in self.search_query.terms:
-            if not term:
-                continue
-            try:
-                flags = 0 if self.search_query.case_sensitive else re.IGNORECASE
-                pattern = term if self.search_query.regex else re.escape(term)
-                compiled = re.compile(pattern, flags)
-            except re.error:
-                continue
-            text.highlight_regex(compiled, style=style)
+        if self.search_query.regex:
+            return
+        _apply_bounded_literal_highlights(
+            text,
+            str(getattr(text, "plain", "")),
+            self.search_query.terms,
+            case_sensitive=self.search_query.case_sensitive,
+            style=self._match_style("search"),
+        )
 
     def _scroll_to_current_match(self) -> None:
         """Scroll the detail pane so the current find match is near the top.
@@ -2132,9 +2648,8 @@ class HudLayout(LayoutScreen):
         """Staged ctrl-c from a focused input.
 
         With text, clear the box. On an empty box: the find input closes (its
-        "exit" is closing the bar); the search/filter inputs arm a "press
-        ctrl-c again to exit" gutter on the first press and quit on a second
-        press within the window.
+        "exit" is closing the bar), active work is cancelled, and only an idle
+        search/filter input arms the staged exit gutter.
         """
         target = t.cast("t.Any", widget)
         if str(getattr(target, "value", "")):
@@ -2143,6 +2658,9 @@ class HudLayout(LayoutScreen):
             return
         if widget is self._detail_find_input:
             self._close_detail_find()
+            return
+        if self._has_active_actions():
+            self._cancel_active_action()
             return
         self._arm_or_confirm_exit()
 
@@ -2313,9 +2831,3 @@ class HudLayout(LayoutScreen):
         """
         if not self._search_done:
             self.control.request_answer_now()
-
-    def _matches_filter(self, record: SearchRecord) -> bool:
-        matcher = self._filter_matcher
-        if matcher is None:
-            return True
-        return bool(matcher.matches(record))

@@ -13,6 +13,7 @@ from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
+    CatalogAgentSelector,
     agentgrep,
 )
 from agentgrep.mcp.models import (
@@ -206,10 +207,12 @@ def register(mcp: FastMCP) -> None:
     )
     async def list_stores_tool(
         agent: t.Annotated[
-            str,
+            CatalogAgentSelector,
             Field(
                 default="all",
-                description="Filter to one agent or 'all' for every catalog entry.",
+                description=(
+                    "Filter to one catalog agent, including catalog-only agents, or 'all'."
+                ),
             ),
         ] = "all",
         role_filter: t.Annotated[
@@ -274,7 +277,7 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(
                 min_length=1,
-                description="Absolute path to the source file.",
+                description="Path returned by list_sources; '~' home prefixes are accepted.",
             ),
         ],
         sample_size: t.Annotated[
