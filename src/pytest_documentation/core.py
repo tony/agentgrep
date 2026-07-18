@@ -262,7 +262,8 @@ class EvaluationResult:
         return redact_text("\n\n".join(parts), project_root=self.example.location.path.parent)
 
 
-class DocumentationExampleFailure(AssertionError):
+# Evaluated-example failures are deliberately distinct from harness errors.
+class DocumentationExampleFailure(AssertionError):  # noqa: N818
     """Raised by pytest items when an example evaluation fails."""
 
     def __init__(self, result: EvaluationResult) -> None:
