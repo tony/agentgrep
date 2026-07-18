@@ -3056,7 +3056,10 @@ def test_app_root_sampler_keeps_or_drops_whole_traces() -> None:
             pass
         with (
             tracer.start_as_current_span("agentgrep.cli.invocation"),
-            tracer.start_as_current_span("agentgrep.cli.parse"),
+            tracer.start_as_current_span(
+                "agentgrep.cli.parse",
+                attributes={"safe.label": "expected"},
+            ),
         ):
             pass
         remote_parent = SpanContext(
@@ -3103,6 +3106,9 @@ def test_app_root_sampler_keeps_or_drops_whole_traces() -> None:
         by_name["agentgrep.cli.parse"].parent.span_id
         == by_name["agentgrep.cli.invocation"].context.span_id
     )
+    child_attributes = by_name["agentgrep.cli.parse"].attributes
+    assert child_attributes is not None
+    assert child_attributes["safe.label"] == "expected"
     assert by_name["mcp.server.request"].parent is not None
     assert by_name["mcp.server.request"].parent.span_id == remote_parent.span_id
     assert by_name["mcp.server.request"].context.trace_state == remote_parent.trace_state
