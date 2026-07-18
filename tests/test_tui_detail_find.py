@@ -67,14 +67,13 @@ def _detail_app(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> t.An
     )
 
 
-async def test_detail_find_refreshes_after_large_render_finishes(
+async def test_detail_find_refreshes_after_async_json_render(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _detail_app(tmp_path, monkeypatch)
-    body = "front\n" + (
-        "x" * (app.get_default_screen()._DETAIL_ASYNC_BODY_THRESHOLD + 1_000)
-    ) + "farneedle"
+    body = '{"front":"x","farneedle":"target"}'
+    query = '"farneedle": "target"'
     record = SearchRecord(
         kind="prompt",
         agent="codex",
@@ -97,12 +96,12 @@ async def test_detail_find_refreshes_after_large_render_finishes(
         )
         app.screen.show_detail(record)
         app.screen.action_open_detail_find()
-        app.screen._detail_find_input.load_query("farneedle")
-        app.screen._run_detail_find("farneedle", reset_cursor=True)
+        app.screen._detail_find_input.load_query(query)
+        app.screen._run_detail_find(query, reset_cursor=True)
         assert app.screen._detail_find_matches == []
 
         await asyncio.to_thread(workers[0])
         await pilot.pause()
 
         assert len(app.screen._detail_find_matches) == 1
-        assert app.screen._detail_find_source.endswith("farneedle")
+        assert query in app.screen._detail_find_source
