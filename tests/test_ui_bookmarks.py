@@ -821,8 +821,7 @@ async def test_resolver_scan_keeps_pump_live_through_every_candidate(
     from agentgrep.ui import _runtime
 
     records = tuple(
-        _record(suffix=f"resolver-{index}", text=f"candidate {index}")
-        for index in range(200)
+        _record(suffix=f"resolver-{index}", text=f"candidate {index}") for index in range(200)
     )
     target = record_identity(records[-1])
     assert target.record_id is not None
