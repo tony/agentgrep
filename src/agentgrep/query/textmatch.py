@@ -41,26 +41,6 @@ def _string_match(
     return needle_cmp in haystack_cmp
 
 
-def _string_equals(
-    haystack: str,
-    needle: str,
-    *,
-    case_sensitive: bool = False,
-) -> bool:
-    """Match identifier-like string fields by whole value.
-
-    Branch names, project names, and hashes are identifiers, not free
-    text, so a plain value must equal the whole field (casefolded by
-    default). Wildcard values keep the anchored glob from
-    :func:`_string_match`.
-    """
-    if _is_wildcard(needle):
-        return _string_match(haystack, needle, case_sensitive=case_sensitive)
-    if case_sensitive:
-        return haystack == needle
-    return haystack.casefold() == needle.casefold()
-
-
 def _text_matches(
     record: SearchRecord,
     needle: str,
@@ -100,7 +80,6 @@ def _text_matches(
 
 __all__ = (
     "_is_wildcard",
-    "_string_equals",
     "_string_match",
     "_text_matches",
 )

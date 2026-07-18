@@ -47,6 +47,11 @@ $ uvx --from 'agentgrep' --prerelease allow python
 - Installing the agentgrep wheel alongside pytest no longer breaks `pytest` in
   that environment. (#132)
 
+### Development
+
+- Documentation-example tests no longer copy the docs `node_modules` tree into
+  their sandbox, keeping local doc runs fast on a dirty working tree. (#133)
+
 ## agentgrep 0.1.0a37 (2026-07-18)
 
 agentgrep 0.1.0a37 makes the interactive explorer (`agentgrep ui`) usable on
