@@ -7,6 +7,7 @@ need telemetry dependencies unless they opt in.
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import collections.abc as cabc
 import contextlib
@@ -282,6 +283,8 @@ class _TelemetryLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """Forward ``record`` to the backend."""
+        if record.name != "agentgrep" and not record.name.startswith("agentgrep."):
+            return
         self._backend.emit_log(record, _CURRENT_SPAN.get())
 
 
@@ -330,8 +333,53 @@ _RESOURCE_ATTRIBUTES: contextvars.ContextVar[TelemetryAttributes | None] = conte
     "agentgrep_resource_attributes",
     default=None,
 )
-_SQL_STATEMENT_MAX = 512
 _SQLITE_CONNECTION_FACTORY: type[t.Any] | None = None
+_SQL_OPERATION_NAMES: frozenset[str] = frozenset(
+    {
+        "alter",
+        "analyze",
+        "attach",
+        "begin",
+        "commit",
+        "create",
+        "delete",
+        "detach",
+        "drop",
+        "explain",
+        "insert",
+        "pragma",
+        "reindex",
+        "release",
+        "replace",
+        "rollback",
+        "savepoint",
+        "select",
+        "update",
+        "vacuum",
+        "with",
+    },
+)
+_SAFE_ERROR_TYPE_NAMES: frozenset[str] = frozenset(
+    {
+        "AssertionError",
+        "CancelledError",
+        "ConnectionError",
+        "FileNotFoundError",
+        "ImportError",
+        "KeyError",
+        "LookupError",
+        "McpError",
+        "OSError",
+        "PermissionError",
+        "RuntimeError",
+        "SystemExit",
+        "TimeoutError",
+        "ToolError",
+        "TypeError",
+        "ValidationError",
+        "ValueError",
+    },
+)
 _VCS_RESOURCE_TO_METRIC_ATTRIBUTES: tuple[tuple[str, str], ...] = (
     ("vcs.repository.name", "vcs_repository_name"),
     ("vcs.repository.url.full", "vcs_repository_url_full"),
@@ -346,15 +394,12 @@ def resolve_mode(
     env: cabc.Mapping[str, str] | None = None,
     repo_root: pathlib.Path | None = None,
 ) -> TelemetryMode:
-    """Resolve the active telemetry mode."""
+    """Resolve the explicitly configured telemetry mode."""
+    del repo_root
     active_env = os.environ if env is None else env
     raw_mode = active_env.get("AGENTGREP_OTEL")
     if raw_mode is not None:
         return _MODE_ALIASES.get(raw_mode.strip().lower(), "off")
-    if _running_under_pytest(active_env):
-        return "off"
-    if repo_root is not None and (repo_root / ".git").exists():
-        return "local"
     return "off"
 
 
@@ -362,14 +407,7 @@ def resolve_explicit(
     mode: TelemetryMode | None,
     env: cabc.Mapping[str, str] | None = None,
 ) -> bool:
-    """Return whether telemetry is an explicit opt-in rather than passive local.
-
-    Passive local telemetry is the auto-resolved ``local`` mode of a git
-    checkout with ``AGENTGREP_OTEL`` unset; it keeps traces, metrics, and logs
-    but skips the heavier Pyroscope profiler and auto-instrumentation to protect
-    cold start. Any explicit ``mode`` argument or ``AGENTGREP_OTEL`` value is an
-    opt-in that keeps every signal.
-    """
+    """Return whether telemetry was explicitly enabled."""
     if mode is not None:
         return True
     active_env = os.environ if env is None else env
@@ -386,6 +424,8 @@ def setup(
 ) -> TelemetryHandle:
     """Configure telemetry for the current execution context."""
     active_env = os.environ if env is None else env
+    if active_env.get("OTEL_SDK_DISABLED", "").strip().lower() == "true":
+        return TelemetryHandle(mode="off")
     active_mode = resolve_mode(env=active_env, repo_root=repo_root) if mode is None else mode
     if active_mode == "off":
         return TelemetryHandle(mode=active_mode)
@@ -406,6 +446,7 @@ def setup(
                 mode=active_mode,
                 resource_attributes=resource_attributes,
                 explicit=explicit,
+                env=active_env,
             )
         except Exception:
             return TelemetryHandle(mode=active_mode)
@@ -595,6 +636,13 @@ def set_span_attribute(key: str, value: object) -> None:
         backend.set_span_attribute(key, safe_value)
 
 
+def error_type_name(error: BaseException | type[BaseException]) -> str:
+    """Return a finite exception classifier safe for telemetry dimensions."""
+    error_class = error if isinstance(error, type) else type(error)
+    name = error_class.__name__
+    return name if name in _SAFE_ERROR_TYPE_NAMES else "Exception"
+
+
 def mark_span_error(description: str) -> None:
     """Mark the active span as errored without raising an exception.
 
@@ -642,8 +690,12 @@ def span(name: str, **attributes: object) -> cabc.Iterator[None]:
         try:
             yield
         except BaseException as exc:
-            active_span.status = "error"
-            backend.record_exception(exc)
+            clean_exit = isinstance(exc, asyncio.CancelledError) or (
+                isinstance(exc, SystemExit) and (exc.code is None or exc.code == 0)
+            )
+            if not clean_exit:
+                active_span.status = "error"
+                backend.record_exception(exc)
             raise
         finally:
             _CURRENT_SPAN.reset(token)
@@ -997,11 +1049,6 @@ def _repository_name_from_url(repository_url: str) -> str | None:
     return pathlib.PurePosixPath(path).name
 
 
-def _running_under_pytest(env: cabc.Mapping[str, str]) -> bool:
-    """Return whether the current process is managed by pytest."""
-    return "PYTEST_CURRENT_TEST" in env or "PYTEST_VERSION" in env
-
-
 def _safe_attribute_value(value: object) -> TelemetryAttribute:
     """Convert ``value`` to an OTel-safe scalar."""
     if value is None or isinstance(value, str | int | float | bool):
@@ -1022,12 +1069,9 @@ def _sqlite_span_attributes(
     }
     if statement is None:
         return attributes
-    normalized = _normalize_sql_statement(statement)
-    if normalized:
-        attributes["db.statement"] = normalized
-        operation = normalized.split(maxsplit=1)[0].casefold()
-        if operation:
-            attributes["db.operation.name"] = operation
+    operation = _sqlite_operation_name(statement)
+    if operation is not None:
+        attributes["db.operation.name"] = operation
     return attributes
 
 
@@ -1041,16 +1085,17 @@ def _sqlite_statement_arg(args: tuple[t.Any, ...], kwargs: dict[str, t.Any]) -> 
     return None
 
 
-def _normalize_sql_statement(statement: object) -> str:
-    """Return a bounded one-line SQL statement string."""
+def _sqlite_operation_name(statement: object) -> str | None:
+    """Return a finite SQL operation label without exporting statement text."""
     if isinstance(statement, bytes):
         rendered = statement.decode("utf-8", errors="replace")
     else:
         rendered = str(statement)
-    normalized = " ".join(rendered.split())
-    if len(normalized) > _SQL_STATEMENT_MAX:
-        return f"{normalized[:_SQL_STATEMENT_MAX]}..."
-    return normalized
+    fields = rendered.lstrip().split(maxsplit=1)
+    if not fields:
+        return None
+    operation = fields[0].casefold()
+    return operation if operation in _SQL_OPERATION_NAMES else None
 
 
 def _record_sqlite_metric(method: str) -> None:

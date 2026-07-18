@@ -13,6 +13,7 @@ import pathlib
 import sqlite3
 import subprocess
 import sys
+import time
 import typing as t
 
 import pytest
@@ -222,6 +223,59 @@ def test_resolve_mode_uses_only_agentgrep_otel(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("AGENTGREP_OTEL_ENABLED", "1")
 
     assert telemetry.resolve_mode(env=os.environ, repo_root=None) == "off"
+
+
+def test_resolve_mode_requires_explicit_opt_in_in_git_checkout() -> None:
+    """A source checkout must stay telemetry-off without AGENTGREP_OTEL."""
+    import agentgrep._telemetry as telemetry
+
+    assert telemetry.resolve_mode(env={}, repo_root=pathlib.Path.cwd()) == "off"
+    assert (
+        telemetry.resolve_mode(
+            env={"AGENTGREP_OTEL": "local"},
+            repo_root=pathlib.Path.cwd(),
+        )
+        == "local"
+    )
+    assert (
+        telemetry.resolve_mode(
+            env={"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector.invalid"},
+            repo_root=pathlib.Path.cwd(),
+        )
+        == "off"
+    )
+
+
+def test_setup_respects_otel_sdk_disabled_before_resource_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The standard SDK kill switch short-circuits all setup work."""
+    import agentgrep._telemetry as telemetry
+
+    def fail_resource_work(**_kwargs: object) -> t.NoReturn:
+        message = "resource work must not run"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(telemetry, "build_resource_attributes", fail_resource_work)
+
+    handle = telemetry.setup(
+        mode="live",
+        env={"OTEL_SDK_DISABLED": "TrUe"},
+    )
+
+    assert handle.mode == "off"
+    assert handle.backend is None
+
+
+@pytest.mark.parametrize("signal", ["traces", "metrics", "logs"])
+def test_signal_exporter_none_disables_only_that_signal(signal: str) -> None:
+    """Standard per-signal ``none`` values suppress exporter construction."""
+    from agentgrep import _telemetry_otel
+
+    key = f"OTEL_{signal.upper()}_EXPORTER"
+
+    assert _telemetry_otel._signal_export_enabled({}, signal) is True
+    assert _telemetry_otel._signal_export_enabled({key: " NoNe "}, signal) is False
 
 
 def test_resolve_mode_keeps_pytest_off_by_default() -> None:
@@ -1374,9 +1428,12 @@ def test_sql_span_requires_active_project_span() -> None:
 
 
 def test_sqlite_connection_factory_traces_connection_shortcuts_without_parameters() -> None:
-    """Connection shortcut methods get SQL spans without recording bound values."""
+    """SQLite spans expose operations without statements, literals, or comments."""
     import agentgrep._telemetry as telemetry
 
+    string_marker = "synthetic-private-sql-string"
+    numeric_marker = "9876543210123456789"
+    comment_marker = "synthetic-private-sql-comment"
     backend = telemetry.InMemoryTelemetryBackend()
     root_span_id: str | None = None
     telemetry.configure_backend(backend)
@@ -1392,6 +1449,14 @@ def test_sqlite_connection_factory_traces_connection_shortcuts_without_parameter
                     [(12345,), (67890,)],
                 )
                 connection.execute("select value from smoke where value=?", (12345,)).fetchone()
+                connection.execute(
+                    f"select '{string_marker}', {numeric_marker} -- {comment_marker}",
+                ).fetchone()
+                connection.executescript(
+                    "create table script_smoke (value text); "
+                    f"insert into script_smoke values ('{string_marker}'); "
+                    f"-- {comment_marker}",
+                )
         finally:
             connection.close()
     finally:
@@ -1404,22 +1469,29 @@ def test_sqlite_connection_factory_traces_connection_shortcuts_without_parameter
         "agentgrep.sqlite.execute",
         "agentgrep.sqlite.executemany",
         "agentgrep.sqlite.execute",
+        "agentgrep.sqlite.execute",
+        "agentgrep.sqlite.executescript",
     ]
     assert all(span.parent_id == root_span_id for span in sql_spans)
     assert all(span.attributes["db.system"] == "sqlite" for span in sql_spans)
     assert {span.attributes["agentgrep_sql_method"] for span in sql_spans} == {
         "execute",
         "executemany",
+        "executescript",
     }
-    assert "12345" not in str([span.attributes for span in sql_spans])
+    rendered = str([span.attributes for span in sql_spans])
+    assert "db.statement" not in rendered
+    for private_value in ("12345", string_marker, numeric_marker, comment_marker):
+        assert private_value not in rendered
     assert backend.single_root_trace_ids() == ()
     sqlite_metrics = [
         metric for metric in backend.metric_records if metric.name == "agentgrep.otel.sqlite_total"
     ]
-    assert [metric.value for metric in sqlite_metrics] == [1, 1, 1]
+    assert [metric.value for metric in sqlite_metrics] == [1, 1, 1, 1, 1]
     assert {metric.attributes["agentgrep_sql_method"] for metric in sqlite_metrics} == {
         "execute",
         "executemany",
+        "executescript",
     }
     assert all(metric.attributes["agentgrep_surface"] == "sqlite" for metric in sqlite_metrics)
 
@@ -1859,8 +1931,8 @@ class _ExplicitCase(t.NamedTuple):
     expected_explicit: bool
 
 
-_EXPLICIT_CASES: tuple[_ExplicitCase, ...] = (
-    _ExplicitCase("passive-local", mode=None, env={}, expected_explicit=False),
+_OPT_IN_CASES: tuple[_ExplicitCase, ...] = (
+    _ExplicitCase("disabled-default", mode=None, env={}, expected_explicit=False),
     _ExplicitCase("env-enabled", mode=None, env={"AGENTGREP_OTEL": "1"}, expected_explicit=True),
     _ExplicitCase("env-live", mode=None, env={"AGENTGREP_OTEL": "live"}, expected_explicit=True),
     _ExplicitCase("explicit-mode", mode="live", env={}, expected_explicit=True),
@@ -1869,11 +1941,11 @@ _EXPLICIT_CASES: tuple[_ExplicitCase, ...] = (
 
 @pytest.mark.parametrize(
     "case",
-    _EXPLICIT_CASES,
-    ids=[case.test_id for case in _EXPLICIT_CASES],
+    _OPT_IN_CASES,
+    ids=[case.test_id for case in _OPT_IN_CASES],
 )
-def test_resolve_explicit_distinguishes_passive_local(case: _ExplicitCase) -> None:
-    """Only the auto-resolved local default with AGENTGREP_OTEL unset is passive."""
+def test_resolve_explicit_distinguishes_opt_in(case: _ExplicitCase) -> None:
+    """Only a mode argument or AGENTGREP_OTEL value is an explicit opt-in."""
     import agentgrep._telemetry as telemetry
 
     resolved = telemetry.resolve_explicit(t.cast("t.Any", case.mode), case.env)
@@ -1994,87 +2066,6 @@ def test_pytest_item_span_helper_adds_xdist_worker_attributes(
             assert span.attributes[key] == expected
 
 
-class McpSensitiveScalarArgCase(t.NamedTuple):
-    """Parametrized case for scalar MCP argument redaction."""
-
-    test_id: str
-    key: str
-    value: str
-
-
-MCP_SENSITIVE_SCALAR_ARG_CASES: tuple[McpSensitiveScalarArgCase, ...] = (
-    McpSensitiveScalarArgCase(
-        test_id="pattern",
-        key="pattern",
-        value="secret-pattern",
-    ),
-    McpSensitiveScalarArgCase(
-        test_id="sample-text",
-        key="sample_text",
-        value="secret sample text",
-    ),
-    McpSensitiveScalarArgCase(
-        test_id="cursor",
-        key="cursor",
-        value="agcur1:secret-cursor",
-    ),
-    McpSensitiveScalarArgCase(
-        test_id="query",
-        key="query",
-        value="agent:codex secret-query",
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    "case",
-    MCP_SENSITIVE_SCALAR_ARG_CASES,
-    ids=[case.test_id for case in MCP_SENSITIVE_SCALAR_ARG_CASES],
-)
-def test_summarize_args_redacts_sensitive_scalar_args(
-    case: McpSensitiveScalarArgCase,
-) -> None:
-    """Sensitive MCP scalar arguments should be summarized by digest."""
-    from agentgrep.mcp.middleware import _summarize_args
-
-    summary = _summarize_args({case.key: case.value})
-
-    assert isinstance(summary[case.key], dict)
-    assert set(summary[case.key]) == {"len", "sha256_prefix"}
-    assert summary[case.key]["len"] == len(case.value)
-    assert case.value not in str(summary)
-
-
-def test_flatten_safe_attributes_keeps_redacted_mcp_args_safe() -> None:
-    """MCP telemetry attributes should carry redacted shape metadata only."""
-    import agentgrep._telemetry as telemetry
-    from agentgrep.mcp.middleware import _summarize_args
-
-    query = "agent:codex secret-query"
-    source_path = "/tmp/agentgrep/history.json"
-    summary = _summarize_args(
-        {
-            "query": query,
-            "terms": ["secret-token"],
-            "pattern": "another-secret",
-            "source_path": source_path,
-        },
-    )
-    attributes = telemetry.flatten_safe_attributes("agentgrep_mcp_args", summary)
-
-    rendered = str(attributes)
-    assert "secret-query" not in rendered
-    assert "secret-token" not in rendered
-    assert "another-secret" not in rendered
-    assert source_path not in rendered
-    assert attributes["agentgrep_mcp_args.query.len"] == len(query)
-    assert attributes["agentgrep_mcp_args.terms.0.len"] == len("secret-token")
-    assert attributes["agentgrep_mcp_args.pattern.len"] == len("another-secret")
-    assert attributes["agentgrep_mcp_args.source_path.kind"] == "path"
-    assert attributes["agentgrep_mcp_args.source_path.len"] == len(source_path)
-    assert attributes["agentgrep_mcp_args.source_path.is_absolute"] is True
-
-
 def test_cli_main_emits_non_single_trace_with_linked_logs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2164,6 +2155,74 @@ def test_cli_help_emits_non_single_trace_without_stderr(
     assert root.attributes["agentgrep_exit_code"] == 0
 
 
+def test_cli_direct_help_preserves_argparse_system_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public main facade must preserve argparse's embedding contract."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    monkeypatch.setattr(
+        telemetry,
+        "setup",
+        lambda **_kwargs: telemetry.TelemetryHandle(mode="off"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        _ = agentgrep.main(["--help"])
+
+    assert exc_info.value.code == 0
+
+
+def test_span_preserves_system_exit_with_unhashable_code() -> None:
+    """Telemetry must never replace an unusual SystemExit with TypeError."""
+    import agentgrep._telemetry as telemetry
+
+    code: list[object] = []
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with (
+            pytest.raises(SystemExit) as exc_info,
+            telemetry.span(
+                "agentgrep.cli.invocation",
+            ),
+        ):
+            raise SystemExit(code)
+    finally:
+        telemetry.configure_backend(None)
+
+    assert exc_info.value.code is code
+    assert backend.finished_spans[-1].status == "error"
+
+
+def test_cli_help_without_telemetry_config_is_fast_and_silent() -> None:
+    """Default help must not contact an implicit local OTLP collector."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("AGENTGREP_", "OTEL_", "OTLP_"))
+        and key not in {"PYTEST_CURRENT_TEST", "PYTEST_VERSION"}
+    }
+    started = time.perf_counter()
+
+    completed = subprocess.run(
+        (sys.executable, "-m", "agentgrep", "--help"),
+        cwd=pathlib.Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    elapsed = time.perf_counter() - started
+    assert completed.returncode == 0
+    assert "grep examples:" in completed.stdout
+    assert completed.stderr == ""
+    assert elapsed < 3.0
+
+
 def test_shutdown_skips_pyroscope_when_profiles_not_started(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2214,6 +2273,94 @@ def test_shutdown_skips_pyroscope_when_profiles_not_started(
 
     make_backend(profiles_started=True).shutdown()
     assert shutdown_calls == [1]
+
+
+def test_otel_force_flush_attempts_every_provider_after_failure() -> None:
+    """A failed trace flush must not skip meter and logger flushes."""
+    from agentgrep import _telemetry_otel
+
+    class FakeProvider:
+        def __init__(self, result: bool) -> None:
+            self.result = result
+            self.calls: list[int] = []
+
+        def force_flush(self, timeout_millis: int = 30_000) -> bool:
+            self.calls.append(timeout_millis)
+            return self.result
+
+    class Noop:
+        def shutdown(self) -> None:
+            return None
+
+    trace_provider = FakeProvider(False)
+    meter_provider = FakeProvider(True)
+    logger_provider = FakeProvider(True)
+    noop = Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=noop,
+        tracer_provider=trace_provider,
+        meter=noop,
+        meter_provider=meter_provider,
+        logger_provider=logger_provider,
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+
+    assert backend.force_flush(timeout_millis=321) is False
+    assert len(trace_provider.calls) == 1
+    assert len(meter_provider.calls) == 1
+    assert len(logger_provider.calls) == 1
+    budgets = [
+        trace_provider.calls[0],
+        meter_provider.calls[0],
+        logger_provider.calls[0],
+    ]
+    assert all(0 <= budget <= 321 for budget in budgets)
+    assert budgets == sorted(budgets, reverse=True)
+
+
+def test_otel_backend_shutdown_is_idempotent_without_predrain() -> None:
+    """Provider shutdown owns its drain and runs once per backend."""
+    from agentgrep import _telemetry_otel
+
+    class CountingProvider:
+        def __init__(self) -> None:
+            self.flush_calls = 0
+            self.shutdown_calls = 0
+
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            self.flush_calls += 1
+            return True
+
+        def shutdown(self) -> None:
+            self.shutdown_calls += 1
+
+    class Noop:
+        pass
+
+    providers = [CountingProvider(), CountingProvider(), CountingProvider()]
+    noop = Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=noop,
+        tracer_provider=providers[0],
+        meter=noop,
+        meter_provider=providers[1],
+        logger_provider=providers[2],
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+
+    backend.shutdown()
+    backend.shutdown()
+
+    assert [provider.flush_calls for provider in providers] == [0, 0, 0]
+    assert [provider.shutdown_calls for provider in providers] == [1, 1, 1]
 
 
 def test_package_version_falls_back_to_pyproject(
@@ -2460,7 +2607,8 @@ async def test_mcp_tool_span_is_non_single_and_redacted(
     assert tool_span.parent_id == request_span.span_id
     assert request_span.trace_id not in backend.single_root_trace_ids()
     assert "secret-token" not in str(tool_span.attributes)
-    assert tool_span.attributes["agentgrep_mcp_args.terms.0.len"] == len("secret-token")
+    assert tool_span.attributes["agentgrep_mcp_args.terms.type"] == "list"
+    assert tool_span.attributes["agentgrep_mcp_args.terms.len"] == 1
     assert any(record.trace_id == request_span.trace_id for record in backend.log_records)
     assert all(record.trace_id is not None for record in backend.log_records)
     assert all(record.span_id is not None for record in backend.log_records)
@@ -2641,6 +2789,56 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
     assert record.pathname == "/tmp/agentgrep/src/agentgrep/example.py"
 
 
+def test_otel_log_record_drops_exception_text_and_stack() -> None:
+    """OTel log export retains only the bounded exception type."""
+    from agentgrep import _telemetry_otel
+
+    marker = "synthetic-private-exception-marker"
+    exc_info = (ValueError, ValueError(marker), None)
+    record = logging.LogRecord(
+        name="agentgrep.test",
+        level=logging.ERROR,
+        pathname="synthetic.py",
+        lineno=1,
+        msg="operation failed",
+        args=(),
+        exc_info=exc_info,
+    )
+    record.exc_text = marker
+    record.stack_info = marker
+
+    sanitized = _telemetry_otel._sanitized_log_record(record)
+
+    assert sanitized.exc_info is None
+    assert sanitized.exc_text is None
+    assert sanitized.stack_info is None
+    assert sanitized.__dict__["agentgrep_exception_type"] == "ValueError"
+    assert marker not in str(sanitized.__dict__)
+
+
+def test_logging_exporter_rejects_third_party_record_bodies() -> None:
+    """Root attachment exports project templates, not third-party messages."""
+    import agentgrep._telemetry as telemetry
+
+    marker = "synthetic-private-third-party-marker"
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation"):
+            logging.getLogger("thirdparty.library").warning(marker)
+            logging.getLogger("agentgrep.test").info(
+                "operation completed",
+                extra={"agentgrep_outcome": "ok"},
+            )
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    assert marker not in str(backend.log_records)
+    assert [record.message for record in backend.log_records] == ["operation completed"]
+
+
 def test_env_override_warning_keeps_compatible_bounded_export_metadata(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2700,6 +2898,217 @@ def test_otel_log_record_keeps_safe_extras_as_attributes() -> None:
     assert attributes["agentgrep_surface"] == "cli"
     assert attributes["agentgrep_operation"] == "search.run"
     assert attributes["agentgrep_result_count"] == 3
+
+
+def test_otel_error_status_does_not_export_exception_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exception events and status descriptions must not carry private text."""
+    from opentelemetry import trace
+
+    from agentgrep import _telemetry_otel
+
+    private_marker = "synthetic-private-exception-marker"
+
+    class FakeSpan:
+        def __init__(self) -> None:
+            self.exceptions: list[BaseException] = []
+            self.events: list[tuple[str, dict[str, object]]] = []
+            self.statuses: list[object] = []
+            self.attributes: dict[str, object] = {}
+
+        def record_exception(self, error: BaseException) -> None:
+            self.exceptions.append(error)
+
+        def add_event(self, name: str, attributes: dict[str, object]) -> None:
+            self.events.append((name, attributes))
+
+        def set_status(self, status: object) -> None:
+            self.statuses.append(status)
+
+        def set_attribute(self, key: str, value: object) -> None:
+            self.attributes[key] = value
+
+    class Noop:
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            return True
+
+        def shutdown(self) -> None:
+            return None
+
+    active_span = FakeSpan()
+    monkeypatch.setattr(trace, "get_current_span", lambda: active_span)
+    noop = Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=noop,
+        tracer_provider=noop,
+        meter=noop,
+        meter_provider=noop,
+        logger_provider=noop,
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+
+    backend.record_exception(ValueError(private_marker))
+    backend.set_span_status_error(private_marker)
+
+    assert active_span.exceptions == []
+    assert active_span.events == [("exception", {"exception.type": "ValueError"})]
+    assert active_span.attributes == {"agentgrep_error_type": "ValueError"}
+    assert private_marker not in str(active_span.statuses)
+
+
+def test_error_type_name_defaults_unknown_classes_to_finite_label() -> None:
+    """Dynamic exception class names cannot become telemetry dimensions."""
+    import agentgrep._telemetry as telemetry
+
+    private_marker = "synthetic-private-exception-type-marker"
+    private_error = type(private_marker, (Exception,), {})
+
+    assert telemetry.error_type_name(private_error) == "Exception"
+    assert private_marker not in telemetry.error_type_name(private_error)
+
+
+def test_otel_span_exception_emits_one_bounded_event() -> None:
+    """The SDK path records one type-only exception event and status."""
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    import agentgrep._telemetry as telemetry
+    from agentgrep import _telemetry_otel
+
+    class Noop:
+        def add(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def record(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            return True
+
+        def shutdown(self) -> None:
+            return None
+
+    marker = "synthetic-private-exception-marker"
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    noop = Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=provider.get_tracer("agentgrep"),
+        tracer_provider=provider,
+        meter=noop,
+        meter_provider=noop,
+        logger_provider=noop,
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+
+    telemetry.configure_backend(backend)
+    try:
+        with (
+            pytest.raises(ValueError, match=marker),
+            telemetry.span(
+                "agentgrep.cli.invocation",
+            ),
+        ):
+            raise ValueError(marker)
+    finally:
+        telemetry.configure_backend(None)
+        provider.shutdown()
+
+    (span,) = exporter.get_finished_spans()
+    assert len(span.events) == 1
+    assert span.events[0].name == "exception"
+    assert dict(span.events[0].attributes or {}) == {"exception.type": "ValueError"}
+    assert span.status.description is None
+    assert marker not in str(span.events)
+    assert marker not in str(span.status)
+
+
+def test_app_root_sampler_keeps_or_drops_whole_traces() -> None:
+    """Start-time sampling prevents both rejected roots and orphan children."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, TraceState
+
+    from agentgrep import _telemetry_otel
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(sampler=_telemetry_otel._AppRootSampler())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("agentgrep")
+    try:
+        with (
+            tracer.start_as_current_span("unapproved.root"),
+            tracer.start_as_current_span("unapproved.child"),
+        ):
+            pass
+        with (
+            tracer.start_as_current_span("agentgrep.cli.invocation"),
+            tracer.start_as_current_span("agentgrep.cli.parse"),
+        ):
+            pass
+        remote_parent = SpanContext(
+            trace_id=int("1" * 32, 16),
+            span_id=int("2" * 16, 16),
+            is_remote=True,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            trace_state=TraceState(),
+        )
+        remote_context = trace.set_span_in_context(NonRecordingSpan(remote_parent))
+        with (
+            tracer.start_as_current_span("mcp.server.request", context=remote_context),
+            tracer.start_as_current_span("mcp.server.tool"),
+        ):
+            pass
+        unsampled_remote_parent = SpanContext(
+            trace_id=int("3" * 32, 16),
+            span_id=int("4" * 16, 16),
+            is_remote=True,
+            trace_flags=TraceFlags(TraceFlags.DEFAULT),
+            trace_state=TraceState(),
+        )
+        unsampled_context = trace.set_span_in_context(
+            NonRecordingSpan(unsampled_remote_parent),
+        )
+        with (
+            tracer.start_as_current_span("mcp.server.request", context=unsampled_context),
+            tracer.start_as_current_span("mcp.server.tool"),
+        ):
+            pass
+    finally:
+        provider.shutdown()
+
+    spans = exporter.get_finished_spans()
+    by_name = {span.name: span for span in spans}
+    assert set(by_name) == {
+        "agentgrep.cli.invocation",
+        "agentgrep.cli.parse",
+        "mcp.server.request",
+        "mcp.server.tool",
+    }
+    assert by_name["agentgrep.cli.parse"].parent is not None
+    assert (
+        by_name["agentgrep.cli.parse"].parent.span_id
+        == by_name["agentgrep.cli.invocation"].context.span_id
+    )
+    assert by_name["mcp.server.request"].parent is not None
+    assert by_name["mcp.server.request"].parent.span_id == remote_parent.span_id
+    assert by_name["mcp.server.tool"].parent is not None
+    assert (
+        by_name["mcp.server.tool"].parent.span_id == by_name["mcp.server.request"].context.span_id
+    )
 
 
 @pytest.mark.parametrize(
