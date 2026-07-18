@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import pathlib
 import queue
 import threading
@@ -33,6 +34,7 @@ if t.TYPE_CHECKING:
 __all__ = ["ExplorerApp"]
 
 _EXPLORER_MODE = "explorer"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,11 +293,16 @@ class ExplorerApp(App[None]):
         _runtime.disarm_pump_audit()
         try:
             if pending is not None:
-                await asyncio.to_thread(
+                saved = await asyncio.to_thread(
                     _save_theme_selection,
                     self._theme_save_mailbox,
                     self._theme_config_path,
                 )
                 self._theme_save_pending = None
+                if not saved:
+                    logger.warning(
+                        "theme preference save failed during shutdown",
+                        extra={"agentgrep_theme": pending.theme_name},
+                    )
         finally:
             _runtime.unbind_pump_thread()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import logging
 import pathlib
 import threading
 import time
@@ -412,6 +413,45 @@ async def test_shutdown_latest_write_cannot_be_overtaken(
     assert await asyncio.to_thread(first_finished.wait, 2)
     assert not first_timed_out.is_set()
     assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
+
+
+async def test_shutdown_theme_save_failure_is_logged(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A final teardown write failure remains observable after the UI closes."""
+    preferences = importlib.import_module("agentgrep.ui.preferences")
+    real_save = preferences.save_theme_name
+    first_started = threading.Event()
+    release_first = threading.Event()
+    first_timed_out = threading.Event()
+
+    def fail_latest_save(theme_name: str, path: pathlib.Path | None = None) -> bool:
+        if theme_name == theme.LIGHT_THEME_NAME:
+            first_started.set()
+            if not release_first.wait(timeout=2):
+                first_timed_out.set()
+                return False
+            return bool(real_save(theme_name, path))
+        return False
+
+    monkeypatch.setattr(preferences, "save_theme_name", fail_latest_save)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="agentgrep.ui._shell"):
+        async with app.run_test(size=(80, 24)):
+            assert app.select_theme(theme.LIGHT_THEME_NAME) is True
+            assert await asyncio.to_thread(first_started.wait, 2)
+            assert app.select_theme(theme.TOKYO_NIGHT_THEME_NAME) is True
+            asyncio.get_running_loop().call_later(0.05, release_first.set)
+
+    release_first.set()
+    assert not first_timed_out.is_set()
+    assert any(
+        record.getMessage() == "theme preference save failed during shutdown"
+        for record in caplog.records
+    )
 
 
 async def test_save_failure_keeps_session_theme_and_warns(
