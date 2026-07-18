@@ -129,7 +129,6 @@ class LayoutScreen(_SCREEN_BASE):
         self._command_matches: tuple[commands.SlashCommand, ...] = ()
         self._enum_dropdown: t.Any = None
         self._screenshot_generation: int = 0
-        self._workflow_attach_pending = False
         #: Bindings this screen installed for the active workflow, tracked by
         #: ``(key, binding)`` identity so a workflow swap removes exactly its own.
         self._installed_workflow_bindings: list[tuple[str, Binding]] = []
@@ -150,6 +149,7 @@ class LayoutScreen(_SCREEN_BASE):
         """The currently active workflow strategy."""
         return self._workflow
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Attach the active workflow once the layout is mounted.
 
@@ -158,28 +158,15 @@ class LayoutScreen(_SCREEN_BASE):
         may start a search and paint chrome) runs after the widgets exist.
         """
         self._attach_workflow()
-        self._workflow_attach_pending = False
 
-    def set_workflow(self, workflow: Workflow, *, attach: bool = True) -> None:
-        """Swap the active workflow, optionally re-seeding its initial dispatch."""
-        if attach:
-            t.cast("t.Any", self).request_cancel()
-        self._workflow = workflow
-        self._workflow_attach_pending = not attach
-        if attach:
-            self._attach_workflow()
-            self._workflow_attach_pending = False
-
-    def attach_pending_workflow(self) -> None:
-        """Attach a suspended workflow swap when the layout is resumed."""
-        if not self._workflow_attach_pending:
-            return
-        self._workflow_attach_pending = False
+    def set_workflow(self, workflow: Workflow) -> None:
+        """Swap the active workflow and seed its initial dispatch."""
         t.cast("t.Any", self).request_cancel()
+        self._workflow = workflow
         self._attach_workflow()
 
     def _attach_workflow(self) -> None:
-        """Seed the active workflow and install its key bindings (ADR 0013/0014).
+        """Seed the active workflow and install its key bindings (ADR 0013/0015).
 
         Centralizes the attach so every entry point (mount, swap, resume) both
         runs the workflow's initial dispatch *and* installs its ``BINDINGS`` on

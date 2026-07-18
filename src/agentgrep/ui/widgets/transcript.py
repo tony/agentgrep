@@ -1,4 +1,4 @@
-"""``ConversationLog`` — an append-only transcript of turn bubbles (ADR 0014).
+"""``ConversationLog`` — an append-only transcript of turn bubbles (ADR 0015).
 
 A :class:`~textual.containers.VerticalScroll` using Textual's ``layout: stream``
 (the purpose-built container for a long, scrolling list of widgets like an LLM

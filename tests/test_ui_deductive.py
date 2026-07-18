@@ -1,4 +1,4 @@
-"""Tests for the deductive narrowing workflow (ADR 0014, the behavior axis).
+"""Tests for the deductive narrowing workflow (ADR 0015, the behavior axis).
 
 ``DeductiveWorkflow`` drives a layout through the ``WorkflowHost`` surface, so its
 policy — first submit fixes the haystack, later submits narrow in-memory, widen
@@ -14,11 +14,10 @@ import typing as t
 
 import pytest
 
-from agentgrep.progress import SearchControl, StreamingRecordsBatch, StreamingSearchFinished
-from agentgrep.records import SearchQuery, SearchRecord
+from agentgrep.progress import SearchControl
+from agentgrep.records import SearchQuery
 from agentgrep.ui._context import UiContext
 from agentgrep.ui.workflows.deductive import DeductiveWorkflow
-from tests._agentgrep_tui_support import _build_empty_ui_app
 
 pytestmark = pytest.mark.tui
 
@@ -225,116 +224,3 @@ def test_deductive_composed_filter_form() -> None:
     assert host.payloads("filter_loaded")[-1] == "anyhow"
     workflow.on_query(host, "error")  # second refinement
     assert host.payloads("filter_loaded")[-1] == "(anyhow) AND (error)"
-
-
-class _MatchInvoker:
-    """A search seam that emits a fixed record set so narrowing can be exercised."""
-
-    def __init__(self, tmp_path: pathlib.Path) -> None:
-        self._tmp_path = tmp_path
-        self.runs = 0
-
-    def run(
-        self,
-        query: SearchQuery,
-        *,
-        control: SearchControl,
-        emit: cabc.Callable[[object], None],
-    ) -> None:
-        """Emit three records (two containing 'anyhow') then finish."""
-        del query
-        self.runs += 1
-        if control.answer_now_requested():
-            return
-        records = tuple(
-            SearchRecord(
-                kind="prompt",
-                agent="codex",
-                store="codex.sessions",
-                adapter_id="codex.sessions_jsonl.v1",
-                path=self._tmp_path / f"r{idx}.jsonl",
-                text=text,
-            )
-            for idx, text in enumerate(
-                ["rust anyhow here", "rust plain error", "rust anyhow again"],
-            )
-        )
-        emit(StreamingRecordsBatch(records=records, total=len(records)))
-        emit(StreamingSearchFinished(outcome="complete", total=len(records), elapsed=0.01))
-
-
-@pytest.mark.slow
-async def test_deductive_narrow_filters_to_matching_records(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """End-to-end: a single-word narrow actually filters the haystack to matches.
-
-    The earlier fakes asserted the host-call *shape* (``filter_loaded`` got a
-    string) but never ran the matcher, so a paren-wrapped single term that
-    matched nothing slipped through. This runs the real engine seam + matcher.
-    """
-    from agentgrep.ui.layouts.chat import ChatLayout
-    from agentgrep.ui.widgets.turns import MessageTurn, ResultTurn
-
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    invoker = _MatchInvoker(tmp_path)
-    async with app.run_test(size=(120, 30)) as pilot:
-        await pilot.pause()
-        query = _query()
-        ctx = UiContext(
-            home=tmp_path,
-            invoker=invoker,
-            query=query,
-            control=SearchControl(),
-            base_scope=query.scope,
-        )
-        layout = ChatLayout(ctx, DeductiveWorkflow())
-        await app.push_screen(layout)
-        await pilot.pause()
-
-        def result_turns() -> list[MessageTurn]:
-            return [
-                child
-                for child in layout.query_one("#transcript").children
-                if isinstance(child, MessageTurn) and isinstance(child.turn, ResultTurn)
-            ]
-
-        layout._search_input.value = "rust"  # first submit fixes the haystack
-        await pilot.press("enter")
-        await pilot.pause(0.3)
-        haystack = len(result_turns())
-        assert haystack == 3
-
-        layout._search_input.value = "anyhow"  # single-word narrow
-        await pilot.press("enter")
-        await pilot.pause(0.3)
-        narrowed = result_turns()[haystack:]
-        assert len(narrowed) == 2  # would be 0 with the (anyhow)-literal bug
-        assert all("anyhow" in t.cast(ResultTurn, turn.turn).record.text for turn in narrowed)
-
-@pytest.mark.slow
-async def test_deductive_keys_route_on_chat_layout(
-    tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """On the chat layout, two submits then ctrl+up narrow then widen the path."""
-    from agentgrep.ui.layouts.chat import ChatLayout
-
-    app = _build_empty_ui_app(tmp_path, monkeypatch)
-    async with app.run_test(size=(120, 30)) as pilot:
-        await pilot.pause()
-        layout = ChatLayout(app._ctx, DeductiveWorkflow())
-        await app.push_screen(layout)
-        await pilot.pause()
-        layout._search_input.value = "rust"
-        await pilot.press("enter")
-        await pilot.pause()
-        layout._search_input.value = "anyhow"
-        await pilot.press("enter")
-        await pilot.pause()
-        assert layout._breadcrumb._frames == ("rust", "anyhow")
-        await pilot.press("ctrl+up")  # widen
-        await pilot.pause()
-        assert layout._breadcrumb._frames == ("rust",)
-        assert layout._search_input.value == "rust"

@@ -1,4 +1,4 @@
-"""``RefinementBreadcrumb`` — the deductive narrowing path widget (ADR 0014).
+"""``RefinementBreadcrumb`` — the deductive narrowing path widget (ADR 0015).
 
 A presentation-only :class:`~textual.widgets.Static` that renders the active
 refinement path as ``all ▸ python ▸ level:error`` (driven by ``set_frames``). It
@@ -16,6 +16,8 @@ import typing as t
 
 from rich.text import Text
 from textual.widgets import Static
+
+from agentgrep.ui import _runtime
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -37,6 +39,7 @@ class RefinementBreadcrumb(Static):
         self.display = bool(self._frames)
         self.refresh()
 
+    @_runtime.pump_only
     def render(self) -> Text:
         """Return ``all ▸ <frame> ▸ <frame>`` for the current path."""
         text = Text(no_wrap=True, overflow="ellipsis")
