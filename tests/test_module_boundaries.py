@@ -85,3 +85,63 @@ def test_facade_public_surface_snapshot(snapshot: object) -> None:
     import agentgrep
 
     assert sorted(agentgrep.__all__) == snapshot
+
+
+def test_parser_registry_matches_records_adapter_set() -> None:
+    """The merged parser registry equals ``ITER_SOURCE_RECORD_ADAPTERS``.
+
+    ``records.py`` must not import adapter code (it sits below the parsers),
+    so its dispatchable-adapter frozenset cannot be derived from the registry.
+    This equality keeps the two in lockstep: an adapter id added to only one
+    side fails here instead of silently yielding nothing.
+    """
+    import agentgrep.adapters as adapters
+    from agentgrep.records import ITER_SOURCE_RECORD_ADAPTERS
+
+    assert set(adapters.PARSER_REGISTRY) == set(ITER_SOURCE_RECORD_ADAPTERS)
+
+
+def test_stream_parser_specs_pin_the_planning_contract() -> None:
+    """Exactly the known stream-aware ids carry ``raw_skip_line``/``reverse``.
+
+    Which parsers receive the raw-prefilter/bounded-reverse arguments is
+    planning-visible behavior (ADR 0004); flipping a row between spec shapes
+    silently changes what the engine's scan strategies deliver.
+    """
+    import agentgrep.adapters as adapters
+
+    stream_ids = {
+        adapter_id
+        for adapter_id, spec in adapters.PARSER_REGISTRY.items()
+        if isinstance(spec, adapters.StreamParserSpec)
+    }
+    assert stream_ids == {
+        "antigravity_cli.history_jsonl.v1",
+        "claude.projects_jsonl.v1",
+        "codex.history_json.v1",
+        "codex.history_jsonl.v1",
+        "codex.sessions_jsonl.v1",
+        "grok.prompt_history_jsonl.v1",
+        "grok.sessions_jsonl.v1",
+        "pi.sessions_jsonl.v1",
+    }
+
+
+def test_adapters_split_reexports_are_neutral() -> None:
+    """The adapters package re-exports its moved names byte-stably.
+
+    Identity (not equality) keeps the single ``@functools.cache`` instance on
+    ``store_descriptor_for_record`` and the facade's private vscode helpers
+    pointing at the owning modules (ADR 0010).
+    """
+    import agentgrep
+    import agentgrep.adapters as adapters
+    from agentgrep.adapters import _extract, _store_roles, cursor_ide, vscode
+
+    assert agentgrep.iter_source_records is adapters.iter_source_records
+    assert agentgrep.extract_message_text is _extract.extract_message_text
+    assert agentgrep.build_search_record is _extract.build_search_record
+    assert agentgrep.parse_cursor_state_db is cursor_ide.parse_cursor_state_db
+    assert agentgrep.store_descriptor_for_record is _store_roles.store_descriptor_for_record
+    assert agentgrep._vscode_uri_to_path is vscode._vscode_uri_to_path
+    assert agentgrep._vscode_workspace_cwd is vscode._vscode_workspace_cwd
