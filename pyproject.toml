@@ -144,6 +144,9 @@ sphinx-ux-badges = false
 [tool.ty.environment]
 python-version = "3.14"
 
+[tool.ty.rules]
+blanket-ignore-comment = "error"
+
 [tool.ty.src]
 include = [
   "src",
