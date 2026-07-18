@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import pathlib
+import queue
 import threading
 import typing as t
 from dataclasses import dataclass
@@ -34,26 +35,72 @@ __all__ = ["ExplorerApp"]
 _EXPLORER_MODE = "explorer"
 
 
-@_runtime.offload
-def _save_theme_selection(
-    theme_name: str,
-    config_path: pathlib.Path,
-    save_lock: threading.Lock,
-) -> bool:
-    """Persist one detached theme choice away from the Textual pump."""
-    with save_lock:
-        try:
-            return preferences.save_theme_name(theme_name, config_path)
-        except Exception:
-            return False
-
-
 @dataclass(frozen=True, slots=True)
 class _ThemeSaveRequest:
     """One serialized preference write."""
 
     generation: int
     theme_name: str
+
+
+class _ThemeSaveMailbox:
+    """Coalesce theme requests behind one off-pump writer."""
+
+    def __init__(self) -> None:
+        self._requests: queue.SimpleQueue[_ThemeSaveRequest] = queue.SimpleQueue()
+        self._write_lock = threading.Lock()
+        self._latest: _ThemeSaveRequest | None = None
+        self._persisted_generation = 0
+
+    def enqueue(self, request: _ThemeSaveRequest) -> None:
+        """Add a request without waiting for the active filesystem write."""
+        self._requests.put(request)
+
+    def _drain(self) -> None:
+        """Record the newest queued request while holding the writer lock."""
+        while True:
+            try:
+                self._latest = self._requests.get_nowait()
+            except queue.Empty:
+                return
+
+    def _save(self, request: _ThemeSaveRequest, config_path: pathlib.Path) -> bool:
+        """Persist one current request while holding the writer lock."""
+        try:
+            saved = preferences.save_theme_name(request.theme_name, config_path)
+        except Exception:
+            return False
+        if saved:
+            self._persisted_generation = request.generation
+        return saved
+
+    def save(
+        self,
+        config_path: pathlib.Path,
+        request: _ThemeSaveRequest | None = None,
+    ) -> bool:
+        """Persist a current request, or flush the newest request at teardown."""
+        with self._write_lock:
+            self._drain()
+            latest = self._latest
+            if latest is None:
+                return True
+            selected = latest if request is None else request
+            if selected.generation < latest.generation:
+                return True
+            if selected.generation <= self._persisted_generation:
+                return True
+            return self._save(selected, config_path)
+
+
+@_runtime.offload
+def _save_theme_selection(
+    mailbox: _ThemeSaveMailbox,
+    config_path: pathlib.Path,
+    request: _ThemeSaveRequest | None = None,
+) -> bool:
+    """Flush the newest detached theme choice away from the Textual pump."""
+    return mailbox.save(config_path, request)
 
 
 class ExplorerApp(App[None]):
@@ -91,7 +138,7 @@ class ExplorerApp(App[None]):
         self._theme_save_pending: _ThemeSaveRequest | None = None
         self._theme_save_active: _ThemeSaveRequest | None = None
         self._theme_save_worker: Worker[bool] | None = None
-        self._theme_save_lock = threading.Lock()
+        self._theme_save_mailbox = _ThemeSaveMailbox()
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Merge agentgrep tokens so unowned Textual themes remain safe."""
@@ -180,6 +227,7 @@ class ExplorerApp(App[None]):
         self._theme_save_generation += 1
         request = _ThemeSaveRequest(self._theme_save_generation, theme_name)
         self._theme_save_pending = request
+        self._theme_save_mailbox.enqueue(request)
         if self._theme_save_worker is None:
             self._start_theme_save(request)
 
@@ -190,9 +238,9 @@ class ExplorerApp(App[None]):
             self._theme_save_worker = self.run_worker(
                 functools.partial(
                     _save_theme_selection,
-                    request.theme_name,
+                    self._theme_save_mailbox,
                     self._theme_config_path,
-                    self._theme_save_lock,
+                    request,
                 ),
                 name="theme-config",
                 group="theme-config",
@@ -245,9 +293,8 @@ class ExplorerApp(App[None]):
             if pending is not None:
                 await asyncio.to_thread(
                     _save_theme_selection,
-                    pending.theme_name,
+                    self._theme_save_mailbox,
                     self._theme_config_path,
-                    self._theme_save_lock,
                 )
                 self._theme_save_pending = None
         finally:

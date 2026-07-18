@@ -364,6 +364,56 @@ async def test_shutdown_flushes_latest_theme_after_active_save(
     assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
 
 
+async def test_shutdown_latest_write_cannot_be_overtaken(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A canceled older worker cannot overwrite the shutdown flush."""
+    preferences = importlib.import_module("agentgrep.ui.preferences")
+    shell = importlib.import_module("agentgrep.ui._shell")
+    real_save = shell._save_theme_selection
+    first_entered = threading.Event()
+    first_finished = threading.Event()
+    release_first = threading.Event()
+    first_timed_out = threading.Event()
+    call_lock = threading.Lock()
+    call_count = 0
+
+    def delayed_first_save(
+        mailbox: t.Any,
+        path: pathlib.Path,
+        request: t.Any = None,
+    ) -> bool:
+        nonlocal call_count
+        with call_lock:
+            call_count += 1
+            call_number = call_count
+        if call_number == 1:
+            first_entered.set()
+            if not release_first.wait(timeout=2):
+                first_timed_out.set()
+                return False
+        saved = bool(real_save(mailbox, path, request))
+        if call_number == 1:
+            first_finished.set()
+        else:
+            release_first.set()
+        return saved
+
+    monkeypatch.setattr(shell, "_save_theme_selection", delayed_first_save)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)):
+        assert app.select_theme(theme.LIGHT_THEME_NAME) is True
+        assert await asyncio.to_thread(first_entered.wait, 2)
+        assert app.select_theme(theme.TOKYO_NIGHT_THEME_NAME) is True
+
+    release_first.set()
+    assert await asyncio.to_thread(first_finished.wait, 2)
+    assert not first_timed_out.is_set()
+    assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
+
+
 async def test_save_failure_keeps_session_theme_and_warns(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
