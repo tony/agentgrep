@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a38 (Yet to be released)
+## agentgrep 0.1.0a39 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a38 (2026-07-18)
+
+agentgrep 0.1.0a38 is a maintenance release. The one change users will notice
+fixes a packaging defect: installing the agentgrep wheel alongside `pytest` in
+the same environment no longer breaks `pytest`. Everything else is internal
+hardening — a restructured store-adapter layer, broader test coverage of the
+query matcher, and a guard against module bloat — with no change to how
+agentgrep behaves.
 
 ### Fixes
 
