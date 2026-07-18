@@ -27,6 +27,7 @@ __all__ = [
     "DetailFindRequested",
     "DetailFocusRequested",
     "DetailScrollChanged",
+    "EmptyInputQuitRequested",
     "FilterCompleted",
     "FilterRequested",
     "ResultHighlighted",
@@ -50,6 +51,15 @@ class DetailFocusRequested(Message):
     def __init__(self, target: t.Literal["filter", "results"]) -> None:
         super().__init__()
         self.target = target
+
+
+class EmptyInputQuitRequested(Message):
+    """Request exit after ``q`` is pressed in an empty query input."""
+
+    def __init__(self, *, input_id: str, key: str) -> None:
+        super().__init__()
+        self.input_id = input_id
+        self.key = key
 
 
 class FilterRequested(Message):

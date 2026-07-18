@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import io
+import logging
 import typing as t
 
 from rich.console import Console
@@ -20,8 +21,11 @@ from textual.screen import Screen
 
 from agentgrep.ui import _runtime, commands, theme as ui_theme
 
+logger = logging.getLogger(__name__)
+
 if t.TYPE_CHECKING:
     from agentgrep.ui._context import UiContext
+    from agentgrep.ui.widgets.messages import EmptyInputQuitRequested
     from agentgrep.ui.workflows import Workflow
 
 __all__ = ["LayoutScreen"]
@@ -374,6 +378,32 @@ class LayoutScreen(_SCREEN_BASE):
     # ``self.screen``, so every layout that hosts it needs these. The HUD
     # overrides them with its staged confirm-exit gutter; other layouts get a
     # sane default (clear the box, then quit on an empty box).
+    @_runtime.pump_only
+    def on_empty_input_quit_requested(self, message: EmptyInputQuitRequested) -> None:
+        """Trace and honor an empty focused-input ``q`` request."""
+        from agentgrep import _telemetry
+
+        message.stop()
+        with _telemetry.span(
+            "agentgrep.tui.quit",
+            agentgrep_surface="tui",
+            agentgrep_operation="tui.quit",
+            agentgrep_tui_input_id=message.input_id,
+            agentgrep_tui_key=message.key,
+        ):
+            _telemetry.set_span_attribute("agentgrep_outcome", "exit")
+            logger.info(
+                "tui quit requested",
+                extra={
+                    "agentgrep_surface": "tui",
+                    "agentgrep_operation": "tui.quit",
+                    "agentgrep_tui_input_id": message.input_id,
+                    "agentgrep_tui_key": message.key,
+                    "agentgrep_outcome": "exit",
+                },
+            )
+            self.app.exit()
+
     def _handle_input_ctrl_c(self, widget: object) -> None:
         """Default ctrl-c inside an input: clear it, else quit on an empty box."""
         target = t.cast("t.Any", widget)
