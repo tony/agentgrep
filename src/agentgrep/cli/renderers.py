@@ -24,6 +24,8 @@ from agentgrep.cli.serializers import (
 )
 from agentgrep.records import FindRecord, SearchRecord
 
+type _GrepLineMatch = tuple[int, str, list[tuple[int, int]]]
+
 
 def _format_find_text_line(record: FindRecord, args: FindArgs) -> str:
     """Compose one line for ``--list-details`` / ``--print0`` output."""
@@ -185,18 +187,23 @@ def _compile_grep_patterns(args: GrepArgs) -> list[re.Pattern[str]]:
 def _merge_overlapping_spans(
     spans: list[tuple[int, int]],
 ) -> list[tuple[int, int]]:
-    """Collapse overlapping or adjacent spans so highlight doesn't double-color."""
-    if not spans:
-        return []
-    spans = sorted(spans)
-    merged: list[tuple[int, int]] = [spans[0]]
-    for start, end in spans[1:]:
+    """Merge visible spans while retaining non-overlapping zero-width matches."""
+    visible = sorted((start, end) for start, end in spans if start != end)
+    merged: list[tuple[int, int]] = []
+    for start, end in visible:
+        if not merged:
+            merged.append((start, end))
+            continue
         last_start, last_end = merged[-1]
         if start <= last_end:
             merged[-1] = (last_start, max(last_end, end))
         else:
             merged.append((start, end))
-    return merged
+    zero_width = sorted({(start, end) for start, end in spans if start == end})
+    retained_zero_width = [
+        span for span in zero_width if not any(start <= span[0] <= end for start, end in merged)
+    ]
+    return sorted([*merged, *retained_zero_width])
 
 
 def extract_search_snippet(
@@ -302,17 +309,28 @@ def iter_match_lines(
     patterns = _compile_grep_patterns(args)
     if not patterns:
         return
-    for line_number, line in enumerate(record_text.split("\n"), start=1):
+    lines = record_text.split("\n")
+    if lines[-1:] == [""]:
+        lines.pop()
+    unterminated_final_line = bool(lines) and not record_text.endswith("\n")
+    for line_number, line in enumerate(lines, start=1):
+        if args.invert_match:
+            if not any(pattern.search(line) for pattern in patterns):
+                yield line_number, line, []
+            continue
         spans: list[tuple[int, int]] = []
+        matched = False
         for pattern in patterns:
             for m in pattern.finditer(line):
-                if m.start() == m.end():
-                    continue  # skip zero-width matches (e.g. `\b` alone)
+                matched = True
+                if (
+                    unterminated_final_line
+                    and line_number == len(lines)
+                    and m.start() == m.end() == len(line)
+                ):
+                    continue
                 spans.append((m.start(), m.end()))
-        if args.invert_match:
-            if not spans:
-                yield line_number, line, []
-        elif spans:
+        if matched:
             yield line_number, line, _merge_overlapping_spans(spans)
 
 
@@ -343,9 +361,14 @@ def format_grep_line(
     """
     if show_column:
         show_line = True
+        if not match_spans:
+            show_column = False
+    visible_spans = _merge_overlapping_spans(
+        [(start, end) for start, end in match_spans if start != end],
+    )
     body_parts: list[str] = []
     cursor = 0
-    for start, end in match_spans:
+    for start, end in visible_spans:
         body_parts.append(line_text[cursor:start])
         body_parts.append(colors.match(line_text[start:end]))
         cursor = end
@@ -383,6 +406,8 @@ def format_grep_heading(
 def _iter_grep_json_events(
     records: list[SearchRecord],
     args: GrepArgs,
+    *,
+    line_matches: cabc.Sequence[_GrepLineMatch] | None = None,
 ) -> cabc.Iterator[dict[str, object]]:
     """Yield rg-shaped JSON events for each record in ``records``.
 
@@ -390,8 +415,12 @@ def _iter_grep_json_events(
     line) → ``end``. A trailing ``summary`` event is appended by the
     caller (``json`` mode) or omitted (``ndjson`` mode).
     """
-    for record in records:
-        matches = list(iter_match_lines(record.text, args))
+    for index, record in enumerate(records):
+        matches = (
+            list(line_matches)
+            if index == 0 and line_matches is not None
+            else list(iter_match_lines(record.text, args))
+        )
         yield serialize_grep_begin(record)
         match_span_total = 0
         for line_number, line_text, match_spans in matches:
@@ -416,8 +445,10 @@ def _grep_show_line_col(args: GrepArgs) -> tuple[bool, bool]:
     ``-n``/``--line-number`` opts into line numbers. ``--column`` adds
     column numbers (and implies ``-n``). ``--vimgrep`` forces both on.
     """
-    if args.vimgrep or args.column:
+    if args.vimgrep:
         return True, True
+    if args.column:
+        return True, not args.invert_match
     if args.line_number is True:
         return True, False
     return False, False
@@ -454,6 +485,7 @@ def format_grep_record_pretty(
     args: GrepArgs,
     *,
     colors: AnsiColors,
+    line_matches: cabc.Sequence[_GrepLineMatch] | None = None,
 ) -> str:
     """Format one record in snippet-first pretty style.
 
@@ -461,9 +493,19 @@ def format_grep_record_pretty(
     dim provenance line underneath.
     """
     lines: list[str] = []
-    patterns = _compile_grep_patterns(args)
-
-    if record.text:
+    if args.invert_match:
+        matches = (
+            line_matches if line_matches is not None else tuple(iter_match_lines(record.text, args))
+        )
+        selected_lines = [line for _line_number, line, _spans in matches]
+        if selected_lines:
+            visible_lines = selected_lines[:5]
+            lines.append("\n".join(visible_lines))
+            remaining = len(selected_lines) - len(visible_lines)
+            if remaining > 0:
+                lines.append(colors.dim(f"  ... {remaining} more lines"))
+    elif record.text:
+        patterns = _compile_grep_patterns(args)
         snippet, remaining = extract_search_snippet(record.text, patterns)
         highlighted = highlight_search_spans(snippet, patterns, colors=colors)
         lines.append(highlighted)
@@ -482,7 +524,12 @@ def format_grep_record_pretty(
     return "\n".join(lines)
 
 
-def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
+def format_grep_record(
+    record: SearchRecord,
+    args: GrepArgs,
+    *,
+    line_matches: cabc.Sequence[_GrepLineMatch] | None = None,
+) -> str:
     """Format one matching record for text-mode ``grep`` output.
 
     Default shape (rg-faithful): ``path:text`` on pipe, ``text`` rows
@@ -497,7 +544,11 @@ def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
     if args.files_with_matches:
         return path
     colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
-    matches = list(iter_match_lines(record.text, args))
+    matches = (
+        list(line_matches)
+        if line_matches is not None
+        else list(iter_match_lines(record.text, args))
+    )
     if args.invert_match and not matches:
         return ""
 
@@ -507,6 +558,9 @@ def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
             if args.invert_match:
                 chunks.append(line)
                 continue
+            if not spans:
+                chunks.append(line)
+                continue
             for start, end in spans:
                 chunks.append(line[start:end])
         return "\n".join(chunks)
@@ -514,7 +568,7 @@ def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
     if args.vimgrep:
         rows: list[str] = []
         for line_no, line, spans in matches:
-            if args.invert_match:
+            if args.invert_match or not spans:
                 rows.append(f"{colors.path(path)}:{line_no}:{line}")
                 continue
             for start, _end in spans:
@@ -523,7 +577,12 @@ def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
         return "\n".join(rows)
 
     if args.style == "pretty":
-        return format_grep_record_pretty(record, args, colors=colors)
+        return format_grep_record_pretty(
+            record,
+            args,
+            colors=colors,
+            line_matches=matches,
+        )
 
     if not matches:
         # Record matched at the engine level but no individual line carries

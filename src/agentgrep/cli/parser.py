@@ -1121,6 +1121,12 @@ def _build_grep_args(
             )
 
     invert_match = t.cast("bool", namespace.invert_match)
+    if invert_match and grep_compiled is not None and not grep_compiled.field_filter_safe:
+        with configured_color_environment(color_mode):
+            bundle.grep_parser.error(
+                "--invert-match cannot separate field predicates from text patterns "
+                "inside OR or NOT expressions",
+            )
     count_only = t.cast("bool", namespace.count)
     only_matching = t.cast("bool", namespace.only_matching)
     if pattern_mode != "fixed":
