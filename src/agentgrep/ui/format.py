@@ -107,6 +107,8 @@ def format_relative_time(ts: float, now: float | None = None) -> str:
 
     Examples
     --------
+    >>> format_relative_time(0, 30)
+    '30s ago'
     >>> format_relative_time(0, 90)
     '1m ago'
     >>> format_relative_time(0, 86400)
@@ -122,10 +124,12 @@ def format_relative_time(ts: float, now: float | None = None) -> str:
     diff = int(current - ts)
     if diff < 1:
         return "just now"
-    for secs, unit in _RELATIVE_UNITS:
+    # The table ends with the 1-second floor, which matches any diff >= 1;
+    # keeping it out of the loop keeps the final return reachable.
+    for secs, unit in _RELATIVE_UNITS[:-1]:
         if diff >= secs:
             return f"{diff // secs}{unit} ago"
-    return "just now"
+    return f"{diff}s ago"
 
 
 def phase_label(phase: str) -> str:
