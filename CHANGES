@@ -42,6 +42,15 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### Preventive quality safeguards (#136)
+
+agentgrep's development checks now prevent several classes of maintenance debt
+from accumulating silently. New code must follow the project's established
+lint and type-suppression standards, keeping future changes easier to review
+without changing user-facing behavior.
+
 ## agentgrep 0.1.0a38 (2026-07-18)
 
 agentgrep 0.1.0a38 is a maintenance release. The one change users will notice
