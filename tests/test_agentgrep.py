@@ -1428,9 +1428,9 @@ def test_iter_message_candidates_skips_text_extraction_without_role(
     """``extract_message_text`` runs only for nodes that carry a role."""
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     calls: list[object] = []
-    real = agentgrep.adapters.extract_message_text
+    real = agentgrep.adapters._extract.extract_message_text
     monkeypatch.setattr(
-        agentgrep.adapters,
+        agentgrep.adapters._extract,
         "extract_message_text",
         lambda mapping: calls.append(mapping) or real(mapping),
     )
@@ -1556,11 +1556,11 @@ def test_iter_message_candidates_gates_bare_branch_keys(
 
 def test_origin_mapping_keys_cover_extractor() -> None:
     """The walk-guard key set lists every key _origin_from_mapping reads."""
-    adapters = importlib.import_module("agentgrep.adapters")
-    source = inspect.getsource(adapters._origin_from_mapping)
+    extract = importlib.import_module("agentgrep.adapters._extract")
+    source = inspect.getsource(extract._origin_from_mapping)
     read_keys = set(re.findall(r'(?<!git_)mapping\.get\("([^"]+)"\)', source))
     assert read_keys
-    assert read_keys <= adapters._ORIGIN_MAPPING_KEYS
+    assert read_keys <= extract._ORIGIN_MAPPING_KEYS
 
 
 class CodexNoiseLineCase(t.NamedTuple):
@@ -9451,14 +9451,18 @@ def test_cursor_state_parser_skips_irrelevant_blob_values(
     connection.close()
 
     traces: list[str] = []
-    original_open_readonly_sqlite = agentgrep.adapters.open_readonly_sqlite
+    original_open_readonly_sqlite = agentgrep.adapters.cursor_ide.open_readonly_sqlite
 
     def traced_open_readonly_sqlite(path: pathlib.Path) -> sqlite3.Connection:
         traced_connection = t.cast("sqlite3.Connection", original_open_readonly_sqlite(path))
         traced_connection.set_trace_callback(traces.append)
         return traced_connection
 
-    monkeypatch.setattr(agentgrep.adapters, "open_readonly_sqlite", traced_open_readonly_sqlite)
+    monkeypatch.setattr(
+        agentgrep.adapters.cursor_ide,
+        "open_readonly_sqlite",
+        traced_open_readonly_sqlite,
+    )
 
     sources = agentgrep.discover_sources(
         home,
@@ -15007,7 +15011,7 @@ def test_unix_to_isoformat_edge_cases(
 ) -> None:
     """_unix_to_isoformat handles edge cases without crashing."""
     agentgrep = load_agentgrep_module()
-    result = t.cast("t.Any", agentgrep).adapters._unix_to_isoformat(value)
+    result = t.cast("t.Any", agentgrep).adapters._common._unix_to_isoformat(value)
     if expected is None:
         assert result is None, f"{test_id}: expected None, got {result!r}"
     else:
