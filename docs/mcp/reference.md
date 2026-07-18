@@ -39,6 +39,10 @@ FastMCP server factory, payload models, and MCP helpers.
 
 .. autoclass:: agentgrep.mcp.InspectResultResponse
 
+.. autoclass:: agentgrep.mcp.InsightsSkillsRequest
+
+.. autoclass:: agentgrep.mcp.InsightsSkillsResponse
+
 .. autoclass:: agentgrep.mcp.StoreDescriptorModel
 
 .. autoclass:: agentgrep.mcp.ListStoresRequest

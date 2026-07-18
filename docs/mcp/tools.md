@@ -57,6 +57,24 @@ request.
 ```{fastmcp-tool-input} recent_sessions
 ```
 
+## Recurring-request Insights
+
+```{fastmcp-tool} insights_skills
+```
+
+**Use when** you want to mine recurring requests across conversations and
+turn repeated patterns into reusable skill suggestions. The request is
+bounded by agent, record limit, and optional ISO date window.
+
+**Returns:** a status, analyzed-record count, skill suggestions, similar
+prompt clusters, recurring conversations, and forgotten-but-similar past
+conversations. When the optional graph backend is unavailable, the response
+returns `status="unavailable"` with its setup command instead of failing the
+tool call.
+
+```{fastmcp-tool-input} insights_skills
+```
+
 ## Store Discovery
 
 ```{fastmcp-tool} find
