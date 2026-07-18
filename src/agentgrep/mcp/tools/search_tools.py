@@ -185,9 +185,7 @@ def _compile_request_query(
     # elements, which stay whole to match the bare fast path.
     terms = tuple(word for term in request.terms for word in term.split())
     synthetic_nodes = (
-        (FieldEqNode(field="human", value=request.human),)
-        if request.human is not None
-        else ()
+        (FieldEqNode(field="human", value=request.human),) if request.human is not None else ()
     )
     if not terms and not synthetic_nodes:
         if origin_filter is None:
