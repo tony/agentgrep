@@ -1,6 +1,6 @@
 (adr-agentic-structured-logging)=
 
-# ADR 0015: Agentic structured logging
+# ADR 0016: Agentic structured logging
 
 ## Status
 
@@ -8,7 +8,7 @@ Accepted.
 
 ## Context
 
-ADR 0014 established local OpenTelemetry as an opt-in observability surface for
+ADR 0015 established local OpenTelemetry as an opt-in observability surface for
 agentgrep. It also requires exported logs to be trace-linked and sanitized
 because agentgrep reads local prompt-history stores.
 

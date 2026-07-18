@@ -1,6 +1,6 @@
 (adr-opentelemetry-local-observability)=
 
-# ADR 0014: OpenTelemetry local observability
+# ADR 0015: OpenTelemetry local observability
 
 ## Status
 
