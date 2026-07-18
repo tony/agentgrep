@@ -14,8 +14,10 @@ import typing as t
 import warnings
 
 from opentelemetry.context import Context
+from opentelemetry.sdk.trace import Event, ReadableSpan, Span, SpanProcessor
 from opentelemetry.sdk.trace.sampling import Sampler, SamplingResult
-from opentelemetry.trace import Link, SpanKind, TraceState
+from opentelemetry.sdk.util.instrumentation import InstrumentationScope
+from opentelemetry.trace import Link, SpanKind, Status, StatusCode, TraceState
 from opentelemetry.util.types import Attributes
 
 from agentgrep import _telemetry
@@ -42,6 +44,22 @@ _COUNTER_METRIC_NAMES: frozenset[str] = frozenset(
 )
 """Monotonic counter metrics whose names do not carry a ``.count`` suffix."""
 
+_FASTMCP_SPAN_NAMES: dict[str, str] = {
+    "prompts/get": "fastmcp.prompts.get",
+    "prompts/list": "fastmcp.prompts.list",
+    "resources/list": "fastmcp.resources.list",
+    "resources/read": "fastmcp.resources.read",
+    "resources/templates/list": "fastmcp.resources.templates.list",
+    "tools/call": "fastmcp.tools.call",
+    "tools/list": "fastmcp.tools.list",
+}
+"""Finite native FastMCP method-to-span-name vocabulary."""
+
+_FASTMCP_COMPONENT_TYPES: frozenset[str] = frozenset(
+    {"prompt", "resource", "resource_template", "tool"},
+)
+"""Finite native FastMCP component classifiers safe for export."""
+
 
 def _metric_is_counter(name: str) -> bool:
     """Return whether a metric name uses a monotonic counter instrument.
@@ -50,6 +68,142 @@ def _metric_is_counter(name: str) -> bool:
     :data:`_COUNTER_METRIC_NAMES`; every other metric is a histogram.
     """
     return name.endswith(".count") or name in _COUNTER_METRIC_NAMES
+
+
+class _SanitizingSpanProcessor(SpanProcessor):
+    """Forward immutable privacy-safe span views to one processor."""
+
+    def __init__(self, delegate: SpanProcessor) -> None:
+        self._delegate = delegate
+
+    def on_start(
+        self,
+        span: Span,
+        parent_context: Context | None = None,
+    ) -> None:
+        """Forward span start so processors can retain lifecycle behavior."""
+        with contextlib.suppress(Exception):
+            self._delegate.on_start(span, parent_context=parent_context)
+
+    def on_end(self, span: ReadableSpan) -> None:
+        """Sanitize the ended span before a processor can export it."""
+        try:
+            sanitized = _sanitized_export_span(span)
+        except Exception:
+            return
+        with contextlib.suppress(Exception):
+            self._delegate.on_end(sanitized)
+
+    def shutdown(self) -> None:
+        """Shut down the wrapped processor."""
+        with contextlib.suppress(Exception):
+            self._delegate.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush the wrapped processor."""
+        try:
+            return self._delegate.force_flush(timeout_millis)
+        except Exception:
+            return False
+
+
+class _AppRootSpanProcessor(SpanProcessor):
+    """Expose only finite app roots to the Pyroscope span processor."""
+
+    def __init__(self, delegate: SpanProcessor) -> None:
+        self._delegate = delegate
+
+    def on_start(
+        self,
+        span: Span,
+        parent_context: Context | None = None,
+    ) -> None:
+        """Forward approved app-root starts without renaming the live span."""
+        scope = span.instrumentation_scope
+        if (
+            scope is None
+            or scope.name != "agentgrep"
+            or span.name not in _telemetry.APP_ROOT_SPAN_NAMES
+        ):
+            return
+        with contextlib.suppress(Exception):
+            self._delegate.on_start(span, parent_context=parent_context)
+
+    def on_end(self, span: ReadableSpan) -> None:
+        """Forward the matching approved app-root end."""
+        scope = span.instrumentation_scope
+        if (
+            scope is None
+            or scope.name != "agentgrep"
+            or span.name not in _telemetry.APP_ROOT_SPAN_NAMES
+        ):
+            return
+        with contextlib.suppress(Exception):
+            self._delegate.on_end(span)
+
+    def shutdown(self) -> None:
+        """Shut down the wrapped processor."""
+        with contextlib.suppress(Exception):
+            self._delegate.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush the wrapped processor."""
+        try:
+            return self._delegate.force_flush(timeout_millis)
+        except Exception:
+            return False
+
+
+def _sanitized_export_span(span: ReadableSpan) -> ReadableSpan:
+    """Return a default-deny export view for native FastMCP spans."""
+    scope = span.instrumentation_scope
+    if scope is None or scope.name != "fastmcp":
+        return span
+
+    raw_attributes = span.attributes or {}
+    raw_method = raw_attributes.get("mcp.method.name")
+    method = raw_method if isinstance(raw_method, str) else ""
+    name = _FASTMCP_SPAN_NAMES.get(method, "fastmcp.request")
+    safe_attributes: dict[str, str] = {
+        "mcp.method.name": method if method in _FASTMCP_SPAN_NAMES else "unknown",
+    }
+    raw_component_type = raw_attributes.get("fastmcp.component.type")
+    if isinstance(raw_component_type, str) and raw_component_type in _FASTMCP_COMPONENT_TYPES:
+        safe_attributes["fastmcp.component.type"] = raw_component_type
+
+    exception_events = [event for event in span.events if event.name == "exception"]
+    has_error = (
+        span.status.status_code is StatusCode.ERROR
+        or raw_attributes.get("error.type") is not None
+        or bool(exception_events)
+    )
+    error_type = "tool_error" if raw_attributes.get("error.type") == "tool_error" else "Exception"
+    if has_error:
+        safe_attributes["error.type"] = error_type
+    safe_events = ()
+    if exception_events:
+        safe_events = (
+            Event(
+                "exception",
+                {"exception.type": error_type},
+                timestamp=exception_events[0].timestamp,
+            ),
+        )
+
+    return ReadableSpan(
+        name=name,
+        context=span.context,
+        parent=span.parent,
+        resource=span.resource,
+        attributes=safe_attributes,
+        events=safe_events,
+        links=tuple(Link(link.context) for link in span.links),
+        kind=span.kind,
+        status=Status(span.status.status_code),
+        start_time=span.start_time,
+        end_time=span.end_time,
+        instrumentation_scope=InstrumentationScope("fastmcp"),
+    )
 
 
 def attach_otel_context(inbound: object) -> cabc.Callable[[], None]:
@@ -350,24 +504,30 @@ def build_backend(
         with contextlib.suppress(Exception):
             from pyroscope.otel import PyroscopeSpanProcessor
 
-            tracer_provider.add_span_processor(PyroscopeSpanProcessor())
+            tracer_provider.add_span_processor(
+                _AppRootSpanProcessor(PyroscopeSpanProcessor()),
+            )
     if traces_enabled:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
         tracer_provider.add_span_processor(
-            BatchSpanProcessor(
-                t.cast(
-                    "SpanExporter",
-                    OTLPSpanExporter(timeout=_timeout_seconds(active_env)),
+            _SanitizingSpanProcessor(
+                BatchSpanProcessor(
+                    t.cast(
+                        "SpanExporter",
+                        OTLPSpanExporter(timeout=_timeout_seconds(active_env)),
+                    ),
                 ),
             ),
         )
     if mode == "debug-console" and traces_enabled:
         tracer_provider.add_span_processor(
-            BatchSpanProcessor(
-                t.cast(
-                    "SpanExporter",
-                    ConsoleSpanExporter(out=sys.stderr),
+            _SanitizingSpanProcessor(
+                BatchSpanProcessor(
+                    t.cast(
+                        "SpanExporter",
+                        ConsoleSpanExporter(out=sys.stderr),
+                    ),
                 ),
             ),
         )
