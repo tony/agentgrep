@@ -606,7 +606,7 @@ def test_results_list_constructs_empty() -> None:
 
 
 async def test_results_streamed_row_is_pinned(
-    snapshot,
+    snapshot: object,
     tmp_path: pathlib.Path,
 ) -> None:
     """A streamed row's rendered text is pinned against the real app theme.
