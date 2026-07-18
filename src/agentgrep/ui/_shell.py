@@ -10,8 +10,10 @@ Textual is imported at module scope, so this module is reached only lazily via
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import pathlib
+import threading
 import typing as t
 from dataclasses import dataclass
 
@@ -33,12 +35,17 @@ _EXPLORER_MODE = "explorer"
 
 
 @_runtime.offload
-def _save_theme_selection(theme_name: str, config_path: pathlib.Path) -> bool:
+def _save_theme_selection(
+    theme_name: str,
+    config_path: pathlib.Path,
+    save_lock: threading.Lock,
+) -> bool:
     """Persist one detached theme choice away from the Textual pump."""
-    try:
-        return preferences.save_theme_name(theme_name, config_path)
-    except Exception:
-        return False
+    with save_lock:
+        try:
+            return preferences.save_theme_name(theme_name, config_path)
+        except Exception:
+            return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +91,7 @@ class ExplorerApp(App[None]):
         self._theme_save_pending: _ThemeSaveRequest | None = None
         self._theme_save_active: _ThemeSaveRequest | None = None
         self._theme_save_worker: Worker[bool] | None = None
+        self._theme_save_lock = threading.Lock()
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Merge agentgrep tokens so unowned Textual themes remain safe."""
@@ -184,6 +192,7 @@ class ExplorerApp(App[None]):
                     _save_theme_selection,
                     request.theme_name,
                     self._theme_config_path,
+                    self._theme_save_lock,
                 ),
                 name="theme-config",
                 group="theme-config",
@@ -227,8 +236,19 @@ class ExplorerApp(App[None]):
             )
 
     @_runtime.pump_only
-    def on_unmount(self) -> None:
-        """Release pump-thread guards and watchdog resources."""
-        _runtime.unbind_pump_thread()
+    async def on_unmount(self) -> None:
+        """Flush the latest theme off-pump, then release runtime resources."""
+        pending = self._theme_save_pending
         _runtime.stop_pump_watchdog()
         _runtime.disarm_pump_audit()
+        try:
+            if pending is not None:
+                await asyncio.to_thread(
+                    _save_theme_selection,
+                    pending.theme_name,
+                    self._theme_config_path,
+                    self._theme_save_lock,
+                )
+                self._theme_save_pending = None
+        finally:
+            _runtime.unbind_pump_thread()

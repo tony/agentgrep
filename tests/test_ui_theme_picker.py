@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import pathlib
@@ -312,6 +313,54 @@ async def test_rapid_direct_selections_are_serialized_and_latest_wins(
         await pilot.pause()
 
     assert max_active == 1
+    assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
+
+
+async def test_shutdown_flushes_latest_theme_after_active_save(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct Textual shutdown serializes and persists the latest choice."""
+    preferences = importlib.import_module("agentgrep.ui.preferences")
+    real_save = preferences.save_theme_name
+    first_started = threading.Event()
+    first_finished = threading.Event()
+    release_first = threading.Event()
+    activity_lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def controlled_save(theme_name: str, path: pathlib.Path | None = None) -> bool:
+        nonlocal active, max_active
+        with activity_lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            if theme_name == theme.LIGHT_THEME_NAME:
+                first_started.set()
+                assert release_first.wait(timeout=2)
+            return bool(real_save(theme_name, path))
+        finally:
+            with activity_lock:
+                active -= 1
+            if theme_name == theme.LIGHT_THEME_NAME:
+                first_finished.set()
+
+    monkeypatch.setattr(preferences, "save_theme_name", controlled_save)
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    notices: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(app, "notify", lambda *args, **kwargs: notices.append((args, kwargs)))
+
+    async with app.run_test(size=(80, 24)):
+        assert app.select_theme(theme.LIGHT_THEME_NAME) is True
+        assert await asyncio.to_thread(first_started.wait, 2)
+        assert app.select_theme(theme.TOKYO_NIGHT_THEME_NAME) is True
+        asyncio.get_running_loop().call_later(0.05, release_first.set)
+
+    release_first.set()
+    assert await asyncio.to_thread(first_finished.wait, 2)
+    assert max_active == 1
+    assert notices == []
     assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
 
 
