@@ -1414,7 +1414,7 @@ def _coerce_cache_mode(value: str) -> CacheMode:
     ValueError: cache mode must be one of auto, require, off
     """
     if value in ("auto", "require", "off"):
-        return t.cast("CacheMode", value)
+        return value
     msg = "cache mode must be one of auto, require, off"
     raise ValueError(msg)
 
