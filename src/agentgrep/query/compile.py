@@ -99,6 +99,12 @@ class CompiledQuery:
     is_pure_text : bool
         Whether the query was only bare terms under AND. ``True`` implies both predicates
         are ``None``.
+    field_predicate : t.Callable[[SearchRecord], bool] | None
+        Field-only predicate when text matching can be separated without changing
+        boolean semantics. ``None`` when there is no separable field-only AST.
+    field_filter_safe : bool
+        Whether applying ``field_predicate`` without the text terms preserves boolean
+        semantics.
     """
 
     source_predicate: t.Callable[[SourceHandle], bool] | None
@@ -108,6 +114,8 @@ class CompiledQuery:
     routing_predicate: t.Callable[[SearchRecord], bool] | None
     has_positive_routing_metadata: bool
     is_pure_text: bool
+    field_predicate: t.Callable[[SearchRecord], bool] | None = None
+    field_filter_safe: bool = False
 
 
 def compile_query(
@@ -141,6 +149,7 @@ def compile_query(
             routing_predicate=None,
             has_positive_routing_metadata=False,
             is_pure_text=True,
+            field_filter_safe=True,
         )
 
     _validate_ast(ast, registry)
@@ -179,6 +188,26 @@ def compile_query(
                 != "F"
             )
 
+    field_ast, field_filter_safe, _contains_text = _field_filter_ast(ast)
+    field_predicate: t.Callable[[SearchRecord], bool] | None = None
+    if field_filter_safe and field_ast is not None:
+        field_path_patterns = _compile_path_patterns(field_ast, path_fields=path_fields)
+        field_origin_matchers = _compile_origin_matchers(
+            field_ast,
+            registry,
+            field_path_patterns,
+        )
+
+        def field_predicate(record: SearchRecord) -> bool:
+            return _evaluate_record(
+                field_ast,
+                record,
+                registry,
+                field_path_patterns,
+                field_origin_matchers,
+                case_sensitive=case_sensitive,
+            )
+
     return CompiledQuery(
         source_predicate=source_predicate,
         record_predicate=record_predicate,
@@ -187,6 +216,8 @@ def compile_query(
         routing_predicate=routing_predicate,
         has_positive_routing_metadata=_has_positive_routing_metadata(ast, registry),
         is_pure_text=False,
+        field_predicate=field_predicate,
+        field_filter_safe=field_filter_safe,
     )
 
 
@@ -299,6 +330,44 @@ def _has_positive_routing_metadata(
             for child in node.children
         )
     return False
+
+
+def _field_filter_ast(node: QueryNode) -> tuple[QueryNode | None, bool, bool]:
+    """Separate field predicates from line-level text matching.
+
+    Returns the field-only AST, whether the split preserves boolean
+    semantics, and whether the original subtree contained text matching.
+    Conjunctions separate cleanly. A mixed field/text ``OR`` or a negated
+    text expression does not, so callers can reject it instead of silently
+    widening the record set.
+    """
+    if isinstance(node, TermNode) or (isinstance(node, FieldEqNode) and node.field == "text"):
+        return None, True, True
+    if isinstance(node, FieldEqNode | FieldCmpNode | FieldRangeNode | FieldExistsNode):
+        return node, True, False
+    if isinstance(node, NotNode):
+        child, safe, contains_text = _field_filter_ast(node.child)
+        if not safe or contains_text or child is None:
+            return None, False, contains_text
+        return NotNode(child=child), True, False
+    children: list[QueryNode] = []
+    contains_text = False
+    for child in node.children:
+        field_child, safe, child_contains_text = _field_filter_ast(child)
+        if not safe:
+            return None, False, contains_text or child_contains_text
+        contains_text = contains_text or child_contains_text
+        if field_child is not None:
+            children.append(field_child)
+    if isinstance(node, OrNode) and contains_text and children:
+        return None, False, True
+    if not children:
+        return None, True, contains_text
+    if len(children) == 1:
+        return children[0], True, contains_text
+    if isinstance(node, AndNode):
+        return AndNode(children=tuple(children)), True, contains_text
+    return OrNode(children=tuple(children)), True, contains_text
 
 
 def _compile_origin_matchers(
