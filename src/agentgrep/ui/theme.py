@@ -56,22 +56,22 @@ LIGHT_THEME_NAME = "agentgrep-light"
 # gain distinct hues. ``pi`` borrows the accent teal — it is the inspiration.
 
 _AGENT_HUES: dict[str, tuple[str, str]] = {
-    "codex": ("#00d7ff", "#0087af"),
+    "codex": ("#00d7ff", "#00789c"),
     "claude": ("#d183e8", "#9c27b0"),
-    "cursor-cli": ("#e5c07b", "#b8860b"),
+    "cursor-cli": ("#e5c07b", "#906908"),
     "cursor-ide": ("#ffd75f", "#8a6d3b"),
-    "gemini": ("#8ab4f8", "#1a73e8"),
-    "antigravity-cli": ("#5fd7af", "#2a9d8f"),
+    "gemini": ("#8ab4f8", "#1769c2"),
+    "antigravity-cli": ("#5fd7af", "#207a70"),
     "antigravity-ide": ("#56b6c2", "#0e7490"),
     "grok": ("#abb2bf", "#5c6370"),
-    "pi": ("#8abeb7", "#5a8080"),
-    "opencode": ("#98c379", "#4d8a35"),
+    "pi": ("#8abeb7", "#477070"),
+    "opencode": ("#98c379", "#3f782b"),
     "vscode": ("#61afef", "#0066b8"),
 }
 
 _KIND_HUES: dict[str, tuple[str, str]] = {
-    "prompt": ("#b5bd68", "#588458"),
-    "history": ("#5f87ff", "#547da7"),
+    "prompt": ("#b5bd68", "#487148"),
+    "history": ("#5f87ff", "#4a7097"),
 }
 
 # Muted/dim/faint text trio + the model hue (pi's customMessageLabel purple).
@@ -80,7 +80,7 @@ _KIND_HUES: dict[str, tuple[str, str]] = {
 # darker than a bare gray so each tier stays legible against its page.
 _TEXT_HUES: dict[str, tuple[str, str]] = {
     "ag-muted": ("#909090", "#5c5c5c"),
-    "ag-dim": ("#767676", "#666666"),
+    "ag-dim": ("#828282", "#666666"),
     "ag-faint": ("#5a5a5a", "#a0a0a0"),
     "ag-model": ("#9575cd", "#7e57c2"),
 }
@@ -117,8 +117,8 @@ _STATE_BG_HUES: dict[str, tuple[str, str]] = {
 # unlike a flat "yellow" that vanishes on a light page). Filter terms are a
 # deliberate refinement, so they get a prominent *background* fill (the accent)
 # with a contrast-computed foreground. The two never read as the same thing.
-_MATCH_SEARCH_FG: tuple[str, str] = ("#ffd75f", "#b8860b")
-_MATCH_FILTER_BG: tuple[str, str] = ("#8abeb7", "#5a8080")
+_MATCH_SEARCH_FG: tuple[str, str] = ("#ffd75f", "#906908")
+_MATCH_FILTER_BG: tuple[str, str] = ("#8abeb7", "#477070")
 
 #: ``record.agent`` -> ``$ag-*`` variable name (without the ``$``). Keyed by
 #: every member of :data:`agentgrep.records.AGENT_CHOICES`.
@@ -248,12 +248,12 @@ def agentgrep_light() -> Theme:
     """
     return Theme(
         name=LIGHT_THEME_NAME,
-        primary="#5a8080",
-        secondary="#547da7",
-        accent="#5a8080",
-        warning="#9a7326",
+        primary="#477070",
+        secondary="#4a7097",
+        accent="#477070",
+        warning="#8b671f",
         error="#aa5555",
-        success="#588458",
+        success="#487148",
         foreground="#1f2328",
         background="#f8f8f8",
         surface="#ffffff",

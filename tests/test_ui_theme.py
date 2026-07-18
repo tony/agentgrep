@@ -171,6 +171,27 @@ def test_filter_match_foreground_is_readable(case: ThemeCase) -> None:
 
 
 @pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
+def test_semantic_text_palette_is_readable(case: ThemeCase) -> None:
+    """Every semantic foreground used for ordinary text clears WCAG AA."""
+    built = case.builder()
+    token_names = (
+        set(theme.AGENT_TOKEN_BY_NAME.values())
+        | set(theme.KIND_TOKEN_BY_NAME.values())
+        | {"ag-muted", "ag-dim", "ag-model", "ag-match-search"}
+    )
+    foregrounds = {name: built.variables[name] for name in token_names}
+    generated = built.to_color_system().generate()
+    foregrounds.update(
+        (name, generated[name])
+        for name in ("primary", "secondary", "warning", "error", "success", "accent")
+    )
+
+    for name, foreground in foregrounds.items():
+        ratio = _contrast_ratio(foreground, built.background)
+        assert ratio >= 4.5, f"{case.test_id}/{name} contrast {ratio:.2f} below 4.5"
+
+
+@pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
 def test_brand_shine_uses_violet_to_lavender_palette(case: ThemeCase) -> None:
     """The wordmark keeps the approved violet-to-lavender identity."""
     variables = case.builder().variables
@@ -247,7 +268,7 @@ async def test_switch_to_light_theme_succeeds(
         assert app.theme == theme.LIGHT_THEME_NAME
         header = app.screen.query_one("#filter-header")
         # The theme switch re-resolves the filter header's payload hexes.
-        assert header._c_accent.lower() == "#5a8080"
+        assert header._c_accent.lower() == "#477070"
 
 
 async def test_theme_switch_recolors_shared_query_highlighting(
@@ -387,7 +408,7 @@ async def test_theme_switch_rerenders_rows(
         assert any("#00d7ff" in style for style in agent_span_styles())
         app.theme = theme.LIGHT_THEME_NAME
         await pilot.pause()
-        assert any("#0087af" in style for style in agent_span_styles())
+        assert any("#00789c" in style for style in agent_span_styles())
 
 
 @pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
@@ -460,7 +481,7 @@ async def test_theme_switch_invalidates_filtered_out_row_cache(
         for record in records:
             row = results._render_record(record)
             styles = [str(span.style) for span in row.spans]
-            assert any("#0087af" in style for style in styles)
+            assert any("#00789c" in style for style in styles)
             assert not any("#00d7ff" in style for style in styles)
 
 
@@ -502,7 +523,7 @@ async def test_theme_switch_rebuilds_only_visible_rows(
         assert 0 < built <= results.size.height
         assert results.option_count == len(records)
         styles = [str(segment.style) for segment in results.render_line(0)]
-        assert any("#0087af" in style for style in styles)
+        assert any("#00789c" in style for style in styles)
 
 
 async def test_rapid_theme_switch_renders_the_latest_palette(
@@ -535,4 +556,4 @@ async def test_rapid_theme_switch_renders_the_latest_palette(
         assert app.screen._results.option_count == len(records)
         styles = [str(segment.style) for segment in app.screen._results.render_line(0)]
         assert any("#00d7ff" in style for style in styles)
-        assert not any("#0087af" in style for style in styles)
+        assert not any("#00789c" in style for style in styles)
