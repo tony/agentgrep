@@ -3064,7 +3064,7 @@ def test_app_root_sampler_keeps_or_drops_whole_traces() -> None:
             span_id=int("2" * 16, 16),
             is_remote=True,
             trace_flags=TraceFlags(TraceFlags.SAMPLED),
-            trace_state=TraceState(),
+            trace_state=TraceState([("vendor", "opaque")]),
         )
         remote_context = trace.set_span_in_context(NonRecordingSpan(remote_parent))
         with (
@@ -3105,6 +3105,7 @@ def test_app_root_sampler_keeps_or_drops_whole_traces() -> None:
     )
     assert by_name["mcp.server.request"].parent is not None
     assert by_name["mcp.server.request"].parent.span_id == remote_parent.span_id
+    assert by_name["mcp.server.request"].context.trace_state == remote_parent.trace_state
     assert by_name["mcp.server.tool"].parent is not None
     assert (
         by_name["mcp.server.tool"].parent.span_id == by_name["mcp.server.request"].context.span_id
