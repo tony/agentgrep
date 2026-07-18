@@ -71,6 +71,17 @@ def _contrast_ratio(foreground: str, background: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
+def _style_contrast(style: Style) -> float:
+    """Return contrast between a rendered style's concrete colors."""
+    assert style.color is not None
+    assert style.bgcolor is not None
+    foreground = style.color.get_truecolor()
+    background = style.bgcolor.get_truecolor()
+    foreground_hex = f"#{foreground.red:02x}{foreground.green:02x}{foreground.blue:02x}"
+    background_hex = f"#{background.red:02x}{background.green:02x}{background.blue:02x}"
+    return _contrast_ratio(foreground_hex, background_hex)
+
+
 # --- token-map shape -------------------------------------------------------
 
 
@@ -315,19 +326,7 @@ async def test_themes_composite_queries_against_matching_canvases(
         assert query_segments
         for segment in query_segments:
             assert segment.style is not None
-            foreground = segment.style.color
-            background = segment.style.bgcolor
-            assert foreground is not None
-            assert background is not None
-            foreground_rgb = foreground.get_truecolor()
-            background_rgb = background.get_truecolor()
-            foreground_hex = (
-                f"#{foreground_rgb.red:02x}{foreground_rgb.green:02x}{foreground_rgb.blue:02x}"
-            )
-            background_hex = (
-                f"#{background_rgb.red:02x}{background_rgb.green:02x}{background_rgb.blue:02x}"
-            )
-            assert _contrast_ratio(foreground_hex, background_hex) >= 4.5
+            assert _style_contrast(segment.style) >= 4.5
 
         search.value = "/theme dark"
         await pilot.press("enter")
@@ -389,6 +388,47 @@ async def test_theme_switch_rerenders_rows(
         app.theme = theme.LIGHT_THEME_NAME
         await pilot.pause()
         assert any("#0087af" in style for style in agent_span_styles())
+
+
+@pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
+async def test_selected_result_rows_override_semantic_foregrounds(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: ThemeCase,
+) -> None:
+    """Every selected agent/kind row composites at WCAG AA contrast."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+    app = _build_empty_ui_app(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.theme = case.builder().name
+        app.screen._set_empty_state(empty=False)
+        results = app.screen._results
+        results.focus()
+        await pilot.pause()
+
+        for agent in AGENT_CHOICES:
+            for kind in ("prompt", "history"):
+                record = agentgrep.SearchRecord(
+                    kind=kind,
+                    agent=agent,
+                    store=f"{agent}.{kind}",
+                    adapter_id=f"{agent}.{kind}.v1",
+                    path=tmp_path / f"{agent}-{kind}.jsonl",
+                    text="result body",
+                    title="result title",
+                )
+                _set_records(results, [record])
+                results.highlighted = 0
+                segments = [segment for segment in results.render_line(0) if segment.text.strip()]
+
+                assert segments
+                for segment in segments:
+                    assert segment.style is not None
+                    ratio = _style_contrast(segment.style)
+                    assert ratio >= 4.5, (
+                        f"{case.test_id}/{agent}/{kind} selected contrast {ratio:.2f} below 4.5"
+                    )
 
 
 async def test_theme_switch_invalidates_filtered_out_row_cache(

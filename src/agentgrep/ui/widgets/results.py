@@ -333,8 +333,15 @@ class SearchResultsList(ScrollView, can_focus=True):
             no_wrap=True,
             height=1,
         )
+        row = self._render_record(record)
+        if index == self.highlighted:
+            # Rich's field spans otherwise override the component foreground and
+            # can lose contrast against the selected-row background. The copy is
+            # paid only on a selected strip-cache miss.
+            row = row.copy()
+            row.stylize(style, 0, len(row))
         lines = self.app.console.render_lines(
-            Styled(self._render_record(record), style),
+            Styled(row, style),
             options,
             pad=True,
         )
