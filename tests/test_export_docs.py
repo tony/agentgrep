@@ -7,9 +7,12 @@ import pathlib
 import re
 import typing as t
 
+import pytest
 from pydantic import TypeAdapter
 
 from agentgrep.mcp import ExportRecordsResponse
+
+pytestmark = pytest.mark.documentation
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 

@@ -27,8 +27,7 @@ from agentgrep.ui._export_preferences import (
 from agentgrep.ui.layouts import hud as hud_module
 from agentgrep.ui.widgets import ExportPane, FilterCompleted
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
-from tests._agentgrep_tui_support import _build_empty_ui_app
-from tests.test_agentgrep_tui import _search_requested
+from tests._tui_export_support import _build_empty_ui_app, _search_requested
 
 pytestmark = pytest.mark.tui
 

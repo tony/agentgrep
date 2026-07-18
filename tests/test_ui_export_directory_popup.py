@@ -27,6 +27,8 @@ from agentgrep.ui.widgets.directory_popup import (
     ExportDirectoryPicker,
 )
 
+pytestmark = pytest.mark.tui
+
 
 class _DirectoryPopupHost(App[None]):
     """Minimal export-dialog edit stage for Pilot interaction tests."""
@@ -123,6 +125,7 @@ def test_empty_directory_value_has_no_completion_candidates(
     assert result.truncated is False
 
 
+@pytest.mark.slow
 async def test_directory_enumeration_waits_for_inactivity(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -165,6 +168,7 @@ async def test_directory_enumeration_waits_for_inactivity(
         assert calls[0][1] - changed_at >= DIRECTORY_COMPLETION_DEBOUNCE - 0.02
 
 
+@pytest.mark.slow
 async def test_directory_enumeration_coalesces_while_worker_is_blocked(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -410,6 +414,7 @@ def test_completion_omits_unreviewable_directory_names(
     )
 
 
+@pytest.mark.slow
 async def test_popup_is_literal_bounded_off_pump_and_reports_truncation(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -444,6 +449,7 @@ async def test_popup_is_literal_bounded_off_pump_and_reports_truncation(
         assert scan_threads and all(thread_id != pump_thread for thread_id in scan_threads)
 
 
+@pytest.mark.slow
 async def test_up_down_wrap_and_right_accepts_only_at_end(tmp_path: pathlib.Path) -> None:
     """Navigation wraps while mid-string Right retains native cursor movement."""
     root = tmp_path / "choices"
@@ -476,6 +482,7 @@ async def test_up_down_wrap_and_right_accepts_only_at_end(tmp_path: pathlib.Path
         assert field.has_focus
 
 
+@pytest.mark.slow
 async def test_tab_accepts_only_when_open_then_traverses(tmp_path: pathlib.Path) -> None:
     """Tab accepts one visible row, then resumes normal focus traversal."""
     root = tmp_path / "choices"
@@ -497,6 +504,7 @@ async def test_tab_accepts_only_when_open_then_traverses(tmp_path: pathlib.Path)
         assert filename.has_focus
 
 
+@pytest.mark.slow
 async def test_late_directory_result_cannot_reopen_after_tab(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -537,6 +545,7 @@ async def test_late_directory_result_cannot_reopen_after_tab(
         assert app.query_one("#filename", Input).has_focus
 
 
+@pytest.mark.slow
 async def test_unmount_cancels_worker_and_invalidates_generation(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -585,6 +594,7 @@ async def test_unmount_cancels_worker_and_invalidates_generation(
         assert not app.query(ExportDirectoryPicker)
 
 
+@pytest.mark.slow
 async def test_popup_stays_within_picker_at_compact_geometry(tmp_path: pathlib.Path) -> None:
     """The borderless overlay never exceeds its owning picker at 60 by 16."""
     (tmp_path / "alpha").mkdir()

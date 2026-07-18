@@ -25,6 +25,8 @@ from agentgrep.ui.widgets import ExportPane, export_pane
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
 from agentgrep.ui.widgets.export_pane import ExportDraft, ExportIntent
 
+pytestmark = pytest.mark.tui
+
 _TIMESTAMP = datetime.datetime(2026, 7, 14, 9, 8, 7)
 
 
@@ -186,6 +188,7 @@ def test_pane_binding_priorities_preserve_focused_controls() -> None:
     assert all(bindings[key].priority is False for key in ("up", "down"))
 
 
+@pytest.mark.slow
 async def test_preview_is_frozen_literal_and_uses_no_filesystem(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -215,6 +218,7 @@ async def test_preview_is_frozen_literal_and_uses_no_filesystem(
         assert _text(app, "#export-preview") == ("2026-07-14-09-08-07-machine-readable-title.md")
 
 
+@pytest.mark.slow
 async def test_enter_moves_directory_to_template(tmp_path: pathlib.Path) -> None:
     """Enter in the directory field advances to the filename editor."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -240,6 +244,7 @@ async def test_enter_moves_directory_to_template(tmp_path: pathlib.Path) -> None
         ("down", "directory", "template"),
     ],
 )
+@pytest.mark.slow
 async def test_directional_keys_traverse_and_clamp_without_editing(
     key: str,
     start: str,
@@ -271,6 +276,7 @@ async def test_directional_keys_traverse_and_clamp_without_editing(
         assert _dialog(app).phase == "edit"
 
 
+@pytest.mark.slow
 async def test_left_right_remain_native_template_cursor_keys(tmp_path: pathlib.Path) -> None:
     """Bare horizontal arrows edit the cursor instead of traversing fields."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -289,6 +295,7 @@ async def test_left_right_remain_native_template_cursor_keys(tmp_path: pathlib.P
         assert template.cursor_position == 2
 
 
+@pytest.mark.slow
 async def test_directory_input_receives_n_and_y(tmp_path: pathlib.Path) -> None:
     """Review shortcut letters remain ordinary text in the directory editor."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -303,6 +310,7 @@ async def test_directory_input_receives_n_and_y(tmp_path: pathlib.Path) -> None:
         assert _dialog(app).phase == "edit"
 
 
+@pytest.mark.slow
 async def test_template_input_receives_n_and_y(tmp_path: pathlib.Path) -> None:
     """Review shortcut letters remain ordinary text in the template editor."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -317,6 +325,7 @@ async def test_template_input_receives_n_and_y(tmp_path: pathlib.Path) -> None:
         assert _dialog(app).phase == "edit"
 
 
+@pytest.mark.slow
 async def test_invalid_template_stays_edit_with_path_free_error(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -337,6 +346,7 @@ async def test_invalid_template_stays_edit_with_path_free_error(
         assert seen == []
 
 
+@pytest.mark.slow
 async def test_validation_runs_off_pump(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -359,6 +369,7 @@ async def test_validation_runs_off_pump(
 
 
 @pytest.mark.parametrize("cancel_key", ["n", "ctrl+c"], ids=("no", "cancel"))
+@pytest.mark.slow
 async def test_first_use_default_review_does_not_create_directory(
     cancel_key: str,
     tmp_path: pathlib.Path,
@@ -389,6 +400,7 @@ async def test_first_use_default_review_does_not_create_directory(
         assert not directory.exists()
 
 
+@pytest.mark.slow
 async def test_home_default_is_reviewed_as_tilde(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -413,6 +425,7 @@ async def test_home_default_is_reviewed_as_tilde(
         assert str(home) not in _text(app, "#export-review-directory")
 
 
+@pytest.mark.slow
 async def test_directory_outside_home_remains_literal(tmp_path: pathlib.Path) -> None:
     """A selected directory outside the session home keeps its exact draft text."""
     home = tmp_path / "home"
@@ -433,6 +446,7 @@ async def test_directory_outside_home_remains_literal(tmp_path: pathlib.Path) ->
         assert _text(app, "#export-review-directory") == str(directory)
 
 
+@pytest.mark.slow
 async def test_submitted_absolute_home_directory_is_compacted(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -451,6 +465,7 @@ async def test_submitted_absolute_home_directory_is_compacted(
         assert _text(app, "#export-review-directory") == "~/Exports"
 
 
+@pytest.mark.slow
 async def test_empty_directory_cannot_reach_review(tmp_path: pathlib.Path) -> None:
     """A cleared directory stays in edit with a path-free validation error."""
     seen: list[ExportIntent] = []
@@ -467,6 +482,7 @@ async def test_empty_directory_cannot_reach_review(tmp_path: pathlib.Path) -> No
         assert seen == []
 
 
+@pytest.mark.slow
 async def test_over_bound_directory_stops_before_compaction(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -492,6 +508,7 @@ async def test_over_bound_directory_stops_before_compaction(
         assert seen == []
 
 
+@pytest.mark.slow
 async def test_missing_arbitrary_directory_is_not_created(tmp_path: pathlib.Path) -> None:
     """Validation never creates a missing user-entered directory tree."""
     directory = tmp_path / "missing" / "arbitrary"
@@ -509,6 +526,7 @@ async def test_missing_arbitrary_directory_is_not_created(tmp_path: pathlib.Path
         assert not directory.exists()
 
 
+@pytest.mark.slow
 async def test_existing_bidi_directory_is_rejected(tmp_path: pathlib.Path) -> None:
     """An existing path with unreviewable format controls cannot reach review."""
     home = tmp_path / "home"
@@ -523,6 +541,7 @@ async def test_existing_bidi_directory_is_rejected(tmp_path: pathlib.Path) -> No
         assert _text(app, "#export-error") == "Export directory is invalid"
 
 
+@pytest.mark.slow
 async def test_default_directory_creation_rejects_symlinked_app_path(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -553,6 +572,7 @@ async def test_default_directory_creation_rejects_symlinked_app_path(
         assert {entry.name for entry in outside.iterdir()} == {"keep.txt"}
 
 
+@pytest.mark.slow
 async def test_existing_exact_destination_prevents_review(tmp_path: pathlib.Path) -> None:
     """Validation refuses the exact previewed basename instead of clobbering it."""
     destination = tmp_path / "2026-07-14 09-08-07 - machine-readable-title.md"
@@ -567,6 +587,7 @@ async def test_existing_exact_destination_prevents_review(tmp_path: pathlib.Path
         assert app.screen.query_one("#export-template", Input).has_focus
 
 
+@pytest.mark.slow
 async def test_review_shows_directory_and_filename_literally(tmp_path: pathlib.Path) -> None:
     """Review renders user-controlled brackets as text, never as markup."""
     directory = tmp_path / "exports-[literal]"
@@ -587,6 +608,7 @@ async def test_review_shows_directory_and_filename_literally(tmp_path: pathlib.P
         assert confirm.highlighted == 0
 
 
+@pytest.mark.slow
 async def test_review_uses_compact_pi_confirmation_layout(tmp_path: pathlib.Path) -> None:
     """Review presents one quiet question, compact choices, and a fixed hint."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -610,6 +632,7 @@ async def test_review_uses_compact_pi_confirmation_layout(tmp_path: pathlib.Path
         assert _text(app, "#export-review-status") == ("↑↓ move · Enter · Esc edit")
 
 
+@pytest.mark.slow
 async def test_review_up_down_still_select_confirmation_rows(tmp_path: pathlib.Path) -> None:
     """Edit-stage traversal leaves review-list arrows unchanged."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -632,6 +655,7 @@ async def test_review_up_down_still_select_confirmation_rows(tmp_path: pathlib.P
         assert _dialog(app).phase == "review"
 
 
+@pytest.mark.slow
 async def test_no_returns_to_editor_without_losing_values(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -651,6 +675,7 @@ async def test_no_returns_to_editor_without_losing_values(
         assert seen == []
 
 
+@pytest.mark.slow
 async def test_repeated_enter_on_default_no_cannot_save(tmp_path: pathlib.Path) -> None:
     """Repeated Enter alternates review and edit without selecting Save."""
     seen: list[ExportIntent] = []
@@ -666,6 +691,7 @@ async def test_repeated_enter_on_default_no_cannot_save(tmp_path: pathlib.Path) 
 
 
 @pytest.mark.parametrize("key", ["n", "escape"])
+@pytest.mark.slow
 async def test_no_shortcuts_return_to_edit(tmp_path: pathlib.Path, key: str) -> None:
     """The explicit No gestures preserve the draft and prior focus."""
     seen: list[ExportIntent] = []
@@ -679,6 +705,7 @@ async def test_no_shortcuts_return_to_edit(tmp_path: pathlib.Path, key: str) -> 
         assert seen == []
 
 
+@pytest.mark.slow
 async def test_y_invokes_once_and_enters_saving(tmp_path: pathlib.Path) -> None:
     """Save delegates once and disables every further write gesture."""
     seen: list[ExportIntent] = []
@@ -707,6 +734,7 @@ async def test_y_invokes_once_and_enters_saving(tmp_path: pathlib.Path) -> None:
 
 
 @pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+@pytest.mark.slow
 async def test_saving_ignores_cancel_keys(tmp_path: pathlib.Path, key: str) -> None:
     """A delegated durable write keeps its modal until worker completion."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -768,6 +796,7 @@ async def test_ctrl_c_clears_focused_edit_before_dismissal(
         assert not app.query(ExportPane)
 
 
+@pytest.mark.slow
 async def test_escape_dismisses_from_edit(tmp_path: pathlib.Path) -> None:
     """Escape cancels the dialog outside the review back-step."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -778,6 +807,7 @@ async def test_escape_dismisses_from_edit(tmp_path: pathlib.Path) -> None:
         assert not app.query(ExportPane)
 
 
+@pytest.mark.slow
 async def test_export_failed_restores_edit_with_values(tmp_path: pathlib.Path) -> None:
     """An asynchronous write error returns to the retained draft."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -796,6 +826,7 @@ async def test_export_failed_restores_edit_with_values(tmp_path: pathlib.Path) -
         assert app.screen.query_one("#export-template", Input).has_focus
 
 
+@pytest.mark.slow
 async def test_export_failed_keeps_error_visible_in_small_terminal(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -820,6 +851,7 @@ async def test_export_failed_keeps_error_visible_in_small_terminal(
         assert error.region.bottom <= 10
 
 
+@pytest.mark.slow
 async def test_pending_error_reveal_ignores_rapid_dismiss(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -840,6 +872,7 @@ async def test_pending_error_reveal_ignores_rapid_dismiss(
         assert observations == [True]
 
 
+@pytest.mark.slow
 async def test_pending_error_reveal_ignores_cleared_error(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -861,6 +894,7 @@ async def test_pending_error_reveal_ignores_cleared_error(
         assert observations == [True]
 
 
+@pytest.mark.slow
 async def test_export_succeeded_dismisses(tmp_path: pathlib.Path) -> None:
     """An asynchronous write success closes the retained saving modal."""
     app = _ExportDialogHost(tmp_path, lambda _intent: True)
@@ -873,6 +907,7 @@ async def test_export_succeeded_dismisses(tmp_path: pathlib.Path) -> None:
         assert not app.query(ExportPane)
 
 
+@pytest.mark.slow
 async def test_pane_fits_compact_terminal_without_horizontal_scroll(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -893,6 +928,7 @@ async def test_pane_fits_compact_terminal_without_horizontal_scroll(
 
 
 @pytest.mark.parametrize("size", [(60, 16), (30, 10)])
+@pytest.mark.slow
 async def test_edit_footer_is_docked_without_copy_change(
     tmp_path: pathlib.Path,
     size: tuple[int, int],
@@ -912,6 +948,7 @@ async def test_edit_footer_is_docked_without_copy_change(
 
 
 @pytest.mark.parametrize("size", [(40, 12), (30, 10)])
+@pytest.mark.slow
 async def test_invalid_template_error_is_visible_in_small_terminal(
     size: tuple[int, int],
     tmp_path: pathlib.Path,
@@ -936,6 +973,7 @@ async def test_invalid_template_error_is_visible_in_small_terminal(
 
 
 @pytest.mark.parametrize("size", [(40, 12), (30, 10)])
+@pytest.mark.slow
 async def test_review_and_edit_are_reachable_in_small_terminal(
     size: tuple[int, int],
     tmp_path: pathlib.Path,

@@ -351,17 +351,15 @@ class SearchInput(_BoundedInput):
             self.focus()
 
     @_runtime.pump_only
-    def _watch_value(self, value: str) -> None:
+    def _capture_query_draft_value(self, value: str) -> None:
         """Remember ordinary query edits while slash invocations stay transient."""
-        super()._watch_value(value)
         if not value.lstrip().startswith("/"):
             self._query_draft_value = value
             self._query_draft_selection = self.selection
 
     @_runtime.pump_only
-    def _watch_selection(self, selection: Selection) -> None:
+    def _capture_query_draft_selection(self, selection: Selection) -> None:
         """Retain the exact query cursor or selection independently of edits."""
-        super()._watch_selection(selection)
         if not self.value.lstrip().startswith("/"):
             self._query_draft_value = self.value
             self._query_draft_selection = selection
@@ -383,6 +381,8 @@ class SearchInput(_BoundedInput):
         ``border_title`` at runtime to surface live state (scope, agent,
         mode) instead. Alignment and color live in ``styles.tcss``.
         """
+        self.watch(self, "value", self._capture_query_draft_value, init=False)
+        self.watch(self, "selection", self._capture_query_draft_selection, init=False)
         if self._label is not None:
             self.border_title = self._label
         self._sync_submit_hint(self.value)

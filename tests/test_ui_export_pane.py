@@ -13,7 +13,7 @@ from textual.widgets.input import Selection
 
 import agentgrep.ui.widgets as widgets
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
-from tests._agentgrep_tui_support import _build_empty_ui_app
+from tests._tui_export_support import _build_empty_ui_app
 from tests.test_ui_export import _load_records, _record, _static_text, _wait_for
 
 pytestmark = pytest.mark.tui

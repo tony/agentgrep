@@ -30,6 +30,8 @@ from agentgrep.ui._export_preferences import (
     save_export_preferences,
 )
 
+pytestmark = pytest.mark.tui
+
 DEFAULT_TEMPLATE = "{date} {time} - {title}.md"
 
 
