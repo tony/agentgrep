@@ -92,6 +92,17 @@ def test_query_highlighter_empty_is_noop() -> None:
     assert not text.spans
 
 
+def test_query_highlighter_styles_both_empty_phrase_quotes() -> None:
+    """An empty quoted phrase keeps both delimiters visible."""
+    text = Text('""')
+    QueryHighlighter().highlight(text)
+
+    assert [(span.start, span.end, str(span.style)) for span in text.spans] == [
+        (0, 1, "color(245)"),
+        (1, 2, "color(245)"),
+    ]
+
+
 def test_query_highlighter_light_palette_uses_readable_semantic_hues() -> None:
     """The light palette preserves syntax roles with dark foregrounds."""
     spans = _styled_spans(

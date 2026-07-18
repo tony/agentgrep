@@ -89,7 +89,7 @@ class QueryHighlighter(Highlighter):
                 text.stylize(self._role_styles["punct"], start, start + 1)
                 if end - start > 2:
                     text.stylize(self._role_styles["value"], start + 1, end - 1)
-                    text.stylize(self._role_styles["punct"], end - 1, end)
+                text.stylize(self._role_styles["punct"], end - 1, end)
                 continue
             style = self._role_styles.get(role)
             if style is not None:
