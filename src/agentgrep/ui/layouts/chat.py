@@ -1,4 +1,4 @@
-"""``ChatLayout`` — a Claude-Code/pi-style conversation transcript layout (ADR 0014).
+"""``ChatLayout`` — a Claude-Code/pi-style conversation transcript layout (ADR 0015).
 
 The chat layout presents a search as a conversation: each submitted query is a
 ``you ▸ …`` turn and the matches stream in beneath it as bounded result bubbles,
@@ -31,6 +31,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Static
 
 from agentgrep._text import (
+    DETAIL_BODY_MAX_CHARS,
     DETAIL_BODY_MAX_LINES,
     detect_content_format,
     format_compact_path,
@@ -48,7 +49,7 @@ from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui.layouts._base import LayoutScreen
-from agentgrep.ui.widgets import ResultsHeader, SearchInput, SearchRequested
+from agentgrep.ui.widgets import FilterHeader, SearchInput, SearchRequested
 from agentgrep.ui.widgets.breadcrumb import RefinementBreadcrumb
 from agentgrep.ui.widgets.transcript import ConversationLog
 from agentgrep.ui.widgets.turns import (
@@ -113,10 +114,11 @@ class ChatLayout(LayoutScreen):
         self._pending_turn_text = ""
         self._renderer: TurnRenderer | None = None
         self._log: ConversationLog | None = None
-        self._status: ResultsHeader | None = None
+        self._status: FilterHeader | None = None
         self._breadcrumb: RefinementBreadcrumb | None = None
         self._search_input: SearchInput | None = None
 
+    @_runtime.pump_only
     def compose(self) -> cabc.Iterator[t.Any]:
         """Build the tree: a transcript over a status line and a docked prompt."""
         initial = (
@@ -126,7 +128,7 @@ class ChatLayout(LayoutScreen):
         )
         yield ConversationLog(id="transcript")
         yield RefinementBreadcrumb(id="breadcrumb")
-        yield ResultsHeader("chat", id="chat-status")
+        yield FilterHeader("chat", id="chat-status")
         yield SearchInput(
             value=initial,
             placeholder="search your prompt history",
@@ -135,10 +137,11 @@ class ChatLayout(LayoutScreen):
         )
         yield Footer()
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Cache widgets and build the renderer, then attach the workflow."""
         self._log = self.query_one("#transcript", ConversationLog)
-        self._status = self.query_one("#chat-status", ResultsHeader)
+        self._status = self.query_one("#chat-status", FilterHeader)
         self._breadcrumb = self.query_one("#breadcrumb", RefinementBreadcrumb)
         self._search_input = self.query_one("#prompt", SearchInput)
         self._search_input.cursor_blink = False
@@ -147,15 +150,18 @@ class ChatLayout(LayoutScreen):
         super().on_mount()
         self._search_input.focus()
 
+    @_runtime.pump_only
     def on_search_requested(self, message: SearchRequested) -> None:
         """Primary input submitted — capture the literal text, then route it."""
         self._pending_turn_text = message.payload.text.strip()
         self._workflow.on_query(self, self._pending_turn_text)
 
+    @_runtime.pump_only
     def action_stop_search(self) -> None:
         """``Esc``: cooperatively stop the in-flight search."""
         self.request_cancel()
 
+    @_runtime.pump_only
     def action_open_detail(self) -> None:
         """``Enter`` on a focused result bubble opens its record detail."""
         turn = getattr(self.focused, "turn", None)
@@ -240,13 +246,10 @@ class ChatLayout(LayoutScreen):
         self._filter_generation += 1
         generation = self._filter_generation
         self.run_worker(
-            lambda captured=generation, recs=records, m=matcher: self._run_block_filter(
-                captured,
-                recs,
-                m,
-            ),
+            functools.partial(self._run_block_filter, generation, records, matcher),
             name="filter",
             group="filter",
+            description="filter chat results",
             thread=True,
             exclusive=True,
         )
@@ -327,14 +330,10 @@ class ChatLayout(LayoutScreen):
 
     @_runtime.pump_only
     def _apply_progress(self, snapshot: ProgressSnapshot) -> None:
-        """Store the scan fraction + phase; the header's timer repaints it."""
+        """Store the scan snapshot; the header's timer repaints it."""
         if self._status is None:
             return
-        if snapshot.phase == "scanning" and snapshot.current is not None and snapshot.total:
-            fraction: float | None = snapshot.current / snapshot.total
-        else:
-            fraction = None
-        self._status.set_progress(fraction, snapshot.phase)
+        self._status.set_snapshot(snapshot)
 
     @_runtime.pump_only
     def _apply_finished(
@@ -463,7 +462,7 @@ class ChatLayout(LayoutScreen):
 
 
 class DetailScreen(ModalScreen[None]):
-    """A modal that shows one record's header and format-aware body (ADR 0014).
+    """A modal that shows one record's header and format-aware body (ADR 0015).
 
     Self-contained (it does not reuse the HUD-coupled ``DetailScroll``): a plain
     scroll over a :class:`~textual.widgets.Static`. A small body renders inline;
@@ -496,16 +495,22 @@ class DetailScreen(ModalScreen[None]):
         self._query = query
         self._theme_variables = theme_variables
 
+    @_runtime.pump_only
     def compose(self) -> cabc.Iterator[t.Any]:
         """Yield a bordered scroll panel over a single content ``Static``."""
         with VerticalScroll(id="detail-modal"):
             yield Static(id="detail-body")
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Show the header now; render the body inline or off the pump by size."""
         body_widget = self.query_one("#detail-body", Static)
         header = self._build_header()
-        body_truncated = truncate_lines(self._record.text, DETAIL_BODY_MAX_LINES)
+        body_truncated = truncate_lines(
+            self._record.text,
+            DETAIL_BODY_MAX_LINES,
+            max_chars=DETAIL_BODY_MAX_CHARS,
+        )
         if len(body_truncated) <= self._ASYNC_BODY_THRESHOLD:
             body_widget.update(_RichGroup(header, self._build_detail_body(body_truncated)))
             return
@@ -514,6 +519,7 @@ class DetailScreen(ModalScreen[None]):
             functools.partial(self._build_body_in_thread, header, body_truncated),
             name="detail",
             group="detail",
+            description="render chat detail",
             thread=True,
             exclusive=True,
         )
