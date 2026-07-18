@@ -108,6 +108,9 @@ dev = [
   "pytest-asyncio",
   "pytest-rerunfailures>=16.2",
   "pytest-watcher",
+  # Insights tests use real NumPy arrays while injecting the heavier optional
+  # model and vector-store backends.
+  "numpy>=1.24",
   # pytest-xdist powers the opt-in parallel `just test-fast` path. The docs
   # sandbox reuses the project venv read-only (UV_NO_SYNC) so workers skip
   # the cold per-process `uv run` build that otherwise times out in parallel.
