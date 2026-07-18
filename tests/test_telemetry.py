@@ -2640,6 +2640,254 @@ async def test_mcp_validate_query_span_redacts_query_arg() -> None:
     assert "secret-query" not in str([record.attributes for record in backend.log_records])
 
 
+async def test_fastmcp_native_spans_are_sanitized_before_export(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native FastMCP spans retain topology without exporting client input."""
+    import fastmcp.client.telemetry as fastmcp_client_telemetry
+    import fastmcp.server.telemetry as fastmcp_server_telemetry
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import SpanKind
+
+    import agentgrep._telemetry as telemetry
+    from agentgrep import _telemetry_otel, mcp as agentgrep_mcp
+
+    class Noop:
+        def add(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def record(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def force_flush(self, *args: object, **kwargs: object) -> bool:
+            return True
+
+        def shutdown(self) -> None:
+            return None
+
+    marker = "synthetic-private-fastmcp-marker"
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(sampler=_telemetry_otel._AppRootSampler())
+    provider.add_span_processor(
+        _telemetry_otel._SanitizingSpanProcessor(SimpleSpanProcessor(exporter)),
+    )
+    fastmcp_tracer = provider.get_tracer(
+        "fastmcp",
+        marker,
+        f"https://example.invalid/{marker}",
+        {marker: marker},
+    )
+    monkeypatch.setattr(
+        fastmcp_client_telemetry,
+        "get_tracer",
+        lambda version=None: fastmcp_tracer,
+    )
+    monkeypatch.setattr(
+        fastmcp_server_telemetry,
+        "get_tracer",
+        lambda version=None: fastmcp_tracer,
+    )
+    noop = Noop()
+    backend = _telemetry_otel.OtelTelemetryBackend(
+        tracer=provider.get_tracer("agentgrep"),
+        tracer_provider=provider,
+        meter=noop,
+        meter_provider=noop,
+        logger_provider=noop,
+        logging_handler=logging.NullHandler(),
+        span_counter=noop,
+        span_duration=noop,
+        instrumentations=(),
+        profiles_started=False,
+    )
+
+    telemetry.configure_backend(backend)
+    try:
+        with _clean_native_otel_context(), telemetry.span("agentgrep.cli.invocation"):
+            async with Client(agentgrep_mcp.build_mcp_server()) as client:
+                with pytest.raises(ToolError, match=marker):
+                    await client.call_tool(marker, {marker: marker})
+    finally:
+        telemetry.configure_backend(None)
+        provider.shutdown()
+
+    spans = exporter.get_finished_spans()
+    native_spans = [
+        span
+        for span in spans
+        if span.instrumentation_scope is not None and span.instrumentation_scope.name == "fastmcp"
+    ]
+    assert native_spans
+    assert all(
+        span.instrumentation_scope is not None
+        and span.instrumentation_scope.name == "fastmcp"
+        and span.instrumentation_scope.version is None
+        and span.instrumentation_scope.schema_url == ""
+        and not span.instrumentation_scope.attributes
+        for span in native_spans
+    )
+    assert {span.name for span in native_spans} <= {
+        "fastmcp.prompts.get",
+        "fastmcp.prompts.list",
+        "fastmcp.request",
+        "fastmcp.resources.list",
+        "fastmcp.resources.read",
+        "fastmcp.resources.templates.list",
+        "fastmcp.tools.call",
+        "fastmcp.tools.list",
+    }
+
+    root_span = next(span for span in spans if span.name == "agentgrep.cli.invocation")
+    tool_span = next(span for span in spans if span.name == "mcp.server.tool")
+    native_server_span = next(
+        span
+        for span in native_spans
+        if span.kind is SpanKind.SERVER
+        and span.attributes is not None
+        and span.attributes.get("mcp.method.name") == "tools/call"
+    )
+    native_client_span = next(
+        span
+        for span in native_spans
+        if span.kind is SpanKind.CLIENT
+        and span.attributes is not None
+        and span.attributes.get("mcp.method.name") == "tools/call"
+    )
+    assert all(span.context.trace_id == root_span.context.trace_id for span in spans)
+    assert all(span.parent is not None for span in spans if span is not root_span)
+    assert native_server_span.parent is not None
+    assert native_server_span.parent.span_id == tool_span.context.span_id
+    assert native_client_span.parent is not None
+    assert native_client_span.parent.span_id == root_span.context.span_id
+    assert dict(native_server_span.attributes or {}) == {
+        "error.type": "Exception",
+        "fastmcp.component.type": "tool",
+        "mcp.method.name": "tools/call",
+    }
+    assert dict(native_client_span.attributes or {}) == {
+        "error.type": "tool_error",
+        "mcp.method.name": "tools/call",
+    }
+    assert native_server_span.status.description is None
+    assert native_client_span.status.description is None
+    assert len(native_server_span.events) == 1
+    assert native_server_span.events[0].name == "exception"
+    assert dict(native_server_span.events[0].attributes or {}) == {
+        "exception.type": "Exception",
+    }
+    export_payload = [
+        (
+            span.name,
+            span.instrumentation_scope,
+            dict(span.attributes or {}),
+            span.status.description,
+            [(event.name, dict(event.attributes or {})) for event in span.events],
+        )
+        for span in spans
+    ]
+    assert marker not in str(export_payload)
+
+
+def test_sanitizing_span_processor_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Processor failures neither escape nor fall back to a raw span."""
+    from opentelemetry.context import Context
+    from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
+
+    from agentgrep import _telemetry_otel
+
+    class ProcessorFailure(RuntimeError):
+        """Synthetic processor failure."""
+
+    class ThrowingProcessor(SpanProcessor):
+        def __init__(self) -> None:
+            self.ended: list[ReadableSpan] = []
+
+        def on_start(
+            self,
+            span: Span,
+            parent_context: Context | None = None,
+        ) -> None:
+            del span, parent_context
+            raise ProcessorFailure
+
+        def on_end(self, span: ReadableSpan) -> None:
+            self.ended.append(span)
+            raise ProcessorFailure
+
+        def shutdown(self) -> None:
+            raise ProcessorFailure
+
+        def force_flush(self, timeout_millis: int = 30_000) -> bool:
+            del timeout_millis
+            raise ProcessorFailure
+
+    def fail_sanitize(span: ReadableSpan) -> ReadableSpan:
+        del span
+        raise ProcessorFailure
+
+    raw_span = ReadableSpan("tools/call private")
+    delegate = ThrowingProcessor()
+    processor = _telemetry_otel._SanitizingSpanProcessor(delegate)
+    monkeypatch.setattr(_telemetry_otel, "_sanitized_export_span", fail_sanitize)
+
+    processor.on_start(t.cast("Span", object()))
+    processor.on_end(raw_span)
+    processor.shutdown()
+
+    assert delegate.ended == []
+    assert processor.force_flush() is False
+    monkeypatch.setattr(_telemetry_otel, "_sanitized_export_span", lambda span: span)
+    processor.on_end(raw_span)
+    assert delegate.ended == [raw_span]
+
+
+def test_pyroscope_processor_receives_project_app_roots_only() -> None:
+    """The Pyroscope boundary never observes dependency or child names."""
+    from opentelemetry.context import Context
+    from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor, TracerProvider
+
+    from agentgrep import _telemetry_otel
+
+    class RecordingProcessor(SpanProcessor):
+        def __init__(self) -> None:
+            self.started: list[tuple[str, str]] = []
+            self.ended: list[tuple[str, str]] = []
+
+        def on_start(self, span: Span, parent_context: Context | None = None) -> None:
+            del parent_context
+            scope = span.instrumentation_scope
+            self.started.append((span.name, "" if scope is None else scope.name))
+
+        def on_end(self, span: ReadableSpan) -> None:
+            scope = span.instrumentation_scope
+            self.ended.append((span.name, "" if scope is None else scope.name))
+
+    delegate = RecordingProcessor()
+    provider = TracerProvider()
+    provider.add_span_processor(_telemetry_otel._AppRootSpanProcessor(delegate))
+    project_tracer = provider.get_tracer("agentgrep")
+    dependency_tracer = provider.get_tracer("fastmcp")
+    try:
+        with project_tracer.start_as_current_span("agentgrep.cli.invocation"):
+            pass
+        with dependency_tracer.start_as_current_span("agentgrep.cli.invocation"):
+            pass
+        with project_tracer.start_as_current_span("synthetic-private-span"):
+            pass
+    finally:
+        provider.shutdown()
+
+    expected = [("agentgrep.cli.invocation", "agentgrep")]
+    assert delegate.started == expected
+    assert delegate.ended == expected
+
+
 async def test_mcp_list_tools_gets_request_root() -> None:
     """MCP list operations should not rely on tool-only roots or logs."""
     from fastmcp import Client
