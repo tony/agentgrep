@@ -11,12 +11,16 @@ not packaged-user setup.
 `AGENTGREP_OTEL` is the only project environment switch that turns agentgrep
 OpenTelemetry on. Endpoint configuration still uses the standard OTel and
 backend variables, such as `OTEL_EXPORTER_OTLP_ENDPOINT`,
-`OTEL_EXPORTER_OTLP_TIMEOUT`, and `PYROSCOPE_SERVER_ADDRESS`.
+`OTEL_EXPORTER_OTLP_TIMEOUT`, and `PYROSCOPE_SERVER_ADDRESS`; endpoint variables
+alone do not opt agentgrep in. `OTEL_SDK_DISABLED=true` disables setup before
+SDK or resource work. Standard per-signal
+`OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` values suppress those exporters.
 
-When `AGENTGREP_OTEL` is enabled, traces, metrics, logs, and profiles should be
-visible. Do not add another agentgrep-specific feature flag to hide one signal
-for local QA. If the debug run has `AGENTGREP_DEBUG_SESSION_ID`, all four
-signals must carry enough run identity to prove coverage in Grafana.
+When `AGENTGREP_OTEL` is enabled, every signal not disabled through its standard
+OTel control should be visible. Do not add another agentgrep-specific feature
+flag to hide one signal for local QA. If the debug run has
+`AGENTGREP_DEBUG_SESSION_ID`, enabled signals must carry enough run identity to
+prove coverage in Grafana.
 
 Packaged users stay quiet unless they explicitly enable telemetry. OTel SDK
 setup, exporter failures, missing Docker, missing LGTM, and closed OTLP
@@ -110,11 +114,11 @@ Benchmark timings are multiplied by warmups, timed samples, command count, and
 commit count. A `profile-engine-*` benchmark row has an extra profile capture
 after timing; that capture explains span shape but is not part of `samples`.
 
-Live OTel adds process-level setup and shutdown work. Each process configures
+Explicit live OTel adds process-level setup and shutdown work. Each process configures
 the SDK, installs live/debug auto-instrumentation, starts Pyroscope when
-available, exports OTLP spans/logs/metrics, and flushes providers at shutdown.
-The timeout is intentionally short so a missing collector does not break the
-app.
+available, exports enabled OTLP spans/logs/metrics, and lets each provider own
+its single bounded shutdown drain. The timeout is intentionally short so a
+missing collector does not break the app.
 
 Live mode exports metrics with **delta** temporality so the LGTM collector's
 `deltatocumulative` processor can sum each one-shot process's increment into a
@@ -182,12 +186,12 @@ span ids ride the OTel log record. This does not install console handlers or
 change packaged-user output; trace-linked logs and their fields are queryable in
 Loki without a query-stage JSON parse.
 
-Passive local telemetry (a git checkout with `AGENTGREP_OTEL` unset) still
-exports traces, metrics, and logs but skips Pyroscope and auto-instrumentation
-so an in-repo `agentgrep --help` stays fast. Setting `AGENTGREP_OTEL`
-explicitly (or passing an explicit mode) opts into all four signals, including
-profiles. Asyncio auto-instrumentation therefore runs only for explicit
-local/debug/live runs. SQLite spans
+Telemetry stays off when `AGENTGREP_OTEL` is unset, including in a source
+checkout, so ordinary `agentgrep --help` does not initialize an SDK or contact
+an implicit collector. Setting `AGENTGREP_OTEL` explicitly (or passing an
+explicit mode) opts into telemetry, including profiles; standard per-signal
+`none` values can disable individual exporters. Asyncio auto-instrumentation
+therefore runs only for explicit local/debug/live runs. SQLite spans
 come solely from the project `sqlite3.Connection` shortcut factory, which wraps
 the `Connection.execute` path agentgrep uses for source parsing;
 `SQLite3Instrumentor` only covers the cursor path agentgrep never takes, so it
