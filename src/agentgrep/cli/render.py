@@ -16,6 +16,7 @@ import logging
 import pathlib
 import sys
 import time
+import typing as t
 
 from agentgrep import _telemetry, run_ui
 from agentgrep._engine import iter_find_events, iter_search_events, run_search_result
@@ -53,7 +54,6 @@ from agentgrep.progress import (
     SearchProgress,
     noop_search_progress,
 )
-from agentgrep.query.compile import CompiledQuery
 from agentgrep.records import (
     AGENT_CHOICES,
     ColorMode,
@@ -67,6 +67,9 @@ from agentgrep.records import (
 from agentgrep.results import RunSummary
 
 logger = logging.getLogger(__name__)
+
+if t.TYPE_CHECKING:
+    from agentgrep.query.compile import CompiledQuery
 
 __all__ = [
     "GrepSummary",
