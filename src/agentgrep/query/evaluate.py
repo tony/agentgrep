@@ -515,7 +515,10 @@ def _record_timestamp_as_datetime(timestamp: str | None) -> dt.datetime | None:
     if timestamp is None:
         return None
     try:
-        moment = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        # Global replacement preserves the existing store timestamp vocabulary.
+        moment = dt.datetime.fromisoformat(
+            timestamp.replace("Z", "+00:00")  # noqa: FURB162
+        )
     except ValueError:
         return None
     if moment.tzinfo is None:
