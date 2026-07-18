@@ -109,7 +109,10 @@ _DOCS_SUITE.register_collector(JustfileRecipeCollector(recipe_names={"doctest"})
 _DOCS_SUITE.register_evaluator("console", ConsoleCommandEvaluator(sandbox=_DOCS_SANDBOX))
 _DOCS_SUITE.register_evaluator("python-page", PythonPageEvaluator(sandbox=_DOCS_SANDBOX))
 _DOCS_SUITE.register_evaluator("fastmcp-config", FastMCPConfigEvaluator(project_root=_REPO_ROOT))
-_DOCS_SUITE.register_evaluator("just-recipe", SphinxDoctestEvaluator(project_root=_REPO_ROOT))
+_DOCS_SUITE.register_evaluator(
+    "just-recipe",
+    SphinxDoctestEvaluator(project_root=_REPO_ROOT, timeout=120.0),
+)
 
 pytest_collect_file = _DOCS_SUITE.pytest_collect_file
 
