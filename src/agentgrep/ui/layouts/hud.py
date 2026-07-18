@@ -26,9 +26,6 @@ from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
 from textual.binding import Binding, BindingType
 from textual.containers import Center, Horizontal, Vertical
-from textual.content import Content
-from textual.reactive import reactive
-from textual.style import Style
 from textual.timer import Timer
 from textual.widgets import Footer, Static
 from textual.worker import Worker, WorkerCancelled
@@ -56,7 +53,7 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _history, _runtime, theme as ui_theme
+from agentgrep.ui import _history, _runtime, _streaming, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
@@ -73,7 +70,6 @@ from agentgrep.ui.format import scroll_percent
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import (
-    WELCOME_QUERY_INDEX_META,
     CompletionDropdown,
     DetailFindInput,
     DetailFindRequested,
@@ -97,6 +93,13 @@ from agentgrep.ui.widgets import (
     WelcomeExamples,
     WelcomeQuerySelected,
 )
+from agentgrep.ui.widgets.welcome import (
+    _WELCOME_BRAND_SHINE,
+    _WELCOME_QUERIES,
+    _WELCOME_SHINE_INTERVAL,
+    _welcome_query_examples,
+    _WelcomeWordmark,
+)
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
@@ -114,169 +117,7 @@ _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 _DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...]]
 _DetailBody = tuple[object, str]
 _DETAIL_RICH_FORMAT_MAX_CHARS = 2048
-_DETAIL_HIGHLIGHT_MAX_TERMS = 32
-_DETAIL_HIGHLIGHT_MAX_MATCHES = 256
-_DETAIL_HIGHLIGHT_MAX_TERM_CHARS = 256
-_DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS = 2048
-_STREAM_FILTER_MAX_TEXT_CHARS = 2 << 20
 _RichSyntaxType = _RichSyntax
-
-_WELCOME_QUERIES = (
-    "agent:claude",
-    "scope:all model:gpt*",
-    "role:user",
-    "timestamp:>2026-01-01",
-    '"exact phrase"',
-)
-_WELCOME_QUERY_ROWS = ((0, 1, 2), (3, 4))
-_WELCOME_BRAND_SHINE = (1, 2, 3, 4, 5, 4, 3, 2, 1)
-_WELCOME_SHINE_INTERVAL = 0.08
-
-
-def _welcome_wordmark(offset: int = 0) -> Content:
-    """Build one frame of the theme-aware welcome wordmark."""
-    return Content.assemble(
-        "Welcome to ",
-        *(
-            (
-                character,
-                "bold $ag-brand-shine-"
-                f"{_WELCOME_BRAND_SHINE[(index + offset) % len(_WELCOME_BRAND_SHINE)]}",
-            )
-            for index, character in enumerate("agentgrep")
-        ),
-    )
-
-
-class _WelcomeWordmark(Static):
-    """Fixed-size welcome wordmark with a paint-only shine frame."""
-
-    shine_offset: reactive[int] = reactive(0, layout=False, repaint=True)
-
-    @_runtime.pump_only
-    def render(self) -> Content:
-        """Render the current theme-token frame without changing geometry."""
-        return _welcome_wordmark(self.shine_offset)
-
-
-def _welcome_query_examples(highlighter: QueryHighlighter | None = None) -> Content:
-    """Build syntax-colored examples with bounded click metadata."""
-    examples = Text()
-    click_ranges: list[tuple[int, int, int]] = []
-    active_highlighter = highlighter or QueryHighlighter()
-    for row_number, row in enumerate(_WELCOME_QUERY_ROWS):
-        if row_number:
-            examples.append("\n")
-        for column, index in enumerate(row):
-            if column:
-                examples.append("   ")
-            query = _WELCOME_QUERIES[index]
-            hint = Text(query)
-            active_highlighter.highlight(hint)
-            start = len(examples)
-            examples.append_text(hint)
-            click_ranges.append((start, len(examples), index))
-
-    content = Content.from_rich_text(examples)
-    for start, end, index in click_ranges:
-        content = content.stylize(
-            Style.from_meta({WELCOME_QUERY_INDEX_META: index}),
-            start,
-            end,
-        )
-    return content
-
-
-def _bounded_literal_terms(
-    terms: cabc.Sequence[str],
-    *,
-    case_sensitive: bool,
-) -> tuple[str, ...]:
-    """Deduplicate decorative literal terms within a fixed presentation budget."""
-    result: list[str] = []
-    seen: set[str] = set()
-    total_chars = 0
-    for term in terms:
-        if not term or len(term) > _DETAIL_HIGHLIGHT_MAX_TERM_CHARS:
-            continue
-        key = term if case_sensitive else term.casefold()
-        if key in seen:
-            continue
-        if total_chars + len(term) > _DETAIL_HIGHLIGHT_MAX_TOTAL_TERM_CHARS:
-            break
-        seen.add(key)
-        result.append(term)
-        total_chars += len(term)
-        if len(result) >= _DETAIL_HIGHLIGHT_MAX_TERMS:
-            break
-    return tuple(result)
-
-
-def _stream_filter_chunks(
-    records: cabc.Sequence[SearchRecord],
-    *,
-    max_records: int,
-    max_chars: int,
-) -> cabc.Iterator[tuple[SearchRecord, ...]]:
-    """Yield record slices bounded by count and projected body characters."""
-    chunk: list[SearchRecord] = []
-    chunk_chars = 0
-    for record in records:
-        record_chars = min(len(record.text), max_chars)
-        if chunk and (len(chunk) >= max_records or chunk_chars + record_chars > max_chars):
-            yield tuple(chunk)
-            chunk = []
-            chunk_chars = 0
-        chunk.append(record)
-        chunk_chars += record_chars
-    if chunk:
-        yield tuple(chunk)
-
-
-def _apply_bounded_literal_highlights(
-    text: Text,
-    source: str,
-    terms: cabc.Sequence[str],
-    *,
-    case_sensitive: bool,
-    style: str,
-) -> None:
-    """Apply a bounded number of literal match spans to ``text``."""
-    flags = 0 if case_sensitive else re.IGNORECASE
-    remaining = _DETAIL_HIGHLIGHT_MAX_MATCHES
-    for term in _bounded_literal_terms(terms, case_sensitive=case_sensitive):
-        compiled = re.compile(re.escape(term), flags)
-        for match in compiled.finditer(source):
-            text.stylize(style, match.start(), match.end())
-            remaining -= 1
-            if remaining == 0:
-                return
-
-
-def _json_pretty_print_is_bounded(text: str) -> bool:
-    """Return whether two-space indentation has a conservative output budget."""
-    depth = 0
-    max_depth = 0
-    in_string = False
-    escaped = False
-    for char in text:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char in "[{":
-            depth += 1
-            max_depth = max(max_depth, depth)
-        elif char in "]}":
-            depth = max(0, depth - 1)
-    estimated_max = len(text) * (2 * max_depth + 3)
-    return estimated_max <= DETAIL_BODY_MAX_CHARS
 
 
 class HudLayout(LayoutScreen):
@@ -1256,10 +1097,10 @@ class HudLayout(LayoutScreen):
                 )
             else:
                 streaming = t.cast("StreamingAppLike", t.cast("object", self))
-                for record_chunk in _stream_filter_chunks(
+                for record_chunk in _streaming._stream_filter_chunks(
                     records,
                     max_records=self._APPLY_CHUNK_SIZE,
-                    max_chars=_STREAM_FILTER_MAX_TEXT_CHARS,
+                    max_chars=_streaming._STREAM_FILTER_MAX_TEXT_CHARS,
                 ):
                     worker = t.cast(
                         "Worker[tuple[SearchRecord, ...]]",
@@ -2182,7 +2023,7 @@ class HudLayout(LayoutScreen):
         """
         style = style if style is not None else self._match_style("filter")
         source = str(getattr(text, "plain", ""))
-        _apply_bounded_literal_highlights(
+        _streaming._apply_bounded_literal_highlights(
             text,
             source,
             self._filter_terms if terms is None else terms,
@@ -2216,7 +2057,7 @@ class HudLayout(LayoutScreen):
         safe_query_terms = (
             ()
             if effective_regex
-            else _bounded_literal_terms(
+            else _streaming._bounded_literal_terms(
                 query_terms,
                 case_sensitive=effective_case_sensitive,
             )
@@ -2225,7 +2066,7 @@ class HudLayout(LayoutScreen):
         result: _DetailBody
         if fmt == "json":
             formatted = body_text
-            if _json_pretty_print_is_bounded(body_text):
+            if _streaming._json_pretty_print_is_bounded(body_text):
                 with contextlib.suppress(RecursionError, ValueError):
                     formatted = json.dumps(
                         json.loads(body_text),
@@ -2254,7 +2095,7 @@ class HudLayout(LayoutScreen):
                 )
             else:
                 plain = Text(formatted, no_wrap=False)
-                _apply_bounded_literal_highlights(
+                _streaming._apply_bounded_literal_highlights(
                     plain,
                     formatted,
                     safe_query_terms,
@@ -2273,7 +2114,7 @@ class HudLayout(LayoutScreen):
                 renderable = _RichMarkdown(body_text, code_theme=syntax_theme)
             else:
                 plain = Text(body_text, no_wrap=False)
-                _apply_bounded_literal_highlights(
+                _streaming._apply_bounded_literal_highlights(
                     plain,
                     body_text,
                     safe_query_terms,
@@ -2289,7 +2130,7 @@ class HudLayout(LayoutScreen):
             result = (renderable, body_text)
         else:
             highlighted = Text(body_text, no_wrap=False)
-            _apply_bounded_literal_highlights(
+            _streaming._apply_bounded_literal_highlights(
                 highlighted,
                 body_text,
                 safe_query_terms,
@@ -2467,7 +2308,7 @@ class HudLayout(LayoutScreen):
             self._apply_search_highlight(text)
         else:
             text = Text(source, no_wrap=False)
-            _apply_bounded_literal_highlights(
+            _streaming._apply_bounded_literal_highlights(
                 text,
                 source,
                 () if self.search_query.regex else self.search_query.terms,
@@ -2489,7 +2330,7 @@ class HudLayout(LayoutScreen):
         """
         if self.search_query.regex:
             return
-        _apply_bounded_literal_highlights(
+        _streaming._apply_bounded_literal_highlights(
             text,
             str(getattr(text, "plain", "")),
             self.search_query.terms,

@@ -4091,6 +4091,7 @@ async def test_detail_highlight_spans_have_fixed_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Repeated literal matches cannot create an unbounded Rich span list."""
+    from agentgrep.ui import _streaming
     from agentgrep.ui.layouts import hud as hud_module
 
     app = _build_empty_ui_app(tmp_path, monkeypatch)
@@ -4098,10 +4099,10 @@ async def test_detail_highlight_spans_have_fixed_budget(
         await pilot.pause()
         renderable, _source = app.screen._build_detail_body("a" * 19_000, ("a",))
         assert isinstance(renderable, hud_module.Text)
-        assert len(renderable.spans) == hud_module._DETAIL_HIGHLIGHT_MAX_MATCHES
+        assert len(renderable.spans) == _streaming._DETAIL_HIGHLIGHT_MAX_MATCHES
         assert (
-            hud_module._bounded_literal_terms(
-                ("x" * (hud_module._DETAIL_HIGHLIGHT_MAX_TERM_CHARS + 1),),
+            _streaming._bounded_literal_terms(
+                ("x" * (_streaming._DETAIL_HIGHLIGHT_MAX_TERM_CHARS + 1),),
                 case_sensitive=False,
             )
             == ()
@@ -5131,8 +5132,14 @@ async def test_detail_find_open_reuses_presented_text_highlights(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Opening find reuses the long plain-text body already highlighted off-pump."""
-    from agentgrep.ui.layouts import hud
+    """Opening find reuses the long plain-text body already highlighted off-pump.
+
+    Patch the defining module: hud calls
+    ``_streaming._apply_bounded_literal_highlights`` through the module
+    namespace, so patching ``ui._streaming`` intercepts every caller;
+    patching a ``hud`` alias would intercept nothing.
+    """
+    from agentgrep.ui import _streaming
 
     agentgrep = t.cast("t.Any", load_agentgrep_module())
     app = _build_empty_ui_app(tmp_path, monkeypatch)
@@ -5143,14 +5150,14 @@ async def test_detail_find_open_reuses_presented_text_highlights(
         "long",
     )
     highlight_calls = 0
-    real_highlight = hud._apply_bounded_literal_highlights
+    real_highlight = _streaming._apply_bounded_literal_highlights
 
     def counting_highlight(*args: t.Any, **kwargs: t.Any) -> None:
         nonlocal highlight_calls
         highlight_calls += 1
         real_highlight(*args, **kwargs)
 
-    monkeypatch.setattr(hud, "_apply_bounded_literal_highlights", counting_highlight)
+    monkeypatch.setattr(_streaming, "_apply_bounded_literal_highlights", counting_highlight)
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         app.screen.search_query = dataclasses.replace(
@@ -6666,7 +6673,7 @@ def test_stream_filter_chunks_bound_body_work(
     tmp_path: pathlib.Path,
 ) -> None:
     """Worker slices also cap projected body characters, not only rows."""
-    from agentgrep.ui.layouts.hud import (
+    from agentgrep.ui._streaming import (
         _STREAM_FILTER_MAX_TEXT_CHARS,
         _stream_filter_chunks,
     )

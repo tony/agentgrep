@@ -12,13 +12,13 @@ from textual.widgets import Static
 
 from agentgrep.query import build_query_from_input, compile_query, default_registry, parse_query
 from agentgrep.records import SearchQuery
-from agentgrep.ui.layouts.hud import (
+from agentgrep.ui.widgets import WelcomeQuerySelected
+from agentgrep.ui.widgets.welcome import (
     _WELCOME_QUERIES,
     _WELCOME_SHINE_INTERVAL,
     _welcome_query_examples,
     _welcome_wordmark,
 )
-from agentgrep.ui.widgets import WelcomeQuerySelected
 from tests.test_agentgrep import _build_empty_ui_app
 
 

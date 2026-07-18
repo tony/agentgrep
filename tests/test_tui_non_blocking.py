@@ -41,12 +41,12 @@ def _ui_source_trees() -> list[ast.AST]:
     Each pluggable layout (HUD, grep-log, …) carries its own streaming transport,
     so the no-blocking-calls guard scans the pump methods (``watch_*`` /
     ``on_key`` / ``on_mount`` / ``render`` / ``@pump_only``) of all of them, plus
-    the App-lifecycle shell and the leaf widgets.
+    the App-lifecycle shell, the shared streaming helpers, and the leaf widgets.
     """
     ui_dir = _APP_PATH.parent.parent
     layout_paths = sorted((ui_dir / "layouts").glob("*.py"))
     widget_paths = sorted((ui_dir / "widgets").glob("*.py"))
-    extra = [ui_dir / "_shell.py"]
+    extra = [ui_dir / "_shell.py", ui_dir / "_streaming.py"]
     return [
         ast.parse(path.read_text(encoding="utf-8"))
         for path in (*layout_paths, *extra, *widget_paths)
