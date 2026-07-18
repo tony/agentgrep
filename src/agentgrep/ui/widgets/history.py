@@ -4,8 +4,8 @@
 two-pane recall surface — a left list of past search queries (each row a
 relative-time prefix + the query, fuzzy-highlighted) and a right preview of the
 selected entry — with a bottom incremental filter and a footer hint. It owns all
-keys while open, dims the screen below, and ``dismiss(...)`` flows the chosen
-query (or ``None`` on cancel) back to the app, which fills the search box.
+keys while open, keeps the screen below visible, and ``dismiss(...)`` flows the
+chosen query (or ``None`` on cancel) back to the app, which fills the search box.
 
 The list is a capped, in-memory snapshot, so filtering currently runs
 synchronously on every keystroke (no worker, no disk). This is a deliberately
