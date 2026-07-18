@@ -54,10 +54,12 @@ from agentgrep.progress import (
     SearchProgress,
     noop_search_progress,
 )
-from agentgrep.query.compile import CompiledQuery
 from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord, SearchScope
 
 logger = logging.getLogger(__name__)
+
+if t.TYPE_CHECKING:
+    from agentgrep.query.compile import CompiledQuery
 
 __all__ = [
     "GrepSummary",
@@ -517,8 +519,8 @@ def _grep_candidate_compiled(args: GrepArgs) -> CompiledQuery | None:
         return compiled
     if compiled.source_predicate is None:
         return None
-    return CompiledQuery(
-        source_predicate=compiled.source_predicate,
+    return dataclasses.replace(
+        compiled,
         record_predicate=None,
         text_terms=(),
         is_pure_text=False,

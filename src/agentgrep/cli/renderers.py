@@ -309,7 +309,10 @@ def iter_match_lines(
                 if m.start() == m.end():
                     continue  # skip zero-width matches (e.g. `\b` alone)
                 spans.append((m.start(), m.end()))
-        if spans:
+        if args.invert_match:
+            if not spans:
+                yield line_number, line, []
+        elif spans:
             yield line_number, line, _merge_overlapping_spans(spans)
 
 
@@ -495,10 +498,15 @@ def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
         return path
     colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
     matches = list(iter_match_lines(record.text, args))
+    if args.invert_match and not matches:
+        return ""
 
     if args.only_matching:
         chunks: list[str] = []
         for _, line, spans in matches:
+            if args.invert_match:
+                chunks.append(line)
+                continue
             for start, end in spans:
                 chunks.append(line[start:end])
         return "\n".join(chunks)
@@ -506,6 +514,9 @@ def format_grep_record(record: SearchRecord, args: GrepArgs) -> str:
     if args.vimgrep:
         rows: list[str] = []
         for line_no, line, spans in matches:
+            if args.invert_match:
+                rows.append(f"{colors.path(path)}:{line_no}:{line}")
+                continue
             for start, _end in spans:
                 col = start + 1
                 rows.append(f"{colors.path(path)}:{line_no}:{col}:{line}")
