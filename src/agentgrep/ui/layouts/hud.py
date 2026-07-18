@@ -684,12 +684,9 @@ class HudLayout(LayoutScreen):
             pause=True,
         )
         self._sync_welcome_shine_timer()
-        # Focus the filter when a search is running, else the search box so the
-        # user can start typing immediately.
-        if not self._search_done:
-            self._filter_input.focus()
-        else:
-            self._search_input.focus()
+        # The primary search input stays visible in every launch state. Keep
+        # mount focus there even when an initial search hides the filter.
+        self._search_input.focus()
         self._update_pane_focus()
 
     def _set_empty_state(self, *, empty: bool) -> None:
