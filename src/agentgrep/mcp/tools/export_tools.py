@@ -136,6 +136,7 @@ def register(mcp: FastMCP) -> None:
             Field(description="Include prompt/history text in the artifact."),
         ] = False,
     ) -> ToolResult:
+        """Return selected refs as one NDJSON or Markdown TextContent artifact with structured export metadata."""  # noqa: E501
         try:
             request = ExportRecordsRequest(
                 refs=refs,
