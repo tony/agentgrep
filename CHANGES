@@ -42,6 +42,47 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Large explorer searches stay responsive (#127)
+
+The interactive explorer now streams and filters large result sets without
+building every row in advance. History recall, detail rendering, grep-style
+updates, and theme repaints remain usable while work continues, and canceled
+or superseded work can no longer repaint the current view.
+
+#### Owned themes cover the whole explorer (#127)
+
+`agentgrep ui` now includes agentgrep dark, light, and Tokyo Night themes with
+a first-run chooser and the existing `/theme` command. The selected theme is
+remembered across launches, including rapid changes made immediately before
+exit, while unrelated preferences remain intact.
+
+The same semantic palette now drives inputs, result rows, query and find
+highlights, JSON and Markdown details, and the welcome screen. Each profile is
+tested for readable contrast, and decorative motion respects terminal focus
+and reduced-animation preferences.
+
+#### The welcome screen provides runnable starting points (#127)
+
+The empty explorer now offers clickable, syntax-highlighted query examples and
+an explicit Enter-to-search cue. Its wordmark adapts to the active theme and
+motion policy, while the complete welcome experience remains reachable in
+compact terminals.
+
+### Fixes
+
+#### Search inputs and public contracts stay aligned (#127)
+
+Field-only and origin-only launch queries now keep keyboard focus on the
+visible primary input. Long or malformed input is bounded cleanly, terminal
+compatibility handling no longer leaks malformed mouse sequences into queries,
+and dumb terminals avoid automatic color escapes.
+
+CLI and MCP search descriptions, schemas, selector validation, and examples
+now match the behavior of the shared query engine. MCP catalog diagnostics also
+avoid exposing local backend paths.
+
 ## agentgrep 0.1.0a36 (2026-07-16)
 
 agentgrep 0.1.0a36 rebuilds the interactive explorer (`agentgrep ui`) around a
