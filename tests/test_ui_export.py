@@ -14,7 +14,6 @@ import pytest
 from textual.widgets import HelpPanel, Input, Static
 
 from agentgrep import identity, record_export
-from agentgrep.progress import SearchRequestedPayload
 from agentgrep.records import RecordPosition, SearchRecord
 from agentgrep.ui import _export_preferences, _runtime, app as ui_app
 from agentgrep.ui._export_preferences import (
@@ -25,16 +24,11 @@ from agentgrep.ui._export_preferences import (
     save_export_preferences,
 )
 from agentgrep.ui.layouts import hud as hud_module
-from agentgrep.ui.widgets import ExportPane, FilterCompleted, SearchRequested
+from agentgrep.ui.widgets import ExportPane, FilterCompleted
 from agentgrep.ui.widgets.directory_popup import ExportDirectoryPicker
-from tests.test_agentgrep_tui_identity import _build_empty_ui_app
+from tests._tui_export_support import _build_empty_ui_app, _search_requested
 
 pytestmark = pytest.mark.tui
-
-
-def _search_requested(text: str) -> SearchRequested:
-    """Build one search request for direct HUD handler coverage."""
-    return SearchRequested(payload=SearchRequestedPayload(text=text))
 
 
 def _record(

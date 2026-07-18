@@ -159,9 +159,7 @@ class HudLayout(_HudSearchBase):
     """Search box, streaming results list, detail pane, and status chrome."""
 
     ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[results|detail]"
-    EXTRA_SLASH_COMMANDS: t.ClassVar[tuple[commands.SlashCommand, ...]] = (
-        commands.export_commands()
-    )
+    EXTRA_SLASH_COMMANDS: t.ClassVar[tuple[commands.SlashCommand, ...]] = commands.export_commands()
 
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
