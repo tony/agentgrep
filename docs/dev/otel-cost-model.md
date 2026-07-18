@@ -167,16 +167,19 @@ Each observable MCP request opens an `mcp.server.request` root (and, for tool
 calls, an `mcp.server.tool` child) that owns the trace, carries the redacted
 `agentgrep_*` / `agentgrep_mcp_args.*` attributes, and emits the audit log. The
 pinned `fastmcp` (3.x) auto-emits its own `SpanKind.SERVER` spans (`tools/list`,
-`tools/call {name}`, etc.) carrying `mcp.method.name`, `gen_ai.tool.name`, and
-`mcp.session.id`, gated only by a global OTel `TracerProvider` being present —
-the same provider agentgrep installs. Those native SERVER spans nest directly
-under the agentgrep roots, so agentgrep does not compose its own. When the caller
-sends a `traceparent` in the request metadata, the request root inherits that
-context so the caller's trace links to agentgrep's. Stock MCP clients (including
-agentgrep's own CLI) do not inject one, so this inheritance fires only for a
-traceparent-propagating caller and is otherwise exercised by the inbound-context
-unit test. Raw arguments never reach the SERVER span (only the public tool name
-does).
+`tools/call {name}`, etc.), gated only by a global OTel `TracerProvider` being
+present — the same provider agentgrep installs. Before any configured trace
+processor receives them, agentgrep rebuilds those native spans as immutable
+privacy-safe views. Span names and attributes retain only finite MCP method,
+component, and error classifiers; tool and prompt names, resource URIs,
+component keys, session and user identifiers, exception messages, stack traces,
+and instrumentation-scope metadata are removed. Trace and span identifiers,
+parentage, timing, kind, and context-only links remain intact. Pyroscope receives
+only approved `agentgrep` app roots and never sees dependency span names. When a
+caller sends a `traceparent` in request metadata, the request root inherits that
+context so the caller's trace links to agentgrep's. FastMCP clients propagate an
+active trace context; callers without one start at the local request root. The
+inbound-context unit test covers both paths.
 
 OTel log export keeps the plain log message as the record body and carries the
 redacted `agentgrep_*` extras as native OTel log attributes (Loki structured
