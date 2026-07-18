@@ -757,4 +757,6 @@ def should_enable_color(color_mode: ColorMode, stream: t.TextIO) -> bool:
         return True
     if os.environ.get("FORCE_COLOR"):
         return True
+    if os.environ.get("TERM", "").lower() == "dumb":
+        return False
     return bool(getattr(stream, "isatty", lambda: False)())

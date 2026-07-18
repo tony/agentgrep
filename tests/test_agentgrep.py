@@ -10416,6 +10416,23 @@ def test_progress_force_color_enables_auto_for_non_tty(
     assert "Searching bliss" in strip_ansi(out)
 
 
+def test_auto_color_disables_dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auto mode does not emit SGR escapes to a terminal with no color support."""
+    agentgrep = t.cast("t.Any", load_agentgrep_module())
+
+    class DumbTerminal(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "dumb")
+
+    colors = agentgrep.AnsiColors.for_stream("auto", DumbTerminal())
+
+    assert not colors.enabled
+
+
 class ProgressLineCase(t.NamedTuple):
     """Formatting case for single-line search progress."""
 
