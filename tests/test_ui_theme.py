@@ -418,7 +418,7 @@ async def test_themes_composite_queries_against_matching_canvases(
 
 @pytest.mark.parametrize(
     ("theme_name", "field_style"),
-    (("textual-dark", "color(79)"), ("textual-light", "#007f7f")),
+    [("textual-dark", "color(79)"), ("textual-light", "#007f7f")],
 )
 async def test_switch_to_builtin_theme_does_not_crash(
     tmp_path: pathlib.Path,

@@ -158,7 +158,7 @@ def test_grep_column_default_is_false() -> None:
 
 @pytest.mark.parametrize(
     "flag",
-    ("--limit", "-m", "--max-count"),
+    ["--limit", "-m", "--max-count"],
     ids=("limit", "short-max-count-alias", "long-max-count-alias"),
 )
 def test_grep_limit_aliases_propagate(flag: str) -> None:

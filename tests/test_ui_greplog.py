@@ -228,11 +228,11 @@ async def test_greplog_renders_lifecycle_and_heartbeat_progress(
 
 @pytest.mark.parametrize(
     ("record_count", "expected"),
-    (
+    [
         (0, "scanning 3/82…"),
         (1, "scanning 3/82 · 1 record…"),
         (128, "scanning 3/82 · 128 records…"),
-    ),
+    ],
     ids=("zero", "singular", "plural"),
 )
 def test_greplog_scanning_text_uses_record_grammar(

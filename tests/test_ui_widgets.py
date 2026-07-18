@@ -252,11 +252,11 @@ async def test_search_input_submit_hint_tracks_nonblank_value() -> None:
 
 @pytest.mark.parametrize(
     "query",
-    (
+    [
         "x" * INPUT_MAX_LENGTH,
         "界" * INPUT_MAX_LENGTH,
         "e\N{COMBINING ACUTE ACCENT}" * (INPUT_MAX_LENGTH // 2),
-    ),
+    ],
     ids=("ascii", "wide", "combining"),
 )
 async def test_search_input_submit_hint_fits_supported_minimum_width(query: str) -> None:
