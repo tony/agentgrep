@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections.abc as cabc
 import concurrent.futures
 import contextlib
+import gc
 import json
 import logging
 import os
@@ -521,6 +522,394 @@ def test_engine_event_streams_emit_structured_trace_linked_logs(
     )
 
 
+def test_engine_event_streams_restore_the_caller_context_after_each_yield(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Search and find streams must not leave their operation span active."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="context isolation signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            caller_span_id = telemetry.current_span_id()
+            search_stream = t.cast(
+                "cabc.Generator[object]",
+                agentgrep.iter_search_events(
+                    home,
+                    query,
+                    backends=agentgrep.BackendSelection(None, None, None),
+                ),
+            )
+            find_stream = t.cast(
+                "cabc.Generator[object]",
+                agentgrep.iter_find_events(
+                    home,
+                    ("codex",),
+                    pattern="sessions",
+                    limit=10,
+                    backends=agentgrep.BackendSelection(None, None, None),
+                ),
+            )
+
+            _ = next(search_stream)
+            assert telemetry.current_span_id() == caller_span_id
+            _ = next(find_stream)
+            assert telemetry.current_span_id() == caller_span_id
+
+            search_stream.close()
+            assert telemetry.current_span_id() == caller_span_id
+            find_stream.close()
+            assert telemetry.current_span_id() == caller_span_id
+    finally:
+        telemetry.configure_backend(None)
+
+    operation_spans = {
+        span.name: span
+        for span in backend.finished_spans
+        if span.name in {"agentgrep.search.run", "agentgrep.find.run"}
+    }
+    assert set(operation_spans) == {"agentgrep.search.run", "agentgrep.find.run"}
+    assert {span.parent_id for span in operation_spans.values()} == {caller_span_id}
+    assert {span.attributes["agentgrep_outcome"] for span in operation_spans.values()} == {
+        "cancelled",
+    }
+
+
+def test_engine_event_streams_retain_their_first_consumption_context(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A stream adopts its first consumer, then retains that context."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="consumption context signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        with telemetry.span("agentgrep.stream.created", agentgrep_surface="test"):
+            creation_span_id = telemetry.current_span_id()
+            search_stream = agentgrep.iter_search_events(
+                home,
+                query,
+                backends=agentgrep.BackendSelection(None, None, None),
+            )
+            find_stream = agentgrep.iter_find_events(
+                home,
+                ("codex",),
+                pattern="sessions",
+                limit=10,
+                backends=agentgrep.BackendSelection(None, None, None),
+            )
+
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            consumer_span_id = telemetry.current_span_id()
+            _ = next(search_stream)
+            _ = next(find_stream)
+            assert telemetry.current_span_id() == consumer_span_id
+
+        assert telemetry.current_span_id() is None
+        _ = next(search_stream)
+        _ = next(find_stream)
+        assert telemetry.current_span_id() is None
+        search_stream.close()
+        find_stream.close()
+    finally:
+        telemetry.configure_backend(None)
+
+    assert creation_span_id is not None
+    assert consumer_span_id is not None
+    operation_spans = {
+        span.name: span
+        for span in backend.finished_spans
+        if span.name in {"agentgrep.search.run", "agentgrep.find.run"}
+    }
+    assert set(operation_spans) == {"agentgrep.search.run", "agentgrep.find.run"}
+    assert {span.parent_id for span in operation_spans.values()} == {consumer_span_id}
+    assert creation_span_id not in {span.parent_id for span in operation_spans.values()}
+
+
+def test_engine_event_stream_uses_backend_at_first_consumption(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Disabling telemetry before first resume leaves a new stream untraced."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="disabled backend signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    stream = agentgrep.iter_search_events(
+        home,
+        query,
+        backends=agentgrep.BackendSelection(None, None, None),
+    )
+
+    telemetry.configure_backend(None)
+
+    assert list(stream)
+    assert backend.finished_spans == []
+    assert backend.metric_records == []
+
+
+def test_engine_event_stream_failed_send_does_not_bind_context(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A rejected pre-start send leaves the later first consumer authoritative."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="failed send signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    rejected_backend = telemetry.InMemoryTelemetryBackend()
+    active_backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(rejected_backend)
+    stream = t.cast(
+        "cabc.Generator[object, object]",
+        agentgrep.iter_search_events(
+            home,
+            query,
+            backends=agentgrep.BackendSelection(None, None, None),
+        ),
+    )
+    try:
+        with telemetry.span("agentgrep.rejected.consumer", agentgrep_surface="test"):
+            rejected_span_id = telemetry.current_span_id()
+            with pytest.raises(TypeError):
+                stream.send(object())
+            assert telemetry.current_span_id() == rejected_span_id
+
+        telemetry.configure_backend(active_backend)
+        with telemetry.span("agentgrep.active.consumer", agentgrep_surface="cli"):
+            active_span_id = telemetry.current_span_id()
+            _ = next(stream)
+            assert telemetry.current_span_id() == active_span_id
+
+        stream.close()
+        assert telemetry.current_span_id() is None
+    finally:
+        telemetry.configure_backend(None)
+
+    assert rejected_span_id is not None
+    assert active_span_id is not None
+    assert {span.name for span in rejected_backend.finished_spans} == {
+        "agentgrep.rejected.consumer",
+    }
+    search_span = next(
+        span for span in active_backend.finished_spans if span.name == "agentgrep.search.run"
+    )
+    assert search_span.parent_id == active_span_id
+    assert search_span.parent_id != rejected_span_id
+    assert search_span.attributes["agentgrep_outcome"] == "cancelled"
+
+
+def test_engine_event_stream_throw_reaches_the_operation(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Injected stream errors must fail the operation rather than cancel it."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="injected failure signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            caller_span_id = telemetry.current_span_id()
+            streams = (
+                agentgrep.iter_search_events(
+                    home,
+                    query,
+                    backends=agentgrep.BackendSelection(None, None, None),
+                ),
+                agentgrep.iter_find_events(
+                    home,
+                    ("codex",),
+                    pattern="sessions",
+                    limit=10,
+                    backends=agentgrep.BackendSelection(None, None, None),
+                ),
+            )
+            for stream in streams:
+                _ = next(stream)
+                with pytest.raises(RuntimeError, match="injected consumer failure"):
+                    stream.throw(RuntimeError("injected consumer failure"))
+                assert telemetry.current_span_id() == caller_span_id
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    operation_spans = [
+        span
+        for span in backend.finished_spans
+        if span.name in {"agentgrep.search.run", "agentgrep.find.run"}
+    ]
+    assert len(operation_spans) == 2
+    assert {span.status for span in operation_spans} == {"error"}
+    assert {span.attributes["agentgrep_outcome"] for span in operation_spans} == {"error"}
+    assert {span.attributes["agentgrep_error_type"] for span in operation_spans} == {
+        "RuntimeError",
+    }
+    messages = [record.message for record in backend.log_records]
+    assert messages.count("search query failed") == 1
+    assert messages.count("find query failed") == 1
+    assert "search query cancelled" not in messages
+    assert "find query cancelled" not in messages
+
+
+def test_engine_list_and_stream_surfaces_record_metrics_once(
+    tmp_path: pathlib.Path,
+) -> None:
+    """List and stream operations emit the same bounded metrics once each."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="metric signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backends = agentgrep.BackendSelection(None, None, None)
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    try:
+        assert len(agentgrep.run_search_query(home, query, backends=backends)) == 1
+        assert list(agentgrep.iter_search_events(home, query, backends=backends))
+        assert (
+            len(
+                agentgrep.run_find_query(
+                    home,
+                    ("codex",),
+                    pattern="sessions",
+                    limit=10,
+                    backends=backends,
+                ),
+            )
+            == 1
+        )
+        assert list(
+            agentgrep.iter_find_events(
+                home,
+                ("codex",),
+                pattern="sessions",
+                limit=10,
+                backends=backends,
+            ),
+        )
+    finally:
+        telemetry.configure_backend(None)
+
+    work_metrics = [
+        metric
+        for metric in backend.metric_records
+        if metric.name
+        in {
+            "agentgrep.search.sources",
+            "agentgrep.search.results",
+            "agentgrep.find.sources",
+            "agentgrep.find.results",
+        }
+    ]
+    metrics_by_name = {
+        name: [metric for metric in work_metrics if metric.name == name]
+        for name in {
+            "agentgrep.search.sources",
+            "agentgrep.search.results",
+            "agentgrep.find.sources",
+            "agentgrep.find.results",
+        }
+    }
+    assert {name: len(metrics) for name, metrics in metrics_by_name.items()} == {
+        "agentgrep.search.sources": 2,
+        "agentgrep.search.results": 2,
+        "agentgrep.find.sources": 2,
+        "agentgrep.find.results": 2,
+    }
+    assert {metric.value for metric in work_metrics} == {1}
+    assert {
+        tuple(sorted(metric.attributes.items()))
+        for name in ("agentgrep.search.sources", "agentgrep.search.results")
+        for metric in metrics_by_name[name]
+    } == {
+        (
+            ("agentgrep_component", "core"),
+            ("agentgrep_component_kind", "in_process"),
+            ("agentgrep_scope", "prompts"),
+            ("agentgrep_surface", "engine"),
+        ),
+    }
+    assert {
+        tuple(sorted(metric.attributes.items()))
+        for name in ("agentgrep.find.sources", "agentgrep.find.results")
+        for metric in metrics_by_name[name]
+    } == {
+        (
+            ("agentgrep_agent_count", 1),
+            ("agentgrep_component", "core"),
+            ("agentgrep_component_kind", "in_process"),
+            ("agentgrep_surface", "engine"),
+        ),
+    }
+
+
 def test_engine_event_stream_close_finishes_operation_span(tmp_path: pathlib.Path) -> None:
     """An early consumer close records cancellation and closes its engine span."""
     import agentgrep
@@ -565,6 +954,129 @@ def test_engine_event_stream_close_finishes_operation_span(tmp_path: pathlib.Pat
     )
     assert cancel_log.trace_id == search_span.trace_id
     assert cancel_log.span_id == search_span.span_id
+
+
+def test_engine_event_stream_close_after_terminal_event_stays_complete(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Closing after a terminal event must not rewrite completion as cancellation."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+    from agentgrep import events
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="terminal close signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        search_stream = agentgrep.iter_search_events(
+            home,
+            query,
+            backends=agentgrep.BackendSelection(None, None, None),
+        )
+        find_stream = agentgrep.iter_find_events(
+            home,
+            ("codex",),
+            pattern="sessions",
+            limit=10,
+            backends=agentgrep.BackendSelection(None, None, None),
+        )
+        assert any(isinstance(event, events.SearchFinished) for event in search_stream)
+        assert any(isinstance(event, events.FindFinished) for event in find_stream)
+        search_stream.close()
+        find_stream.close()
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    operation_spans = [
+        span
+        for span in backend.finished_spans
+        if span.name in {"agentgrep.search.run", "agentgrep.find.run"}
+    ]
+    assert len(operation_spans) == 2
+    assert {span.attributes["agentgrep_outcome"] for span in operation_spans} == {"ok"}
+    messages = [record.message for record in backend.log_records]
+    assert messages.count("search query completed") == 1
+    assert messages.count("find query completed") == 1
+    assert "search query cancelled" not in messages
+    assert "find query cancelled" not in messages
+
+
+def test_engine_event_stream_loop_break_finalizes_in_retained_context(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Temporary streams close without cross-context unraisable exceptions."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="abandoned stream signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    unraisable: list[object] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            caller_span_id = telemetry.current_span_id()
+            for _event in agentgrep.iter_search_events(
+                home,
+                query,
+                backends=agentgrep.BackendSelection(None, None, None),
+            ):
+                break
+            _ = gc.collect()
+            assert telemetry.current_span_id() == caller_span_id
+
+            for _event in agentgrep.iter_find_events(
+                home,
+                ("codex",),
+                pattern="sessions",
+                limit=10,
+                backends=agentgrep.BackendSelection(None, None, None),
+            ):
+                break
+            _ = gc.collect()
+            assert telemetry.current_span_id() == caller_span_id
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    assert unraisable == []
+    operation_spans = [
+        span
+        for span in backend.finished_spans
+        if span.name in {"agentgrep.search.run", "agentgrep.find.run"}
+    ]
+    assert len(operation_spans) == 2
+    assert {span.attributes["agentgrep_outcome"] for span in operation_spans} == {
+        "cancelled",
+    }
+    assert {span.parent_id for span in operation_spans} == {caller_span_id}
+    messages = [record.message for record in backend.log_records]
+    assert messages.count("search query cancelled") == 1
+    assert messages.count("find query cancelled") == 1
 
 
 def test_tui_session_emits_structured_trace_linked_log(
@@ -2127,6 +2639,41 @@ def test_otel_log_record_sanitizes_absolute_paths() -> None:
     assert sanitized.__dict__["agentgrep_override_path_status"] == "not_a_directory"
     assert sanitized.__dict__["agentgrep_path_kind"] == "session_file"
     assert record.pathname == "/tmp/agentgrep/src/agentgrep/example.py"
+
+
+def test_env_override_warning_keeps_compatible_bounded_export_metadata(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Call-site redaction metadata survives export without the override value."""
+    import agentgrep
+    from agentgrep import _telemetry_otel
+
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    private_override = tmp_path / "private-override"
+    synthetic_env_name = "SYNTHETIC_PRIVATE_OVERRIDE_NAME"
+    monkeypatch.setenv(synthetic_env_name, str(private_override))
+
+    with caplog.at_level(logging.WARNING, logger="agentgrep.discovery"):
+        assert agentgrep.resolve_env_root(synthetic_env_name, fallback) == fallback
+
+    warning = next(
+        record
+        for record in caplog.records
+        if record.message == "env-override path unavailable, fell back to default"
+    )
+    exported = _telemetry_otel._sanitized_log_record_dict(warning)
+
+    assert str(private_override) not in str(exported)
+    assert synthetic_env_name not in str(exported)
+    assert "agentgrep_env_var" not in exported
+    assert exported["agentgrep_env_var_redacted"] is True
+    assert exported["agentgrep_env_var_len"] == len(synthetic_env_name)
+    assert exported["agentgrep_env_path_redacted"] is True
+    assert exported["agentgrep_env_path_len"] == len(str(private_override))
+    assert exported["agentgrep_env_path_status"] == "not_found"
 
 
 def test_otel_log_record_keeps_safe_extras_as_attributes() -> None:

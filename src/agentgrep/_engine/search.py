@@ -48,6 +48,7 @@ import typing as t
 
 from agentgrep import _telemetry
 from agentgrep._engine.orchestration import discover_sources_for_search
+from agentgrep._engine.telemetry import isolate_generator_context
 from agentgrep.progress import SearchControl
 from agentgrep.readers import select_backends
 from agentgrep.records import BackendSelection, SearchQuery
@@ -69,6 +70,7 @@ class _AsyncSearchDone:
     """Worker-thread completion sentinel sent through the async event queue."""
 
 
+@isolate_generator_context
 def iter_search_events(
     home: pathlib.Path,
     query: SearchQuery,
@@ -76,7 +78,7 @@ def iter_search_events(
     backends: BackendSelection | None = None,
     control: SearchControl | None = None,
     runtime: SearchRuntime | None = None,
-) -> cabc.Iterator[_events.SearchEvent]:
+) -> cabc.Generator[_events.SearchEvent]:
     """Yield typed events as the search engine scans sources.
 
     Parameters

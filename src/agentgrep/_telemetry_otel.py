@@ -20,6 +20,8 @@ if t.TYPE_CHECKING:
 
 _SAFE_LOG_ATTRIBUTE_KEYS: frozenset[str] = frozenset(
     {
+        "agentgrep_env_path_len",
+        "agentgrep_env_path_redacted",
         "agentgrep_path_kind",
         "agentgrep_env_path_status",
         "agentgrep_override_path_status",
