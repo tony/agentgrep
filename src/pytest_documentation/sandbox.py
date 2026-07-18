@@ -288,6 +288,11 @@ class TempHomeSandbox:
             ".venv",
             "__pycache__",
             "_build",
+            # The docs toolchain's node dependency tree is hundreds of
+            # megabytes; copying it turns every dirty-tree sandbox world
+            # into an I/O storm that starves the sandboxed subprocesses
+            # of their timeout budget.
+            "node_modules",
         )
         shutil.copytree(self.project_root, project, ignore=ignore)
 
