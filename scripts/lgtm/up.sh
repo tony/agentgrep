@@ -21,7 +21,6 @@ LGTM_IMAGE="${AGENTGREP_LGTM_IMAGE:-grafana/otel-lgtm:0.28.0}"
 # recreation also re-stages the single-file bind mounts cleanly under
 # Rancher Desktop / WSL, where docker start reuses a stale empty mount folder.
 CONFIG_LABEL="prometheus3-exemplars-dashboards-deltacumulative-v1"
-SOURCE_MAP="${AGENTGREP_PYROSCOPE_SOURCE_MAP:-$ROOT/.tmp/lgtm/.pyroscope.yaml}"
 
 if [[ -n "${PYTHON:-}" ]]; then
     read -r -a python_cmd <<< "$PYTHON"
@@ -30,8 +29,6 @@ elif command -v uv > /dev/null 2>&1 && [[ -f "$ROOT/pyproject.toml" ]]; then
 else
     python_cmd=(python)
 fi
-
-"${python_cmd[@]}" "$ROOT/scripts/lgtm/generate_pyroscope_source_map.py" --output "$SOURCE_MAP"
 
 # Regenerate the provisioned Grafana dashboard suite so a fresh checkout
 # always has the agentgrep boards on startup; the folder is bind-mounted below.

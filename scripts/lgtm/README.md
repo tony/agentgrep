@@ -1,13 +1,15 @@
 # Local LGTM Source Linking
 
 `just otel-up` starts the local Grafana LGTM container through
-`scripts/lgtm/up.sh`. The helper generates `.tmp/lgtm/.pyroscope.yaml` for
-local inspection, then mounts the Grafana datasource and Pyroscope config files
-from this directory into the stock `grafana/otel-lgtm` image.
+`scripts/lgtm/up.sh`. The helper mounts the Grafana datasource and Pyroscope
+config files from this directory into the stock `grafana/otel-lgtm` image.
 
-The generated source map uses repository- and package-relative prefixes plus
-GitHub source locations. It is intentionally written under `.tmp/` and should
-not be committed.
+Function Details resolves source from the `service_repository`,
+`service_git_ref`, and `service_root_path` profile labels. Pyroscope fetches an
+optional `<service_root_path>/.pyroscope.yaml` from that repository at that
+exact ref; an ignored local file is not part of this lookup. Custom source
+mappings therefore belong in a privacy-safe committed `.pyroscope.yaml`, with
+repository-relative paths and exact dependency refs.
 
 Grafana profile views can still show labels from older runs when the time
 window is broad. Use the current `agentgrep_debug_session_id` and exact

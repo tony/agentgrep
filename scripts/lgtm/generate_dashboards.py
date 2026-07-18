@@ -9,8 +9,7 @@ emits, so the boards stay grounded in real series instead of guesswork.
 The output is a folder of dashboard JSON files plus nothing else; the
 provider config (``grafana-dashboards-agentgrep.yaml``) and the bind
 mounts live in ``up.sh``. ``up.sh`` re-runs this generator on every
-startup, mirroring ``generate_pyroscope_source_map.py``, so a fresh
-checkout always has the boards available.
+startup so a fresh checkout always has the boards available.
 
 Design
 ------
