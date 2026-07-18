@@ -135,10 +135,10 @@ async def export_records(
     ] = "records",
     include_bodies: t.Annotated[
         bool,
-        Field(description="Include prompt and history text in the artifact."),
+        Field(description="Include prompt/history text in the artifact."),
     ] = False,
 ) -> ExportRecordsResponse:
-    """Return selected search refs as one bounded inline artifact."""
+    """Return selected refs as one NDJSON or Markdown TextContent artifact with structured export metadata."""  # noqa: E501
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
 
