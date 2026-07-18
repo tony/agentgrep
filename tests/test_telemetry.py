@@ -13,6 +13,7 @@ import pathlib
 import sqlite3
 import subprocess
 import sys
+import textwrap
 import time
 import typing as t
 
@@ -276,6 +277,41 @@ def test_signal_exporter_none_disables_only_that_signal(signal: str) -> None:
 
     assert _telemetry_otel._signal_export_enabled({}, signal) is True
     assert _telemetry_otel._signal_export_enabled({key: " NoNe "}, signal) is False
+
+
+def test_explicit_backend_skips_asyncio_auto_instrumentation() -> None:
+    """An enabled backend must not install raw-name asyncio telemetry."""
+    code = textwrap.dedent(
+        """
+        import sys
+
+        from agentgrep import _telemetry_otel
+
+        _telemetry_otel._configure_profiles = lambda _attributes: False
+        backend = _telemetry_otel.build_backend(
+            mode="local",
+            resource_attributes={},
+            env={
+                "OTEL_TRACES_EXPORTER": "none",
+                "OTEL_METRICS_EXPORTER": "none",
+                "OTEL_LOGS_EXPORTER": "none",
+            },
+        )
+        try:
+            print("opentelemetry.instrumentation.asyncio" in sys.modules)
+        finally:
+            backend.shutdown()
+        """,
+    )
+
+    completed = subprocess.run(
+        (sys.executable, "-c", code),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert completed.stdout.strip() == "False"
 
 
 def test_resolve_mode_keeps_pytest_off_by_default() -> None:
@@ -1627,7 +1663,6 @@ def test_span_mirrors_native_otel_trace_ids() -> None:
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -1690,7 +1725,6 @@ def test_span_inherits_inbound_otel_context() -> None:
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
     inbound_tracer = provider.get_tracer("inbound")
@@ -1782,7 +1816,6 @@ def test_mcp_request_inherits_inbound_traceparent(
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -2264,7 +2297,6 @@ def test_shutdown_skips_pyroscope_when_profiles_not_started(
             logging_handler=logging.NullHandler(),
             span_counter=noop,
             span_duration=noop,
-            instrumentations=(),
             profiles_started=profiles_started,
         )
 
@@ -2305,7 +2337,6 @@ def test_otel_force_flush_attempts_every_provider_after_failure() -> None:
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -2352,7 +2383,6 @@ def test_otel_backend_shutdown_is_idempotent_without_predrain() -> None:
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -2701,7 +2731,6 @@ async def test_fastmcp_native_spans_are_sanitized_before_export(
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -2972,7 +3001,6 @@ def test_otel_backend_records_named_custom_metrics() -> None:
         logging_handler=FakeHandler(),
         span_counter=FakeInstrument(),
         span_duration=FakeInstrument(),
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -3196,7 +3224,6 @@ def test_otel_error_status_does_not_export_exception_messages(
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -3256,7 +3283,6 @@ def test_otel_span_exception_emits_one_bounded_event() -> None:
         logging_handler=logging.NullHandler(),
         span_counter=noop,
         span_duration=noop,
-        instrumentations=(),
         profiles_started=False,
     )
 
@@ -3456,7 +3482,6 @@ def test_otel_backend_exports_logs_with_current_otel_span() -> None:
         logging_handler=handler,
         span_counter=FakeInstrument(),
         span_duration=FakeInstrument(),
-        instrumentations=(),
         profiles_started=False,
         trace_api=t.cast("object", FakeTraceModule),
     )

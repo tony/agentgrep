@@ -39,7 +39,6 @@ speedups = ["orjson>=3.10"]
 otel = [
     "opentelemetry-api>=1.42.1",
     "opentelemetry-exporter-otlp-proto-http>=1.42.1",
-    "opentelemetry-instrumentation-asyncio>=0.63b1",
     "opentelemetry-instrumentation-sqlite3>=0.63b1",
     "opentelemetry-sdk>=1.42.1",
     "pyroscope-io>=1.0.12",
@@ -100,7 +99,6 @@ dev = [
   "opentelemetry-sdk>=1.42.1",
   "opentelemetry-exporter-otlp-proto-http>=1.42.1",
   "opentelemetry-instrumentation-sqlite3>=0.63b1",
-  "opentelemetry-instrumentation-asyncio>=0.63b1",
 ]
 docs = [
   "gp-sphinx==0.0.1a34",

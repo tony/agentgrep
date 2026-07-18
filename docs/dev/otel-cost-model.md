@@ -114,11 +114,11 @@ Benchmark timings are multiplied by warmups, timed samples, command count, and
 commit count. A `profile-engine-*` benchmark row has an extra profile capture
 after timing; that capture explains span shape but is not part of `samples`.
 
-Explicit live OTel adds process-level setup and shutdown work. Each process configures
-the SDK, installs live/debug auto-instrumentation, starts Pyroscope when
-available, exports enabled OTLP spans/logs/metrics, and lets each provider own
-its single bounded shutdown drain. The timeout is intentionally short so a
-missing collector does not break the app.
+Explicit live OTel adds process-level setup and shutdown work. Each process
+configures the SDK, starts Pyroscope when available, exports enabled OTLP
+spans/logs/metrics, and lets each provider own its single bounded shutdown
+drain. The timeout is intentionally short so a missing collector does not break
+the app.
 
 Live mode exports metrics with **delta** temporality so the LGTM collector's
 `deltatocumulative` processor can sum each one-shot process's increment into a
@@ -193,10 +193,12 @@ Telemetry stays off when `AGENTGREP_OTEL` is unset, including in a source
 checkout, so ordinary `agentgrep --help` does not initialize an SDK or contact
 an implicit collector. Setting `AGENTGREP_OTEL` explicitly (or passing an
 explicit mode) opts into telemetry, including profiles; standard per-signal
-`none` values can disable individual exporters. Asyncio auto-instrumentation
-therefore runs only for explicit local/debug/live runs. SQLite spans
-come solely from the project `sqlite3.Connection` shortcut factory, which wraps
-the `Connection.execute` path agentgrep uses for source parsing;
+`none` values can disable individual exporters. Agentgrep does not install
+Asyncio auto-instrumentation: it labels process metrics with raw coroutine or
+function names and can emit raw exception events, while the project wrappers
+already preserve context across async and thread boundaries. SQLite spans come
+solely from the project `sqlite3.Connection` shortcut factory, which wraps the
+`Connection.execute` path agentgrep uses for source parsing;
 `SQLite3Instrumentor` only covers the cursor path agentgrep never takes, so it
 is not installed and cannot double-count. The same shortcut wrapper emits
 `agentgrep.otel.sqlite_total` metrics from normal app paths when the SQLite

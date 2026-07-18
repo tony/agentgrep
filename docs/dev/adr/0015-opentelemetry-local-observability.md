@@ -21,7 +21,7 @@ argv, environment values, file contents, secrets, or local absolute paths.
 ## Decision
 
 Application code instruments through `agentgrep._telemetry`, a dependency-light
-project boundary. OpenTelemetry SDK, OTLP exporters, auto-instrumentation, and
+project boundary. OpenTelemetry SDK, OTLP exporters, span sanitization, and
 Pyroscope setup live in `agentgrep._telemetry_otel` and are imported lazily
 only when telemetry is enabled.
 
