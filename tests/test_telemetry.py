@@ -466,6 +466,107 @@ def test_engine_search_and_find_emit_structured_trace_linked_logs(
     assert "agentic signal" not in str([record.attributes for record in backend.log_records])
 
 
+def test_engine_event_streams_emit_structured_trace_linked_logs(
+    tmp_path: pathlib.Path,
+) -> None:
+    """CLI and MCP stream boundaries emit the same content-free telemetry."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="streamed agentic signal")
+    query = agentgrep.SearchQuery(
+        terms=("agentic",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            search_events = list(
+                agentgrep.iter_search_events(
+                    home,
+                    query,
+                    backends=agentgrep.BackendSelection(None, None, None),
+                ),
+            )
+            find_events = list(
+                agentgrep.iter_find_events(
+                    home,
+                    ("codex",),
+                    pattern="sessions",
+                    limit=10,
+                    backends=agentgrep.BackendSelection(None, None, None),
+                ),
+            )
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    assert search_events
+    assert find_events
+    messages = [record.message for record in backend.log_records]
+    assert messages.count("search query completed") == 1
+    assert messages.count("find query completed") == 1
+    assert sum(span.name == "agentgrep.search.run" for span in backend.finished_spans) == 1
+    assert sum(span.name == "agentgrep.find.run" for span in backend.finished_spans) == 1
+    assert "streamed agentic signal" not in str(
+        [record.attributes for record in backend.log_records],
+    )
+
+
+def test_engine_event_stream_close_finishes_operation_span(tmp_path: pathlib.Path) -> None:
+    """An early consumer close records cancellation and closes its engine span."""
+    import agentgrep
+    import agentgrep._telemetry as telemetry
+
+    home = tmp_path / "home"
+    _ = _write_codex_session(home, text="early close signal")
+    query = agentgrep.SearchQuery(
+        terms=("signal",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=5,
+    )
+    backend = telemetry.InMemoryTelemetryBackend()
+    telemetry.configure_backend(backend)
+    remove_handler = telemetry.install_logging_exporter(backend)
+    try:
+        with telemetry.span("agentgrep.cli.invocation", agentgrep_surface="cli"):
+            stream = t.cast(
+                "cabc.Generator[object]",
+                agentgrep.iter_search_events(
+                    home,
+                    query,
+                    backends=agentgrep.BackendSelection(None, None, None),
+                ),
+            )
+            _ = next(stream)
+            stream.close()
+    finally:
+        remove_handler()
+        telemetry.configure_backend(None)
+
+    search_span = next(
+        span for span in backend.finished_spans if span.name == "agentgrep.search.run"
+    )
+    assert search_span.attributes["agentgrep_outcome"] == "cancelled"
+    cancel_log = next(
+        record for record in backend.log_records if record.message == "search query cancelled"
+    )
+    assert cancel_log.trace_id == search_span.trace_id
+    assert cancel_log.span_id == search_span.span_id
+
+
 def test_tui_session_emits_structured_trace_linked_log(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
