@@ -29,7 +29,8 @@ class CooldownDaysSlotFilter(t.Protocol):
     def __call__(self, html: object) -> markupsafe.Markup: ...
 
 
-class widget_container(nodes.container):  # type: ignore[misc]  # docutils nodes are untyped
+# Docutils derives tag and visitor dispatch names from the lowercase class name.
+class widget_container(nodes.container):  # type: ignore[misc]  # noqa: N801
     """Wraps a widget's rendered HTML; visit/depart emit the outer div."""
 
 
