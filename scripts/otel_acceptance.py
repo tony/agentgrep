@@ -25,8 +25,6 @@ LGTM_CONFIG_LABEL = "source-linking-deltacumulative-v1"
 LGTM_GRAFANA_DATASOURCES_CONFIG = ROOT / "scripts" / "lgtm" / "grafana-datasources.yaml"
 LGTM_PYROSCOPE_CONFIG = ROOT / "scripts" / "lgtm" / "pyroscope-config.yaml"
 LGTM_OTELCOL_CONFIG = ROOT / "scripts" / "lgtm" / "otelcol-config.yaml"
-LGTM_SOURCE_MAP_GENERATOR = ROOT / "scripts" / "lgtm" / "generate_pyroscope_source_map.py"
-LGTM_SOURCE_MAP = ROOT / ".tmp" / "lgtm" / ".pyroscope.yaml"
 DEFAULT_LOKI_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/loki"
 DEFAULT_PROMETHEUS_BASE_URL = "http://localhost:3000/api/datasources/proxy/uid/prometheus"
 APPROVED_ROOTS = {
@@ -112,7 +110,6 @@ def main() -> int:
 
 def start_stack() -> None:
     """Start the local LGTM container if needed."""
-    generate_lgtm_source_map()
     inspect = subprocess.run(
         ["docker", "inspect", CONTAINER_NAME],
         capture_output=True,
@@ -174,20 +171,6 @@ def lgtm_docker_run_command(*, env: cabc.Mapping[str, str]) -> list[str]:
     # acceptance workloads emit accumulate across one-shot processes.
     command.append(os.environ.get("AGENTGREP_LGTM_IMAGE", "grafana/otel-lgtm:0.28.0"))
     return command
-
-
-def generate_lgtm_source_map() -> None:
-    """Generate the local Pyroscope source map used for source-link setup."""
-    subprocess.run(
-        [
-            sys.executable,
-            str(LGTM_SOURCE_MAP_GENERATOR),
-            "--output",
-            str(LGTM_SOURCE_MAP),
-        ],
-        cwd=ROOT,
-        check=True,
-    )
 
 
 def _container_is_running(inspect_stdout: str) -> bool:

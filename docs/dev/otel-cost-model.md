@@ -46,10 +46,6 @@ endpoints must not change CLI, TUI, MCP, pytest, or profiler correctness.
 
 `scripts/otel_acceptance.py` also runs subprocesses:
 
-- `scripts/lgtm/generate_pyroscope_source_map.py` to write the ignored local
-  `.tmp/lgtm/.pyroscope.yaml` source map used when validating Pyroscope source
-  links. The generated mappings use repository- and package-relative prefixes,
-  not local checkout or virtualenv paths.
 - Docker inspect/start/run for the local `grafana/otel-lgtm` container.
   Container creation mounts `scripts/lgtm/grafana-datasources.yaml` and
   `scripts/lgtm/pyroscope-config.yaml`; unlabeled older containers are removed

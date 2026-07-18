@@ -60,7 +60,6 @@ def test_start_stack_starts_existing_stopped_container(
         raise AssertionError(msg)
 
     monkeypatch.setattr(otel_acceptance.subprocess, "run", fake_run)
-    monkeypatch.setattr(otel_acceptance, "generate_lgtm_source_map", lambda: None)
 
     otel_acceptance.start_stack()
 
@@ -109,7 +108,6 @@ def test_start_stack_recreates_container_with_stale_config(monkeypatch: t.Any) -
         raise AssertionError(msg)
 
     monkeypatch.setattr(otel_acceptance.subprocess, "run", fake_run)
-    monkeypatch.setattr(otel_acceptance, "generate_lgtm_source_map", lambda: None)
 
     otel_acceptance.start_stack()
 
