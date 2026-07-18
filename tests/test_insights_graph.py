@@ -570,7 +570,7 @@ def test_skill_suggestions_ranks_templates_and_lifts_cap() -> None:
         "summarize",
         "validate",
     ]
-    prompts: list[G.Turn] = []
+    prompts: list[graph_mod.Turn] = []
     clusters: list[list[int]] = []
     # 12 distinct recurring asks with decreasing support (14..3), each spanning
     # three conversations, so the raised cap and the ranking are both observable.
@@ -580,7 +580,7 @@ def test_skill_suggestions_ranks_templates_and_lifts_cap() -> None:
         for occurrence in range(support):
             members.append(len(prompts))
             prompts.append(
-                G.Turn(
+                graph_mod.Turn(
                     conversation_id=f"conv-{index}-{occurrence % 3}",
                     position=occurrence,
                     role="user",
@@ -589,7 +589,7 @@ def test_skill_suggestions_ranks_templates_and_lifts_cap() -> None:
             )
         clusters.append(members)
 
-    suggestions = G._skill_suggestions([], clusters, prompts)
+    suggestions = graph_mod._skill_suggestions([], clusters, prompts)
     templates = [s for s in suggestions if s["type"] == "template"]
     assert len(templates) > 8  # the old hard cap of 8 is lifted
     scores = [s["score"] for s in templates]
@@ -602,6 +602,6 @@ def test_skill_suggestions_drops_barely_recurring_macros() -> None:
         {"support": 2, "example": "commit → push", "pattern": ["commit", "push"]},
         {"support": 4, "example": "test → commit → push", "pattern": ["test", "commit", "push"]},
     ]
-    suggestions = G._skill_suggestions(workflows, [], [])
+    suggestions = graph_mod._skill_suggestions(workflows, [], [])
     macros = [s for s in suggestions if s["type"] == "macro"]
     assert [s["support"] for s in macros] == [4]  # the support-2 chain is dropped

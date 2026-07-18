@@ -330,7 +330,7 @@ def _build_similar_edges(
                 prompt_matrix,
                 import_module=importer,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             # lancedb absent or backend error — fall back to the embedded default.
             backend = "sqlite-vec"
         else:
