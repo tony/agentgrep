@@ -66,7 +66,8 @@ class _DeductiveHost:
     def context(self) -> UiContext:
         return self._ctx
 
-    def build_query(self, text: str) -> SearchQuery:
+    def build_query(self, text: str, *, notify_warning: bool = False) -> SearchQuery:
+        del notify_warning
         self.calls.append(("build_query", text))
         return _query(*text.split())
 
@@ -93,6 +94,9 @@ class _DeductiveHost:
 
     def show_query_error(self, message: str) -> None:
         self.calls.append(("show_query_error", message))
+
+    def show_query_warning(self, message: str) -> None:
+        self.calls.append(("show_query_warning", message))
 
     def kinds(self) -> tuple[str, ...]:
         return tuple(kind for kind, _ in self.calls)

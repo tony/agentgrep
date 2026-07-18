@@ -1,4 +1,4 @@
-"""Conversation-turn value objects, bubble widget, and renderer (ADR 0014).
+"""Conversation-turn value objects, bubble widget, and renderer (ADR 0015).
 
 A *turn* is one entry in the chat transcript. Its data is a frozen, slotted
 value object (:class:`QueryTurn` / :class:`ResultTurn` / :class:`SystemTurn`);

@@ -1,4 +1,4 @@
-"""``DeductiveWorkflow`` — narrow a fixed haystack, widen by popping (ADR 0014).
+"""``DeductiveWorkflow`` — narrow a fixed haystack, widen by popping (ADR 0015).
 
 The third interaction strategy, after ``search`` (every submit re-greps) and
 ``browse`` (load once, filter the whole set). Deductive search builds a *stack*
