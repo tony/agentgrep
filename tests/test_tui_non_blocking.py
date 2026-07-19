@@ -28,7 +28,7 @@ import pytest
 
 from agentgrep.ui import _runtime
 from agentgrep.ui.layouts import hud
-from tests.test_agentgrep import _build_empty_ui_app
+from tests.test_agentgrep_tui import _build_empty_ui_app
 
 #: The HUD layout holds every worker launch and ``_apply_records_batch`` (NB-4/NB-6).
 _APP_PATH = pathlib.Path(hud.__file__)

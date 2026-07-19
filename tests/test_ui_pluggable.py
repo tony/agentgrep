@@ -17,7 +17,7 @@ import pytest
 import agentgrep
 from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery
-from tests.test_agentgrep import _build_empty_ui_app
+from tests.test_agentgrep_tui import _build_empty_ui_app
 
 
 class _NoopInvoker:

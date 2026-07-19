@@ -19,7 +19,7 @@ import pytest
 
 from agentgrep.records import RecordOrigin
 from agentgrep.ui.widgets import HistoryRecall
-from tests.test_agentgrep import _build_empty_ui_app, load_agentgrep_module
+from tests.test_agentgrep_tui import _build_empty_ui_app, load_agentgrep_module
 
 
 async def test_ctrl_jk_traverses_panes_vertically(

@@ -34,7 +34,7 @@ import typing as t
 import pytest
 
 from agentgrep._engine import orchestration
-from tests.test_agentgrep import _build_empty_ui_app, load_agentgrep_module
+from tests.test_agentgrep_tui import _build_empty_ui_app, load_agentgrep_module
 
 # Tight per-move budgets (seconds). A real wedge blows these; legitimate work
 # (a large synthetic batch, an off-thread detail build) stays well under them.

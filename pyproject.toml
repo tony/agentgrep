@@ -258,6 +258,7 @@ convention = "numpy"
 "*/__init__.py" = ["F401"]
 # These test names preserve keyboard, protocol, and query-lattice spellings.
 "tests/test_agentgrep.py" = ["N802"]
+"tests/test_agentgrep_tui.py" = ["N802"]
 "tests/test_mcp_swap.py" = ["N802"]
 "tests/test_query_evaluate.py" = ["N802"]
 # Test class attributes preserve MCP wire-format spellings.
@@ -285,7 +286,7 @@ addopts = [
   # Keep the literal local loop fast. CI and `just test-all` clear this
   # expression explicitly so the exhaustive suite remains mandatory.
   "-m",
-  "not slow",
+  "not slow and not legacy",
 ]
 doctest_optionflags = [
   "ELLIPSIS",

@@ -24,7 +24,7 @@ from agentgrep.records import AGENT_CHOICES
 from agentgrep.ui import theme
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.widgets import WELCOME_QUERY_INDEX_META
-from tests.test_agentgrep import _build_empty_ui_app, _ui_record, load_agentgrep_module
+from tests.test_agentgrep_tui import _build_empty_ui_app, _ui_record, load_agentgrep_module
 
 _STYLESHEET = pathlib.Path(theme.__file__).with_name("styles.tcss")
 

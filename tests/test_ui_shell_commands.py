@@ -15,7 +15,7 @@ from textual.widgets import Footer, HelpPanel
 from agentgrep.records import SearchRecord
 from agentgrep.ui import theme as ui_theme
 from agentgrep.ui._shell import ExplorerApp
-from tests.test_agentgrep import _build_empty_ui_app
+from tests.test_agentgrep_tui import _build_empty_ui_app
 
 
 class ShellSizeCase(t.NamedTuple):

@@ -19,7 +19,7 @@ from agentgrep.ui.widgets.welcome import (
     _welcome_query_examples,
     _welcome_wordmark,
 )
-from tests.test_agentgrep import _build_empty_ui_app
+from tests.test_agentgrep_tui import _build_empty_ui_app
 
 
 def _welcome_click_targets(examples: Static) -> dict[int, tuple[int, int]]:
