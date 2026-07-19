@@ -56,6 +56,14 @@ payloads and `build_envelope()` for CLI-style envelopes. These functions
 return JSON-compatible typed mappings directly; MCP schemas continue to use
 Pydantic at their explicit boundary.
 
+### Development
+
+#### Faster critical-path feedback (#138)
+
+Agentgrep's development checks now focus on the critical paths users depend
+on, giving contributors feedback in seconds without trading away release
+confidence. Broader and slower checks remain part of CI.
+
 ## agentgrep 0.1.0a40 (2026-07-19)
 
 agentgrep 0.1.0a40 is an internal-quality release with no change to how
