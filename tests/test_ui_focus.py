@@ -21,7 +21,10 @@ from agentgrep.records import RecordOrigin
 from agentgrep.ui.widgets import HistoryRecall
 from tests.test_agentgrep_tui import _build_empty_ui_app, load_agentgrep_module
 
+pytestmark = pytest.mark.tui
 
+
+@pytest.mark.slow
 async def test_ctrl_jk_traverses_panes_vertically(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -42,6 +45,7 @@ async def test_ctrl_jk_traverses_panes_vertically(
         assert app.focused.id == "search"
 
 
+@pytest.mark.slow
 async def test_recall_modal_restores_focus_on_escape(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -59,6 +63,7 @@ async def test_recall_modal_restores_focus_on_escape(
         assert app.focused is not None and app.focused.id == "search"
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("launch_kind", ["compiled", "origin"])
 async def test_launch_search_keeps_focus_on_visible_input(
     launch_kind: str,

@@ -11,6 +11,8 @@ import collections.abc as cabc
 import pathlib
 import threading
 
+import pytest
+
 from agentgrep.progress import ProgressSnapshot, SearchControl
 from agentgrep.records import SearchQuery, SourceHandle
 from agentgrep.ui._seams import (
@@ -23,6 +25,8 @@ from agentgrep.ui._source_diagnostics import (
     SourceScanStarted,
     UiProgressSnapshot,
 )
+
+pytestmark = pytest.mark.tui
 
 
 def _make_query() -> SearchQuery:

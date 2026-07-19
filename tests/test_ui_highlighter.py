@@ -16,6 +16,8 @@ from rich.text import Text
 
 from agentgrep.ui.highlighter import QueryHighlighter
 
+pytestmark = pytest.mark.tui
+
 
 def _styled_spans(query: str, *, dark: bool = True) -> set[tuple[str, str]]:
     """Return ``{(token_text, style)}`` for a highlighted query."""

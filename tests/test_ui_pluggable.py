@@ -19,6 +19,8 @@ from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery
 from tests.test_agentgrep_tui import _build_empty_ui_app
 
+pytestmark = pytest.mark.tui
+
 
 class _NoopInvoker:
     """Search seam stub for startup tests that need non-empty query terms."""
@@ -271,6 +273,7 @@ def test_factory_resolves_components_and_history_before_run(
     assert len(loaded_paths) == 1
 
 
+@pytest.mark.slow
 async def test_explorer_app_has_fixed_shell_surface(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -296,6 +299,7 @@ async def test_explorer_app_has_fixed_shell_surface(
         assert app.screen.workflow is workflow
 
 
+@pytest.mark.slow
 async def test_factory_mounts_only_programmatically_selected_pair(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -335,6 +339,7 @@ async def test_factory_mounts_only_programmatically_selected_pair(
         assert app._modes == {}
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("layout_name", "workflow_name", "layout_class_name"),
     [

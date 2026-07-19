@@ -19,6 +19,8 @@ from agentgrep.records import SearchRecord, SourceHandle
 from agentgrep.ui._seams import _UiStreamingSearchProgress
 from tests.test_agentgrep_tui import _build_empty_ui_app
 
+pytestmark = pytest.mark.tui
+
 
 def _record(tmp_path: pathlib.Path, idx: int, text: str) -> SearchRecord:
     """Build a minimal record for the log."""
@@ -53,6 +55,7 @@ async def _submit_command(pilot: t.Any, layout: t.Any, text: str) -> None:
     await pilot.pause()
 
 
+@pytest.mark.slow
 async def test_greplog_zoom_recovers_status_and_keeps_command_shell(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -96,6 +99,7 @@ async def test_greplog_zoom_recovers_status_and_keeps_command_shell(
         assert not layout.has_class("-zoom-log")
 
 
+@pytest.mark.slow
 async def test_greplog_streams_records_into_the_log(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -116,6 +120,7 @@ async def test_greplog_streams_records_into_the_log(
         assert len(layout.query_one("#greplog").lines) == 3
 
 
+@pytest.mark.slow
 async def test_greplog_write_chunk_does_not_warm_haystack_on_pump(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -137,6 +142,7 @@ async def test_greplog_write_chunk_does_not_warm_haystack_on_pump(
         assert len(layout.query_one("#greplog").lines) == 1
 
 
+@pytest.mark.slow
 async def test_greplog_writes_each_chunk_in_one_batch(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -163,6 +169,7 @@ async def test_greplog_writes_each_chunk_in_one_batch(
         assert len(log.lines) == len(records)
 
 
+@pytest.mark.slow
 async def test_greplog_finished_sets_status_line(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -177,6 +184,7 @@ async def test_greplog_finished_sets_status_line(
         assert "5" in str(layout.query_one("#greplog-status").render())
 
 
+@pytest.mark.slow
 async def test_greplog_error_status_treats_markup_as_text(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -193,6 +201,7 @@ async def test_greplog_error_status_treats_markup_as_text(
         )
 
 
+@pytest.mark.slow
 async def test_greplog_renders_lifecycle_and_heartbeat_progress(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -256,6 +265,7 @@ def test_greplog_scanning_text_uses_record_grammar(
     assert GrepLogLayout._scanning_text(snapshot) == expected
 
 
+@pytest.mark.slow
 async def test_greplog_filter_renders_only_matches(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -282,6 +292,7 @@ async def test_greplog_filter_renders_only_matches(
         assert len(layout.query_one("#greplog").lines) == 2
 
 
+@pytest.mark.slow
 async def test_greplog_stale_generation_is_dropped(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -314,6 +325,7 @@ RESET_STALE_EVENT_CASES = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", RESET_STALE_EVENT_CASES, ids=lambda case: case.test_id)
 async def test_greplog_reset_drops_stale_search_events(
     tmp_path: pathlib.Path,
@@ -358,6 +370,7 @@ STALE_FILTER_CASES = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", STALE_FILTER_CASES, ids=lambda case: case.test_id)
 async def test_greplog_stale_filter_results_are_dropped(
     tmp_path: pathlib.Path,
@@ -404,6 +417,7 @@ async def test_greplog_stale_filter_results_are_dropped(
         assert len(layout.query_one("#greplog").lines) == expected_lines
 
 
+@pytest.mark.slow
 async def test_greplog_filter_chunks_stop_after_generation_change(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -455,6 +469,7 @@ class ActiveFilterBatchCase(t.NamedTuple):
 ACTIVE_FILTER_BATCH_CASES = (ActiveFilterBatchCase("later-batch-stays-filtered", "needle", 2, 4),)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", ACTIVE_FILTER_BATCH_CASES, ids=lambda case: case.test_id)
 async def test_greplog_streaming_batches_respect_active_filter(
     tmp_path: pathlib.Path,
@@ -489,6 +504,7 @@ async def test_greplog_streaming_batches_respect_active_filter(
         assert len(layout.query_one("#greplog").lines) == case.expected_lines
 
 
+@pytest.mark.slow
 async def test_greplog_active_filter_scans_each_streamed_record_once(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -531,6 +547,7 @@ async def test_greplog_active_filter_scans_each_streamed_record_once(
         assert matcher.calls == expected
 
 
+@pytest.mark.slow
 async def test_greplog_clear_filter_does_not_duplicate_streamed_tail(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -595,6 +612,7 @@ INTERLEAVED_FILTER_CASES = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", INTERLEAVED_FILTER_CASES, ids=lambda case: case.test_id)
 async def test_greplog_filter_interrupts_unfiltered_batch_apply(
     tmp_path: pathlib.Path,
@@ -636,6 +654,7 @@ async def test_greplog_filter_interrupts_unfiltered_batch_apply(
         assert all("plain row" not in line for line in lines)
 
 
+@pytest.mark.slow
 async def test_greplog_search_input_does_not_crash_on_keys(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -660,6 +679,7 @@ async def test_greplog_search_input_does_not_crash_on_keys(
         assert layout._search_input.value == ""
 
 
+@pytest.mark.slow
 async def test_greplog_search_highlighting_follows_active_theme(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

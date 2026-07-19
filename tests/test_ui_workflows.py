@@ -20,6 +20,8 @@ from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.workflows.browse import BrowseWorkflow
 from agentgrep.ui.workflows.search import SearchWorkflow
 
+pytestmark = pytest.mark.tui
+
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 

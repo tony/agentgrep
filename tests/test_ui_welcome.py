@@ -21,6 +21,8 @@ from agentgrep.ui.widgets.welcome import (
 )
 from tests.test_agentgrep_tui import _build_empty_ui_app
 
+pytestmark = pytest.mark.tui
+
 
 def _welcome_click_targets(examples: Static) -> dict[int, tuple[int, int]]:
     """Map each rendered welcome-query index to a clickable cell."""
@@ -102,6 +104,7 @@ def test_welcome_wordmark_shifts_shine_without_changing_text() -> None:
     ]
 
 
+@pytest.mark.slow
 async def test_welcome_wordmark_animates_only_on_empty_canvas(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,6 +132,7 @@ async def test_welcome_wordmark_animates_only_on_empty_canvas(
         await _wait_for_wordmark_change(pilot, welcome, paused)
 
 
+@pytest.mark.slow
 async def test_welcome_wordmark_pauses_under_a_covering_screen(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -152,6 +156,7 @@ async def test_welcome_wordmark_pauses_under_a_covering_screen(
         await _wait_for_wordmark_change(pilot, welcome, covered)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("animation_level", ["none", "basic"])
 async def test_welcome_wordmark_respects_reduced_animation(
     tmp_path: pathlib.Path,
@@ -173,6 +178,7 @@ async def test_welcome_wordmark_respects_reduced_animation(
         assert tuple(str(span.style) for span in welcome.render().spans) == before
 
 
+@pytest.mark.slow
 async def test_welcome_wordmark_skips_frames_while_app_is_blurred(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -223,6 +229,7 @@ def test_welcome_model_example_widens_prompt_discovery() -> None:
     assert result.query.scope == "all"
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("size", [(100, 28), (40, 20)], ids=["wide", "narrow"])
 async def test_welcome_example_click_loads_without_searching(
     tmp_path: pathlib.Path,
@@ -275,6 +282,7 @@ async def test_welcome_example_click_loads_without_searching(
         assert len(search_workers) == 1
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "size",
     [(24, 20), (30, 12), (20, 18), (16, 20)],
@@ -305,6 +313,7 @@ async def test_welcome_examples_fit_and_click_at_compact_sizes(
             assert layout._search_input.value == query
 
 
+@pytest.mark.slow
 async def test_welcome_compact_classes_follow_live_resize(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -340,6 +349,7 @@ async def test_welcome_compact_classes_follow_live_resize(
         assert not layout.has_class("-compact-height")
 
 
+@pytest.mark.slow
 async def test_welcome_example_rejects_invalid_index(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

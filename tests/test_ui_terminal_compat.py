@@ -11,6 +11,8 @@ from textual import _xterm_parser as xterm_parser, events
 from agentgrep.ui import _terminal_compat
 from tests.test_agentgrep_tui import _build_empty_ui_app
 
+pytestmark = pytest.mark.tui
+
 _MALFORMED_REPORTS = ("\x1b[<32;NaN;NaNM", "\x1b[<35;NaN;NaNm")
 _TEXTUAL_MOUSE_PATTERN = xterm_parser._re_mouse_event
 

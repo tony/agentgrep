@@ -16,6 +16,8 @@ import pytest
 from agentgrep.ui import theme
 from tests.test_agentgrep_tui import _build_empty_ui_app, load_agentgrep_module
 
+pytestmark = pytest.mark.tui
+
 
 def test_owned_theme_catalog_is_stable_and_complete() -> None:
     """The curated catalog owns stable names and complete semantic palettes."""
@@ -150,6 +152,7 @@ def test_each_profile_has_dedicated_find_highlights() -> None:
         assert variables["ag-match-find-current-fg"]
 
 
+@pytest.mark.slow
 async def test_picker_previews_and_escape_rolls_back(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -177,6 +180,7 @@ async def test_picker_previews_and_escape_rolls_back(
         assert app.theme == theme.DARK_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_runtime_preview_coalesces_hidden_hud_repaint(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -204,6 +208,7 @@ async def test_runtime_preview_coalesces_hidden_hud_repaint(
         assert refreshes == [None]
 
 
+@pytest.mark.slow
 async def test_rapid_preview_then_escape_cannot_reapply_stale_theme(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -219,6 +224,7 @@ async def test_rapid_preview_then_escape_cannot_reapply_stale_theme(
         assert app.theme == theme.DARK_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_picker_enter_persists_selection_off_pump(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -240,6 +246,7 @@ async def test_picker_enter_persists_selection_off_pump(
         assert preferences.load_theme_name() == theme.TOKYO_NIGHT_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_picker_fits_a_standard_terminal_and_keeps_plain_hints(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -264,6 +271,7 @@ async def test_picker_fits_a_standard_terminal_and_keeps_plain_hints(
         assert "Esc" in str(footer.render())
 
 
+@pytest.mark.slow
 async def test_picker_preview_inherits_canvas_without_square_corner_fill(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -279,6 +287,7 @@ async def test_picker_preview_inherits_canvas_without_square_corner_fill(
         assert preview.styles.background.a == 0
 
 
+@pytest.mark.slow
 async def test_rapid_direct_selections_are_serialized_and_latest_wins(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -317,6 +326,7 @@ async def test_rapid_direct_selections_are_serialized_and_latest_wins(
     assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_shutdown_flushes_latest_theme_after_active_save(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -369,6 +379,7 @@ async def test_shutdown_flushes_latest_theme_after_active_save(
     assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_shutdown_latest_write_cannot_be_overtaken(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -419,6 +430,7 @@ async def test_shutdown_latest_write_cannot_be_overtaken(
     assert preferences.load_theme_name(app._theme_config_path) == theme.TOKYO_NIGHT_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_shutdown_theme_save_failure_is_logged(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -458,6 +470,7 @@ async def test_shutdown_theme_save_failure_is_logged(
     )
 
 
+@pytest.mark.slow
 async def test_save_failure_keeps_session_theme_and_warns(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -483,6 +496,7 @@ async def test_save_failure_keeps_session_theme_and_warns(
     assert notices[-1][1]["severity"] == "warning"
 
 
+@pytest.mark.slow
 async def test_save_exception_keeps_explorer_usable_and_warns(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -511,6 +525,7 @@ async def test_save_exception_keeps_explorer_usable_and_warns(
     assert notices[-1][1]["severity"] == "warning"
 
 
+@pytest.mark.slow
 async def test_first_run_offer_opens_picker_and_saved_theme_loads_before_mount(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -566,6 +581,7 @@ async def test_first_run_offer_opens_picker_and_saved_theme_loads_before_mount(
     assert restored.get_default_screen().id != "theme-picker"
 
 
+@pytest.mark.slow
 async def test_first_run_selection_enters_explorer_then_persists(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

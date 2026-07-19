@@ -17,6 +17,8 @@ from agentgrep.ui import theme as ui_theme
 from agentgrep.ui._shell import ExplorerApp
 from tests.test_agentgrep_tui import _build_empty_ui_app
 
+pytestmark = pytest.mark.tui
+
 
 class ShellSizeCase(t.NamedTuple):
     """One terminal size whose shell state must survive Ctrl-P."""
@@ -122,6 +124,7 @@ def test_explorer_app_disables_textual_command_palette() -> None:
     assert not ExplorerApp.COMMANDS
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     _SHELL_SIZE_CASES,
@@ -162,6 +165,7 @@ async def test_ctrl_p_preserves_mounted_shell_state(
         assert body.region == body_region
 
 
+@pytest.mark.slow
 async def test_slash_keys_toggles_one_help_panel_without_notifications(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -205,6 +209,7 @@ async def test_slash_keys_toggles_one_help_panel_without_notifications(
         assert layout._search_input.value == "usable"
 
 
+@pytest.mark.slow
 async def test_slash_theme_selects_and_opens_owned_theme_picker(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -226,6 +231,7 @@ async def test_slash_theme_selects_and_opens_owned_theme_picker(
         assert app.theme == ui_theme.LIGHT_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_delivers_after_command_chrome_clears(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -285,6 +291,7 @@ async def test_slash_screenshot_delivers_after_command_chrome_clears(
         assert result_records == [record]
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_serializes_svg_off_pump(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -349,6 +356,7 @@ async def test_slash_screenshot_serializes_svg_off_pump(
         assert delivery["name"] == "screenshot"
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_drops_superseded_thread_result(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -424,6 +432,7 @@ async def test_slash_screenshot_drops_superseded_thread_result(
         assert delivered == ["<svg>second</svg>"]
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_drops_superseded_deferred_capture(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -466,6 +475,7 @@ async def test_slash_screenshot_drops_superseded_deferred_capture(
         assert delivered == ["<svg>latest</svg>"]
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_drops_worker_result_after_origin_is_covered(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -510,6 +520,7 @@ async def test_slash_screenshot_drops_worker_result_after_origin_is_covered(
         assert delivered == []
 
 
+@pytest.mark.slow
 async def test_screenshot_prefix_dispatches_highlighted_menu_command(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -545,6 +556,7 @@ async def test_screenshot_prefix_dispatches_highlighted_menu_command(
         assert len(delivered) == 1
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_retains_command_when_scheduling_fails(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -605,6 +617,7 @@ async def test_slash_screenshot_retains_command_when_scheduling_fails(
         assert delivered == ["<svg>accepted</svg>"]
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_rejects_path_argument_as_search_text(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -625,6 +638,7 @@ async def test_slash_screenshot_rejects_path_argument_as_search_text(
         assert delivered == []
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_drops_delivery_after_origin_is_covered(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -648,6 +662,7 @@ async def test_slash_screenshot_drops_delivery_after_origin_is_covered(
         assert delivered == []
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_drops_delivery_for_empty_stack(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -670,6 +685,7 @@ async def test_slash_screenshot_drops_delivery_for_empty_stack(
         assert delivered == []
 
 
+@pytest.mark.slow
 async def test_slash_screenshot_drops_delivery_after_origin_detaches(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -693,6 +709,7 @@ async def test_slash_screenshot_drops_delivery_after_origin_detaches(
     assert delivered == []
 
 
+@pytest.mark.slow
 async def test_invalid_slash_theme_remains_editable_and_does_not_search(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -716,6 +733,7 @@ async def test_invalid_slash_theme_remains_editable_and_does_not_search(
         assert "dark or light" in str(notes[0][0][0]).lower()
 
 
+@pytest.mark.slow
 async def test_common_commands_run_in_greplog(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -741,6 +759,7 @@ async def test_common_commands_run_in_greplog(
         assert layout._search_input.value == ""
 
 
+@pytest.mark.slow
 async def test_greplog_slash_menu_lists_filters_and_selects_at_77_columns(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -787,6 +806,7 @@ async def test_greplog_slash_menu_lists_filters_and_selects_at_77_columns(
         assert app.screen is layout
 
 
+@pytest.mark.slow
 async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -831,6 +851,7 @@ async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
         assert layout._search_input.value == ""
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("text", ["/exit", "/quit"])
 async def test_exit_aliases_run_in_greplog(
     tmp_path: pathlib.Path,
@@ -851,6 +872,7 @@ async def test_exit_aliases_run_in_greplog(
         assert layout._search_input.value == ""
 
 
+@pytest.mark.slow
 async def test_unsupported_command_arguments_remain_greplog_search_text(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -868,6 +890,7 @@ async def test_unsupported_command_arguments_remain_greplog_search_text(
         assert queries == ["/help find prompts"]
 
 
+@pytest.mark.slow
 async def test_hud_zoom_help_names_its_logical_panes(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -882,6 +905,7 @@ async def test_hud_zoom_help_names_its_logical_panes(
         assert by_name["minimize"].argument_hint == ""
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("view", ["empty", "searching"])
 @pytest.mark.parametrize("size", [(120, 30), (77, 30)], ids=["wide", "stacked"])
 async def test_detail_zoom_search_states_keep_body_content_visible(
@@ -924,6 +948,7 @@ async def test_detail_zoom_search_states_keep_body_content_visible(
         assert results.region.height > 0
 
 
+@pytest.mark.slow
 async def test_wide_hud_zoom_keeps_shell_usable_and_restores_geometry(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -980,6 +1005,7 @@ async def test_wide_hud_zoom_keeps_shell_usable_and_restores_geometry(
         assert app.focused is search
 
 
+@pytest.mark.slow
 async def test_wide_zoom_navigation_switches_to_visible_sibling(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1006,6 +1032,7 @@ async def test_wide_zoom_navigation_switches_to_visible_sibling(
         _assert_zoomed_focus(layout, "results", layout._results)
 
 
+@pytest.mark.slow
 async def test_stacked_zoom_navigation_switches_to_visible_sibling(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1032,6 +1059,7 @@ async def test_stacked_zoom_navigation_switches_to_visible_sibling(
         _assert_zoomed_focus(layout, "results", layout._results)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("size", [(120, 30), (77, 30)], ids=["wide", "stacked"])
 async def test_detail_zoom_navigation_never_focuses_hidden_results_widgets(
     tmp_path: pathlib.Path,
@@ -1062,6 +1090,7 @@ async def test_detail_zoom_navigation_never_focuses_hidden_results_widgets(
         _assert_zoomed_focus(layout, "results", expected)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("size", [(120, 30), (77, 30)], ids=["wide", "stacked"])
 @pytest.mark.parametrize(
     ("key", "target_id"),
@@ -1096,6 +1125,7 @@ async def test_detail_zoom_vim_navigation_keeps_focus_visible(
         _assert_zoomed_focus(layout, "results", target)
 
 
+@pytest.mark.slow
 async def test_narrow_detail_zoom_renders_selection_without_losing_collapse(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1168,6 +1198,7 @@ async def test_narrow_detail_zoom_renders_selection_without_losing_collapse(
         assert dropdown.is_mounted
 
 
+@pytest.mark.slow
 async def test_maximize_cached_small_detail_preserves_find_and_search_focus(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1209,6 +1240,7 @@ async def test_maximize_cached_small_detail_preserves_find_and_search_focus(
         assert app.focused is layout._search_input
 
 
+@pytest.mark.slow
 async def test_hud_bare_zoom_tracks_last_pane_and_explicit_target_selects(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1248,6 +1280,7 @@ async def test_hud_bare_zoom_tracks_last_pane_and_explicit_target_selects(
         assert layout.maximized is None
 
 
+@pytest.mark.slow
 async def test_hud_filter_focus_makes_bare_zoom_target_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1275,6 +1308,7 @@ async def test_hud_filter_focus_makes_bare_zoom_target_results(
         assert layout._body.has_class("-zoom-results")
 
 
+@pytest.mark.slow
 async def test_hud_empty_detail_zoom_warns_and_retains_command(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

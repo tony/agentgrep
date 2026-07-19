@@ -20,6 +20,8 @@ from agentgrep.ui.widgets import history as history_module
 from agentgrep.ui.widgets.history import _ROW_TEXT_MAX_CHARS, HistoryRecall
 from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
+pytestmark = pytest.mark.tui
+
 
 def _preview_text(app: App[None]) -> str:
     """Read the plain text currently shown in the modal's preview pane."""
@@ -79,6 +81,7 @@ def test_modal_bounds_foreign_entries_and_row_projection() -> None:
     assert row.plain.endswith("…")
 
 
+@pytest.mark.slow
 async def test_modal_enter_accepts_highlighted_query() -> None:
     """Enter dismisses with the highlighted (newest) query's text."""
     app = _HistoryHostApp(_entries())
@@ -89,6 +92,7 @@ async def test_modal_enter_accepts_highlighted_query() -> None:
         assert app.result == "agent:codex refactor planner"
 
 
+@pytest.mark.slow
 async def test_modal_filter_narrows_then_accepts() -> None:
     """Typing filters the list; Enter then accepts the surviving match."""
     app = _HistoryHostApp(_entries())
@@ -102,6 +106,7 @@ async def test_modal_filter_narrows_then_accepts() -> None:
         assert app.result == "tmux pane capture"
 
 
+@pytest.mark.slow
 async def test_modal_submit_flushes_pending_filter() -> None:
     """Enter waits for the current query instead of accepting a stale row."""
     app = _HistoryHostApp(_entries())
@@ -114,6 +119,7 @@ async def test_modal_submit_flushes_pending_filter() -> None:
         assert app.result == "tmux pane capture"
 
 
+@pytest.mark.slow
 async def test_modal_debounces_rapid_filter_scoring(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -140,6 +146,7 @@ async def test_modal_debounces_rapid_filter_scoring(
         assert calls == ["tmux"]
 
 
+@pytest.mark.slow
 async def test_modal_filter_offloads_and_drops_stale_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -179,6 +186,7 @@ async def test_modal_filter_offloads_and_drops_stale_results(
         assert score_threads and all(thread != pump_thread for thread in score_threads)
 
 
+@pytest.mark.slow
 async def test_modal_close_invalidates_draining_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -211,6 +219,7 @@ async def test_modal_close_invalidates_draining_filter(
         await pilot.pause()
 
 
+@pytest.mark.slow
 async def test_modal_filter_avoids_recursive_textual_matcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -232,6 +241,7 @@ async def test_modal_filter_avoids_recursive_textual_matcher(
         assert app.screen.query_one("#history-list", OptionList).option_count == 1
 
 
+@pytest.mark.slow
 async def test_modal_filter_matches_beyond_row_projection() -> None:
     """Compact list rows do not narrow the searchable recalled query."""
     full_query = "x" * (_ROW_TEXT_MAX_CHARS + 20) + " needle"
@@ -246,6 +256,7 @@ async def test_modal_filter_matches_beyond_row_projection() -> None:
         assert app.result == full_query
 
 
+@pytest.mark.slow
 async def test_modal_escape_dismisses_none() -> None:
     """Escape cancels and dismisses with ``None`` (restore the prior box text)."""
     app = _HistoryHostApp(_entries())
@@ -256,6 +267,7 @@ async def test_modal_escape_dismisses_none() -> None:
         assert app.result is None
 
 
+@pytest.mark.slow
 async def test_modal_down_updates_preview() -> None:
     """Moving the highlight down repaints the preview with the older entry."""
     app = _HistoryHostApp(_entries())
@@ -269,6 +281,7 @@ async def test_modal_down_updates_preview() -> None:
         assert "tmux pane capture" in _preview_text(app)
 
 
+@pytest.mark.slow
 async def test_modal_empty_history_shows_hint() -> None:
     """With no history the modal shows a muted hint, not a crash."""
     app = _HistoryHostApp([])
@@ -282,6 +295,7 @@ async def test_modal_empty_history_shows_hint() -> None:
         assert app.result is None
 
 
+@pytest.mark.slow
 async def test_modal_ctrl_c_clears_filter_then_closes() -> None:
     """Ctrl-C clears a non-empty filter; a second Ctrl-C on empty closes the modal."""
     app = _HistoryHostApp(_entries())
@@ -304,6 +318,7 @@ async def test_modal_ctrl_c_clears_filter_then_closes() -> None:
         assert app.result is None
 
 
+@pytest.mark.slow
 async def test_modal_seed_filters_on_open() -> None:
     """Opening with a seed pre-fills the filter and narrows immediately."""
     app = _HistoryHostApp(_entries(), seed="tmux")
@@ -330,6 +345,7 @@ SEEDED_OPEN_CASES = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", SEEDED_OPEN_CASES, ids=[c.test_id for c in SEEDED_OPEN_CASES])
 async def test_modal_filters_once_on_open(
     case: SeededOpenCase, monkeypatch: pytest.MonkeyPatch
@@ -349,6 +365,7 @@ async def test_modal_filters_once_on_open(
         assert calls == case.expected_calls
 
 
+@pytest.mark.slow
 async def test_modal_adds_matching_rows_in_one_bulk_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

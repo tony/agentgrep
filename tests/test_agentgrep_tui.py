@@ -1119,6 +1119,7 @@ def _static_content(widget: t.Any) -> t.Any:
     return content if content is not None else widget._content
 
 
+@pytest.mark.slow
 async def test_large_detail_body_builds_off_thread(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4060,6 +4061,7 @@ async def test_apply_records_batch_drops_stale_worker_projection(
         assert app.screen._results.option_count == 0
 
 
+@pytest.mark.slow
 async def test_stream_filter_worker_does_not_hold_message_dispatch(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4932,6 +4934,7 @@ STALE_GENERATION_CASES: tuple[StaleGenerationCase, ...] = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     STALE_GENERATION_CASES,
@@ -4967,6 +4970,7 @@ async def test_streaming_events_gated_by_generation(
         assert (app.screen._filter_header._current is not None) is case.expect_applied
 
 
+@pytest.mark.slow
 async def test_streaming_records_batch_lands_in_results(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

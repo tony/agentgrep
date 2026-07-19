@@ -30,6 +30,8 @@ from agentgrep.ui import _runtime
 from agentgrep.ui.layouts import hud
 from tests.test_agentgrep_tui import _build_empty_ui_app
 
+pytestmark = pytest.mark.tui
+
 #: The HUD layout holds every worker launch and ``_apply_records_batch`` (NB-4/NB-6).
 _APP_PATH = pathlib.Path(hud.__file__)
 _APP_TREE = ast.parse(_APP_PATH.read_text(encoding="utf-8"))
@@ -805,6 +807,7 @@ async def test_stream_apply_rejects_nonpositive_chunk() -> None:
 # --- NB-7: cooperative cancel ----------------------------------------------
 
 
+@pytest.mark.slow
 async def test_stop_search_requests_cooperative_cancel(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -844,6 +847,7 @@ def test_watchdog_logs_on_stall(caplog: pytest.LogCaptureFixture) -> None:
     assert t.cast("int", stalls[0].agentgrep_pump_stall_ms) >= 20
 
 
+@pytest.mark.slow
 async def test_watchdog_not_started_without_env(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
