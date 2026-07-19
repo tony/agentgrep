@@ -1,0 +1,4 @@
+{"sessionId":"00000000-0000-0000-0000-000000000300","projectHash":"d7d6f0c6b09b73fa820e5bb1c6a7e3b0c3e1c6b9d7e4b3a2f1c8b7d6e5d4c3b2","startTime":"2026-05-17T12:00:00.000Z","lastUpdated":"2026-05-17T12:00:00.000Z","kind":"main"}
+{"id":"00000000-0000-0000-0000-000000000301","timestamp":"2026-05-17T12:00:05.000Z","type":"user","content":[{"text":"<redacted user prompt>"}]}
+{"id":"00000000-0000-0000-0000-000000000302","timestamp":"2026-05-17T12:00:08.000Z","type":"gemini","content":"<redacted assistant reply>","thoughts":[{"subject":"approach","description":"<redacted reasoning>","timestamp":"2026-05-17T12:00:07.500Z"}],"tokens":{"input":1000,"output":50,"cached":0,"thoughts":20,"tool":0,"total":1070},"model":"gemini-3-flash-preview"}
+{"$set":{"lastUpdated":"2026-05-17T12:00:08.000Z"}}

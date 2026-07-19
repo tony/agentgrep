@@ -1,0 +1,16 @@
+[
+  {
+    "sessionId": "00000000-0000-0000-0000-000000000300",
+    "messageId": 0,
+    "timestamp": "2026-05-17T12:00:05.000Z",
+    "type": "user",
+    "message": "<redacted user prompt>"
+  },
+  {
+    "sessionId": "00000000-0000-0000-0000-000000000300",
+    "messageId": 1,
+    "timestamp": "2026-05-17T12:01:30.000Z",
+    "type": "user",
+    "message": "<redacted second prompt>"
+  }
+]
