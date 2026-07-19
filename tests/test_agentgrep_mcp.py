@@ -18,6 +18,8 @@ from fastmcp import Client, FastMCP
 import agentgrep
 from agentgrep import mcp as _agentgrep_mcp_module
 
+pytestmark = pytest.mark.mcp
+
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -443,6 +445,7 @@ def tool_payload(result: object) -> dict[str, t.Any]:
     return t.cast("dict[str, t.Any]", json.loads(text))
 
 
+@pytest.mark.slow
 async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -570,6 +573,7 @@ def _codex_user_session(session_id: str, text: str) -> list[dict[str, object]]:
     ]
 
 
+@pytest.mark.slow
 async def test_mcp_search_honors_query_language(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -605,6 +609,7 @@ async def test_mcp_search_honors_query_language(
     assert len(wrong_agent_data.results) == 0
 
 
+@pytest.mark.slow
 async def test_mcp_search_honors_query_language_in_single_tokens(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -654,6 +659,7 @@ async def test_mcp_search_rejects_invalid_query() -> None:
     assert "agent" in error_message
 
 
+@pytest.mark.slow
 async def test_mcp_search_tool_sorts_records_across_sources(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -825,6 +831,7 @@ async def test_mcp_search_cursor_returns_next_page_without_duplicate(
     assert second_data["request"]["terms"] == ["serenity"]
 
 
+@pytest.mark.slow
 async def test_mcp_search_explicit_origin_filters_survive_cursor(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -946,6 +953,7 @@ def test_mcp_explicit_origin_filters_keep_plain_terms_fast_path() -> None:
     )
 
 
+@pytest.mark.slow
 async def test_mcp_search_normalizes_origin_path_filters(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -987,6 +995,7 @@ async def test_mcp_search_normalizes_origin_path_filters(
     assert [row["text"] for row in tilde_data["results"]] == ["origin serenity"]
 
 
+@pytest.mark.slow
 async def test_mcp_search_ignores_blank_origin_filters(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1021,6 +1030,7 @@ async def test_mcp_search_ignores_blank_origin_filters(
     assert [row["text"] for row in blank_data["results"]] == ["origin serenity"]
 
 
+@pytest.mark.slow
 async def test_mcp_search_origin_filters_scope_boolean_query(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1068,6 +1078,7 @@ async def test_mcp_search_origin_filters_scope_boolean_query(
     assert [row["text"] for row in data["results"]] == ["foo same", "bar same"]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     MCP_ORIGIN_PHRASE_CASES,
@@ -1121,6 +1132,7 @@ async def test_mcp_search_origin_filters_preserve_phrase_terms(
     assert [row["text"] for row in data["results"]] == case.expected_texts
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     MCP_ORIGIN_LITERAL_TERM_CASES,
@@ -1174,6 +1186,7 @@ async def test_mcp_search_origin_filters_preserve_literal_punctuation_terms(
     assert [row["text"] for row in data["results"]] == case.expected_texts
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     MCP_ORIGIN_CASE_SENSITIVE_CASES,
@@ -1214,6 +1227,7 @@ async def test_mcp_search_origin_filters_preserve_case_sensitive_terms(
     assert [row["text"] for row in data["results"]] == case.expected_texts
 
 
+@pytest.mark.slow
 async def test_mcp_search_cursor_rejects_empty_terms(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1246,6 +1260,7 @@ async def test_mcp_search_cursor_rejects_empty_terms(
     assert "non-empty list" in error_message
 
 
+@pytest.mark.slow
 async def test_mcp_filter_sources_cursor_returns_next_page(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1272,6 +1287,7 @@ async def test_mcp_filter_sources_cursor_returns_next_page(
     assert second_data["status"] == {"state": "complete", "reason": None}
 
 
+@pytest.mark.slow
 async def test_mcp_inspect_result_uses_opaque_ref(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1372,6 +1388,7 @@ async def test_mcp_list_sources_exposes_searchability_metadata(
     assert inspectable_source["searchable_reason"]
 
 
+@pytest.mark.slow
 async def test_mcp_capabilities_resource_reports_read_only() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -1390,6 +1407,7 @@ async def test_mcp_capabilities_resource_reports_read_only() -> None:
     assert data["search_scopes"] == ["prompts", "conversations", "all"]
 
 
+@pytest.mark.slow
 async def test_mcp_capabilities_lists_every_supported_agent_and_adapter() -> None:
     """``agentgrep://capabilities`` must advertise every agent and adapter id.
 
@@ -1462,6 +1480,7 @@ async def test_mcp_prompt_guides_search() -> None:
     assert "codex" in rendered
 
 
+@pytest.mark.slow
 async def test_mcp_search_tool_rejects_legacy_search_type() -> None:
     """The MCP search tool accepts ``scope`` instead of legacy ``search_type``."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1481,6 +1500,7 @@ async def test_mcp_search_tool_rejects_legacy_search_type() -> None:
     assert result.is_error is True
 
 
+@pytest.mark.slow
 async def test_audit_middleware_emits_extras(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1537,6 +1557,7 @@ async def test_audit_middleware_redacts_pattern(
     assert secret not in str(summary)
 
 
+@pytest.mark.slow
 async def test_audit_middleware_redacts_cursor(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1677,6 +1698,7 @@ async def test_mcp_list_stores_returns_catalog_entries() -> None:
     assert {s["agent"] for s in data["stores"]} >= {"codex", "claude", "cursor-cli", "cursor-ide"}
 
 
+@pytest.mark.slow
 async def test_mcp_list_stores_filters_by_agent() -> None:
     """``list_stores`` respects the ``agent`` filter."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1689,6 +1711,7 @@ async def test_mcp_list_stores_filters_by_agent() -> None:
     assert {s["agent"] for s in data["stores"]} == {"cursor-cli"}
 
 
+@pytest.mark.slow
 async def test_mcp_list_stores_filters_catalog_only_agent() -> None:
     """Catalog filtering accepts an unsupported agent emitted by the catalog."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1701,6 +1724,7 @@ async def test_mcp_list_stores_filters_catalog_only_agent() -> None:
     assert {store["agent"] for store in data["stores"]} == {"windsurf"}
 
 
+@pytest.mark.slow
 async def test_mcp_get_store_descriptor_known_and_unknown() -> None:
     """``get_store_descriptor`` returns one entry or raises for unknown ids."""
     from fastmcp.exceptions import ToolError
@@ -1727,6 +1751,7 @@ async def test_mcp_get_store_descriptor_known_and_unknown() -> None:
     assert error_message and "definitely.not.a.real.store" in error_message
 
 
+@pytest.mark.slow
 async def test_mcp_list_sources_with_filters(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1754,6 +1779,7 @@ async def test_mcp_list_sources_with_filters(
     assert all(s["path_kind"] == "sqlite_db" for s in data["sources"])
 
 
+@pytest.mark.slow
 async def test_mcp_list_sources_exposes_non_default_coverage_on_request(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1790,6 +1816,7 @@ async def test_mcp_list_sources_exposes_non_default_coverage_on_request(
     assert {s["coverage"] for s in inventory_data["sources"]} == {"inspectable"}
 
 
+@pytest.mark.slow
 async def test_mcp_list_sources_exposes_version_detection(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1822,6 +1849,7 @@ async def test_mcp_list_sources_exposes_version_detection(
     }
 
 
+@pytest.mark.slow
 async def test_mcp_filter_sources_requires_pattern() -> None:
     """``filter_sources`` rejects an empty pattern at the validation layer."""
     from fastmcp.exceptions import ToolError
@@ -1839,6 +1867,7 @@ async def test_mcp_filter_sources_requires_pattern() -> None:
     assert error_message  # validation should refuse the empty pattern
 
 
+@pytest.mark.slow
 async def test_mcp_summarize_discovery_totals_match_list_sources(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1861,6 +1890,7 @@ async def test_mcp_summarize_discovery_totals_match_list_sources(
     assert summary_data["total_sources"] == listing_data["total"]
 
 
+@pytest.mark.slow
 async def test_mcp_validate_query_substring_match() -> None:
     """``validate_query`` returns ``matches=True`` for a literal hit."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1898,6 +1928,7 @@ async def test_mcp_validate_query_validates_query_language() -> None:
     assert "agent" in (bad_data["error_message"] or "")
 
 
+@pytest.mark.slow
 async def test_mcp_validate_query_empty_returns_guidance() -> None:
     """An empty validation request returns a structured usage diagnostic."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1933,6 +1964,7 @@ async def test_mcp_query_language_resource_lists_every_field() -> None:
     assert payload["summary"]
 
 
+@pytest.mark.slow
 async def test_mcp_search_tool_description_mentions_query_language() -> None:
     """The search tool advertises the query language in its schema."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1945,6 +1977,7 @@ async def test_mcp_search_tool_description_mentions_query_language() -> None:
     assert "query language" in (description or "")
 
 
+@pytest.mark.documentation
 async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
     """Every docs-only tool shim mirrors its live MCP input schema."""
     from docs._ext import agentgrep_fastmcp as docs_tools
@@ -1984,6 +2017,8 @@ async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
     assert description_mismatches == []
 
 
+@pytest.mark.documentation
+@pytest.mark.slow
 async def test_docs_list_stores_agent_examples_are_valid_selectors() -> None:
     """Documented agent examples stay inside the MCP selector enum."""
     from docs._ext import agentgrep_fastmcp as docs_tools
@@ -1998,6 +2033,7 @@ async def test_docs_list_stores_agent_examples_are_valid_selectors() -> None:
     assert set(agent_schema["examples"]) <= set(agent_schema["enum"])
 
 
+@pytest.mark.slow
 async def test_mcp_recent_sessions_filters_by_mtime(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2030,6 +2066,7 @@ async def test_mcp_recent_sessions_filters_by_mtime(
     _ = state_db  # quiet F841 — kept for readability of the test setup
 
 
+@pytest.mark.slow
 async def test_mcp_inspect_record_sample_unknown_path(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2055,6 +2092,7 @@ async def test_mcp_inspect_record_sample_unknown_path(
     assert data["error_message"] == "source not found"
 
 
+@pytest.mark.slow
 async def test_mcp_inspect_record_sample_returns_codex_history(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2086,6 +2124,7 @@ async def test_mcp_inspect_record_sample_returns_codex_history(
     assert data["sample_count"] >= 1
 
 
+@pytest.mark.slow
 async def test_mcp_inspect_record_sample_returns_non_default_adapter_records(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2157,6 +2196,7 @@ async def test_mcp_inspect_record_sample_returns_non_default_adapter_records(
     assert "do-not-index" not in config_data["records"][0]["text"]
 
 
+@pytest.mark.slow
 async def test_mcp_catalog_resource_returns_full_catalog() -> None:
     """``agentgrep://catalog`` returns the StoreCatalog payload."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -2171,6 +2211,7 @@ async def test_mcp_catalog_resource_returns_full_catalog() -> None:
     assert "claude.projects.session" in store_ids
 
 
+@pytest.mark.slow
 async def test_mcp_store_roles_resource() -> None:
     """``agentgrep://store-roles`` lists every StoreRole with a description."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -2185,6 +2226,7 @@ async def test_mcp_store_roles_resource() -> None:
     assert all(row["description"] for row in rows)
 
 
+@pytest.mark.slow
 async def test_mcp_store_formats_resource() -> None:
     """``agentgrep://store-formats`` lists every StoreFormat with a description."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -2250,6 +2292,7 @@ MCP_TERM_TOKENIZATION_CASES: tuple[McpTermTokenizationCase, ...] = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     MCP_TERM_TOKENIZATION_CASES,
