@@ -1,21 +1,17 @@
 """Serializers for the CLI's JSON and NDJSON output modes.
 
 Turn normalized records, source handles, and result envelopes into the
-plain-dict payloads the ``--json`` / ``--ndjson`` paths emit. Prefers the
-pydantic-backed serializers and falls back to hand-written ones when pydantic
-is unavailable, behind ``maybe_build_pydantic``.
+plain-dict payloads the ``--json`` / ``--ndjson`` paths emit. Pydantic is a
+required dependency for schema boundaries elsewhere; these direct serializers
+own the CLI wire shape without a redundant validation round trip.
 """
 
 from __future__ import annotations
 
-import typing as t
-
-from agentgrep import maybe_use_pydantic
 from agentgrep._text import format_display_path
 from agentgrep.origin_serializers import serialize_record_metadata, serialize_record_origin
 from agentgrep.records import (
     SCHEMA_VERSION,
-    EnvelopeFactory,
     EnvelopePayload,
     FindRecord,
     FindRecordPayload,
@@ -26,25 +22,6 @@ from agentgrep.records import (
     SourceVersionDetection,
     SourceVersionDetectionPayload,
 )
-
-
-def maybe_build_pydantic() -> tuple[
-    t.Callable[[SearchRecord], dict[str, object]],
-    t.Callable[[FindRecord], dict[str, object]],
-    EnvelopeFactory,
-]:
-    """Return Pydantic serializers or plain fallbacks."""
-    try:
-        return maybe_use_pydantic()
-    except ImportError:
-        return (
-            lambda record: t.cast("dict[str, object]", serialize_search_record(record)),
-            lambda record: t.cast("dict[str, object]", serialize_find_record(record)),
-            lambda command, query_data, results: t.cast(
-                "dict[str, object]",
-                build_envelope(command, query_data, results),
-            ),
-        )
 
 
 def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
@@ -240,7 +217,6 @@ def serialize_grep_end(
 
 __all__ = (
     "build_envelope",
-    "maybe_build_pydantic",
     "serialize_find_record",
     "serialize_grep_begin",
     "serialize_grep_end",

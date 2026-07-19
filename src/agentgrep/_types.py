@@ -1,10 +1,9 @@
-"""Structural typing shims for optional third-party surfaces.
+"""Structural typing shims for presentation and UI surfaces.
 
 Private module (the leading underscore marks it internal): these
 ``typing.Protocol`` definitions describe the minimal surfaces agentgrep needs
-from pydantic, argparse help themes, Rich, and Textual so the engine and CLI
-stay duck-typed and the pydantic-free fallback keeps working. They carry no
-behavior.
+from argparse help themes, Rich, and Textual so callers stay duck-typed. They
+carry no behavior.
 """
 
 from __future__ import annotations
@@ -16,9 +15,6 @@ if t.TYPE_CHECKING:
 
 __all__ = [
     "HelpTheme",
-    "PydanticModule",
-    "PydanticTypeAdapter",
-    "PydanticTypeAdapterFactory",
     "QueryAppLike",
     "RichTextModule",
     "RunnableAppLike",
@@ -32,32 +28,6 @@ __all__ = [
     "TextualOptionListInternalsModule",
     "TextualWidgetsModule",
 ]
-
-
-class PydanticTypeAdapter(t.Protocol):
-    """Minimal TypeAdapter surface used by ``agentgrep``."""
-
-    def validate_python(self, value: object, /) -> object:
-        """Validate a Python object."""
-        ...
-
-    def dump_python(self, value: object, /, *, mode: str = "python") -> object:
-        """Dump a Python object."""
-        ...
-
-
-class PydanticTypeAdapterFactory(t.Protocol):
-    """Factory for creating TypeAdapters."""
-
-    def __call__(self, value_type: object, /) -> PydanticTypeAdapter:
-        """Create a TypeAdapter."""
-        ...
-
-
-class PydanticModule(t.Protocol):
-    """Minimal Pydantic module surface used at runtime."""
-
-    TypeAdapter: PydanticTypeAdapterFactory
 
 
 class HelpTheme(t.Protocol):

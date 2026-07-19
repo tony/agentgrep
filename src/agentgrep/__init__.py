@@ -37,7 +37,6 @@ import contextlib
 import dataclasses
 import datetime
 import functools
-import importlib
 import itertools
 import json
 import logging
@@ -107,9 +106,6 @@ from agentgrep._text import (
 )
 from agentgrep._types import (
     HelpTheme,
-    PydanticModule,
-    PydanticTypeAdapter,
-    PydanticTypeAdapterFactory,
     QueryAppLike,
     RichTextModule,
     RunnableAppLike,
@@ -378,44 +374,6 @@ else:
     PrivatePathBase = type(pathlib.Path())
 
 
-def maybe_use_pydantic() -> tuple[
-    t.Callable[[SearchRecord], dict[str, object]],
-    t.Callable[[FindRecord], dict[str, object]],
-    EnvelopeFactory,
-]:
-    """Return serializers backed by Pydantic when available."""
-    pydantic_module = t.cast(
-        "PydanticModule",
-        t.cast("object", importlib.import_module("pydantic")),
-    )
-    search_adapter = pydantic_module.TypeAdapter(SearchRecordPayload)
-    find_adapter = pydantic_module.TypeAdapter(FindRecordPayload)
-    envelope_adapter = pydantic_module.TypeAdapter(EnvelopePayload)
-
-    def pydantic_search(record: SearchRecord) -> dict[str, object]:
-        payload = search_adapter.validate_python(serialize_search_record(record))
-        dumped = search_adapter.dump_python(payload, mode="json")
-        return t.cast("dict[str, object]", dumped)
-
-    def pydantic_find(record: FindRecord) -> dict[str, object]:
-        payload = find_adapter.validate_python(serialize_find_record(record))
-        dumped = find_adapter.dump_python(payload, mode="json")
-        return t.cast("dict[str, object]", dumped)
-
-    def pydantic_envelope(
-        command: str,
-        query_data: dict[str, object],
-        results: list[dict[str, object]],
-    ) -> dict[str, object]:
-        payload = envelope_adapter.validate_python(
-            build_envelope(command, query_data, results),
-        )
-        dumped = envelope_adapter.dump_python(payload, mode="json")
-        return t.cast("dict[str, object]", dumped)
-
-    return pydantic_search, pydantic_find, pydantic_envelope
-
-
 def run_ui(
     home: pathlib.Path,
     query: SearchQuery,
@@ -593,7 +551,6 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     build_grep_query,
     filter_find_records,
     format_grep_record,
-    maybe_build_pydantic,
     print_find_results,
     print_grep_results,
     run_find_command,
@@ -679,9 +636,6 @@ __all__ = (
     "ProgressSnapshot",
     "ProgressUpdatedPayload",
     "ProjectContext",
-    "PydanticModule",
-    "PydanticTypeAdapter",
-    "PydanticTypeAdapterFactory",
     "QueryAppLike",
     "RawJsonlSkipLine",
     "RecordOrigin",
@@ -813,8 +767,6 @@ __all__ = (
     "main",
     "matches_record",
     "matches_text",
-    "maybe_build_pydantic",
-    "maybe_use_pydantic",
     "noop_search_progress",
     "normalize_color_mode",
     "open_readonly_sqlite",

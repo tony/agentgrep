@@ -19,8 +19,8 @@ Key features:
 - Cross-tool search over Codex, Claude Code, and Cursor prompt/history stores
 - CLI entry point with a Textual TUI for interactive browsing
 - MCP server entry point exposing the same search surface as MCP tools
-- Dependency-light request, result, and event types, with Pydantic adapters
-  for MCP schemas, docs, and other typed boundaries where useful
+- Dependency-light request, result, and event types, with required Pydantic
+  adapters for MCP schemas, docs, and other typed boundaries
 - Full type safety (ty, strict warning-as-error)
 
 ### Platform Support
@@ -409,8 +409,8 @@ src/agentgrep/
 
 3. **CLI surface** (`src/agentgrep/cli/`)
    - Argument parsing and output rendering for `agentgrep`
-   - JSON result payload construction, NDJSON/event rendering, and
-     pydantic-aware serialization with a pydantic-free fallback path
+   - JSON result payload construction and NDJSON/event rendering through
+     direct typed serializers
 
 4. **Query language** (`src/agentgrep/query/`)
    - Search field registry, AST, parser, compiler, and date matching helpers
@@ -463,16 +463,13 @@ resize, and cancel at once. ADR 0011 (NB-1..NB-10) is the contract; the
   `AGENTGREP_TUI_WATCHDOG=1` against a large real store before calling a path
   non-blocking.
 
-### Backend availability
+### Dependency boundaries
 
-agentgrep is opportunistic about its dependencies. `pydantic`, `textual`, and
-`fastmcp` are declared, but the CLI JSON path must keep its pydantic-free
-fallback so basic search output remains available when Pydantic cannot be
-imported. Treat Pydantic as a schema, validation, and adapter layer at explicit
-boundaries; do not make Pydantic-only model behavior the semantic source of
-truth for CLI/MCP/search behavior. When adding code that imports an optional
-dependency, keep the fallback path intact and covered by a test (see
-`test_json_output_falls_back_without_pydantic` for the pattern).
+Pydantic is a required dependency. CLI JSON and NDJSON output calls the direct
+TypedDict serializers and envelope builder; Pydantic remains the schema,
+validation, and adapter layer at explicit MCP and event boundaries. Do not make
+Pydantic-only model behavior the semantic source of truth for CLI, MCP, or
+search behavior. Keep genuinely optional accelerators behind guarded imports.
 
 ## Testing Strategy
 
@@ -506,17 +503,6 @@ matrix.
 5. **Running tests continuously**
    - Use pytest-watcher during development: `uv run ptw .`
    - For doctests: `uv run ptw . --now --doctest-modules`
-
-### Example Fixture Usage
-
-```python
-def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch) -> None:
-    """JSON output works when pydantic isn't importable."""
-    agentgrep = load_agentgrep_module()
-    # ... build a SearchRecord ...
-    monkeypatch.setattr(agentgrep.importlib, "import_module", fake_import_module)
-    # ... assert result payload shape ...
-```
 
 ## Coding Standards
 
@@ -714,9 +700,9 @@ agentgrep(refactor[typecheck]): Satisfy ty diagnostics
 why: ty reports a few stricter diagnostics around TypedDict payloads, dynamic class bases, and monkeypatched imports. Making those cases explicit keeps the runtime behavior unchanged while letting the new ty gate run without suppressing broad categories of checks.
 
 what:
-- Cast JSON TypedDict payloads directly in the pydantic-free fallback instead of rebuilding them through dict().
+- Cast JSON TypedDict payloads only at untyped JSON container boundaries.
 - Mark the dynamic Textual App base with the targeted ty unsupported-base suppression.
-- Use pytest monkeypatch for the importlib fallback test instead of assigning over the imported module function directly.
+- Use pytest monkeypatch for import substitution tests instead of assigning over imported functions directly.
 ```
 #### Release commits
 
