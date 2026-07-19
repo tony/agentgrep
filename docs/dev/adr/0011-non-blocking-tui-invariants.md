@@ -62,85 +62,85 @@ input `_on_key` / `_watch_value` overrides, `set_interval` / `set_timer` /
 
 ## Enforcement
 
-Three layers, all default-off in production:
+Three complementary layers have different activation rules:
 
 1. **Primitives** in `agentgrep.ui._runtime` make the right thing
-   structural: the `pump_only` / `offload` decorators assert (in dev/test
-   builds) that a callable runs on / off the bound pump thread (NB-1, NB-2,
+   structural: the `pump_only` / `offload` decorators assert, when guards are
+   enabled, that a callable runs on / off the bound pump thread (NB-1, NB-2,
    NB-8); `stream_apply` enforces the chunk cap and the inter-slice `await`
    (NB-4); `make_gated_emitter` centralizes the bus-bypass plus generation
    token (NB-3, NB-10).
-2. **A static AST guard**, `tests/test_tui_non_blocking.py`, parses `ui/app.py`,
-   classifies pump-thread methods, and fails if one contains a blocking call.
-   JSON parsing is confined to the one bounded builder; a new site must be added
-   to that allowlist deliberately. The same scan asserts every worker launch is
-   `thread=True, exclusive=True` with a group (NB-6) and that the batch applier
-   routes through `stream_apply` (NB-4).
-3. **An opt-in heartbeat watchdog** (`AGENTGREP_TUI_WATCHDOG`) records a pump
-   heartbeat on a timer and logs `pump heartbeat stalled` with
-   `agentgrep_pump_stall_ms` when the pump goes quiet past a threshold. It is
-   the oracle the hang-fuzz harness asserts on; the structured log keys are kept
-   stable for that reason and are OpenTelemetry-attribute-friendly if metrics
-   land later.
+2. **Manual static review** uses the `textual-non-blocking-pump` skill to
+   enumerate every pump entrypoint, follow its helper calls, inspect worker
+   flags and groups, and confirm bounded apply and generation-token seams. This
+   is a required review method, not an automated static CI gate; it cannot prove
+   the semantic absence of blocking work.
+3. **Runtime observation** combines an audit hook and heartbeat watchdog. A
+   truthy `AGENTGREP_TUI_WATCHDOG` enables the audit hook, decorator assertions,
+   and heartbeat. With the variable unset, the log-only heartbeat defaults on
+   for interactive stdout TTYs; a falsey value forces it off, and pytest never
+   auto-starts it. The heartbeat logs `pump heartbeat stalled` with
+   `agentgrep_pump_stall_ms` after a threshold. The deterministic oracle in
+   `tests/test_tui_runtime_oracles.py` pins that warning and its structured
+   threshold fields.
 
-The decorators and watchdog are active under pytest (so violations fail CI) or
-when the env var is set; otherwise the decorators reduce to one boolean check
-and the watchdog thread never starts. Textual's debug `SLOW_THRESHOLD` log was
-rejected as enforcement — it offers no assertion or test hook. A ruff rule was
-rejected — ruff has no custom-Python-rule mechanism.
+The decorators are enabled under pytest or an explicitly truthy watchdog
+variable; the audit hook requires the explicit truthy variable because it can
+raise. Textual's debug `SLOW_THRESHOLD` log was rejected as enforcement — it
+offers no assertion or test hook. A ruff rule was rejected — ruff has no
+custom-Python-rule mechanism.
 
 The `_runtime` module is Textual-free and imports only the standard library, so
 it sits below `app.py` in the
 {ref}`ADR 0010 layering <adr-module-boundaries-and-facade-re-export-contract>`
-and the guard/unit tests reach it without entering the app factory's closure.
+and focused runtime tests reach it without entering the application shell.
 
 ## Consequences
 
-The invariants are now executable: a blocking call in a pump handler fails the
-AST guard, a worker body run on the pump trips `@offload`, and a wedged pump is
-observable through the watchdog. The chief risk is a false positive in the
-static guard; it is mitigated by an explicit, reviewed allowlist and failure
-messages that name the NB rule. The widgets still live inside the
-`build_streaming_ui_app` closure; the guard walks into it, so lifting them to
-`ui/widgets/` modules (a strangler-fig follow-up) strengthens but is not
-required by this enforcement.
+The invariants have structural runtime seams plus a required manual review: a
+worker body run on the pump trips `@offload` when guards are enabled, the
+explicit audit mode aborts covered blocking-I/O initiation, and a wedged pump
+is observable through the watchdog. Manual review remains necessary for
+unbounded CPU, dynamic dispatch, stale repaint, teardown, and other behavior
+the runtime mechanisms cannot prove before it executes. Moving code between UI
+modules does not change that review obligation.
 
 ## Coverage limits and the runtime complement
 
-The static guard prevents a *decidable* subset of blocking calls reachable from a
-classified pump entrypoint. "Blocks the pump" is a semantic, Rice-undecidable
-property, so that syntactic proxy is sound in neither direction. Three limits are
-load-bearing and point to a runtime complement rather than an ever-larger
-denylist:
+Manual static review can prevent a *decidable* subset of blocking calls
+reachable from a recognized pump entrypoint. "Blocks the pump" is a semantic,
+Rice-undecidable property, so source inspection is sound in neither direction.
+Three limits are load-bearing and require runtime complements:
 
 - **Enumerate pump entrypoints; do not classify by name prefix.** Textual also
   runs user code on the pump through `@on(...)`-decorated handlers (arbitrary
   names), inline reactive `watch_` / `validate_` / `compute_` (which bypass the
   message queue *and* Textual's own `SLOW_THRESHOLD`), `render` / `__rich__` /
   `get_content_*`, and the callables passed to `set_timer` / `set_interval` /
-  `call_from_thread` / `subscribe`. The guard seeds the `@on` and *named*
-  scheduler / `call_from_thread` / `subscribe` targets; a `lambda` / `partial`
-  target or a new helper still carries `@pump_only` so both the classifier and
-  the runtime assert cover it.
-- **Interprocedural and CPU blind spots.** The guard follows same-class
-  `self.helper()` calls, so a denylisted call one hop below a pump method is
-  caught — but cross-module or dynamic dispatch is not, and pure-CPU blocking
-  (an unbounded casefold / sort / regex, `Syntax(...).highlight` on a full body)
-  has no call signature to denylist at all.
-- **Prevention vs. detection.** The decidable subset is *prevented* at merge; the
-  undecidable residue is *detected* at runtime by the heartbeat watchdog. An
-  opt-in `sys.addaudithook` scoped to the pump thread adds denylist-free
-  *prevention* of CPython-instrumented blocking-I/O *initiation* (socket.connect,
-  getaddrinfo, subprocess, time.sleep, sqlite3.connect): it fires
-  on the acting thread and aborts the syscall regardless of how the call was
-  spelled or dispatched. It is blind to CPU spin, byte-transfer on already-open
+  `call_from_thread` / `subscribe`. Reviewers enumerate those sites and trace
+  their named, `lambda`, and `partial` targets; every new pump entrypoint still
+  carries `@pump_only` so enabled runtime assertions check its thread placement.
+- **Interprocedural and CPU blind spots.** Reviewers follow same-class helpers
+  and cross-module calls by hand, but dynamic dispatch remains easy to miss and
+  pure-CPU blocking (an unbounded casefold / sort / regex,
+  `Syntax(...).highlight` on a full body) has no call signature to search for.
+- **Prevention vs. detection.** Manual review reduces known hazards before
+  merge; the heartbeat watchdog detects super-threshold stalls only on exercised
+  runtime paths. An explicit-env `sys.addaudithook` scoped to the pump thread
+  checks a finite eight-event allowlist: `socket.connect`, `socket.getaddrinfo`,
+  `subprocess.Popen`, `os.system`, `os.exec`, `os.spawn`, `time.sleep`, and
+  `sqlite3.connect`. For those covered events it fires on the acting thread and
+  can abort initiation regardless of how the operation was spelled, aliased, or
+  dynamically dispatched. `open` and `import` are deliberately excluded because
+  Textual/Rich perform legitimate pump-side theme and syntax reads and lazy
+  imports. The hook is also blind to CPU spin, byte-transfer on already-open
   handles, and native syscalls that skip `PySys_Audit`; the wall-clock watchdog
   is the cause-agnostic backstop for that residue.
 
-The two heaviest sites the static guard cannot reach are bounded by design rather
-than by the guard. Filter projection runs in `_run_filter_worker`; the pump adopts
-its prepared model in `on_filter_completed`, and `SearchResultsList` renders only
-the requested `ScrollView` lines through bounded row and final-strip caches.
+The two heaviest sites are bounded by design rather than by static enforcement.
+Filter projection runs in `_run_filter_worker`; the pump adopts its prepared
+model in `on_filter_completed`, and `SearchResultsList` renders only the
+requested `ScrollView` lines through bounded row and final-strip caches.
 Find-in-detail re-highlight (`_present_detail_find`, a full-body
 `Syntax.highlight`) reuses a cached syntax base. The `textual-non-blocking-pump`
 skill carries the full pump-entrypoint catalog and the per-change review rules.
@@ -148,5 +148,6 @@ skill carries the full pump-entrypoint catalog and the per-change review rules.
 ## Final position
 
 The NB-1..NB-10 catalog is the source of truth for TUI concurrency. New TUI work
-reuses the `_runtime` primitives rather than re-deriving the patterns, and the
-static guard plus opt-in watchdog keep the invariants from eroding.
+reuses the `_runtime` primitives rather than re-deriving the patterns. Manual
+skill-guided review, the explicit-env audit mode, and the default-on interactive
+heartbeat provide defense in depth without claiming complete static proof.

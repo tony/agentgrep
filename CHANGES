@@ -42,6 +42,28 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Breaking changes
+
+#### Pydantic bridge exports removed (#138)
+
+Pydantic is now a required dependency, and the optional CLI serialization
+bridge has been removed. Library callers importing `maybe_use_pydantic`,
+`maybe_build_pydantic`, `PydanticModule`, `PydanticTypeAdapter`, or
+`PydanticTypeAdapterFactory` must migrate before upgrading.
+
+Use `serialize_search_record()` or `serialize_find_record()` for record
+payloads and `build_envelope()` for CLI-style envelopes. These functions
+return JSON-compatible typed mappings directly; MCP schemas continue to use
+Pydantic at their explicit boundary.
+
+### Development
+
+#### Faster critical-path feedback (#138)
+
+Agentgrep's development checks now focus on the critical paths users depend
+on, giving contributors feedback in seconds without trading away release
+confidence. Broader and slower checks remain part of CI.
+
 ## agentgrep 0.1.0a40 (2026-07-19)
 
 agentgrep 0.1.0a40 is an internal-quality release with no change to how

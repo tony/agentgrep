@@ -428,7 +428,7 @@ credentials, never enumerated).
    `tests/samples/<agent>/<store_id>/`.
 5. Bump `catalog_version` in the same commit that changes
    descriptor shape.
-6. Run `uv run pytest tests/test_stores.py`.
+6. Run `just test-all`.
 
 ## See also
 

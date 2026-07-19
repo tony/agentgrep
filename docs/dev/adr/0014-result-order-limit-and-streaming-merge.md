@@ -4,9 +4,9 @@
 
 ## Status
 
-Accepted as a contract; not yet implemented. The defect that forced it is
-pinned by a strict `xfail` in `tests/test_search_limit_order.py`, and the engine
-work is tracked in [#113](https://github.com/tony/agentgrep/issues/113).
+Accepted as a contract; not yet implemented. The defect that forced it and the
+engine work remain tracked in [#113](https://github.com/tony/agentgrep/issues/113).
+A focused order/limit regression is required with that implementation.
 
 ## Context
 
@@ -182,8 +182,8 @@ index, never triggers; it must not be allowed to rot untested in the meantime.
 
 The chief risk is a frontend quietly re-truncating an ordered list — the very
 mistake this ADR exists to correct. The mitigation is OL-2's echoed order plus
-the strict `xfail` in `tests/test_search_limit_order.py`, which fails loudly the
-moment the engine's order and its limit stop agreeing.
+the required focused regression, which must fail loudly when the engine's order
+and limit disagree.
 
 ## Final position
 

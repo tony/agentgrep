@@ -11,12 +11,12 @@ silently drop:
 - :func:`make_gated_emitter` centralizes the "results bypass the message bus and
   carry a generation token" transport (NB-3, NB-10).
 - A heartbeat watchdog (:func:`start_pump_watchdog`), default-on for an
-  interactive TTY, logs when the pump stalls past a threshold — the oracle the
-  fuzz harness asserts on.
+  interactive TTY, logs when the pump stalls past a threshold; the deterministic
+  runtime-oracle test pins its warning and structured threshold fields.
 
-It is Textual-free and imports only the standard library, so it sits below
-``app.py`` in the layering (ADR 0010) and the guard/unit tests can reach it
-without entering ``build_streaming_ui_app``'s closure. The guards are no-ops
+It is Textual-free and imports only the standard library, so it sits below the
+application shell in the layering (ADR 0010), where focused runtime tests can
+reach it directly. The guards are no-ops
 unless enabled (under pytest, or when ``AGENTGREP_TUI_WATCHDOG`` is truthy), so
 production pays at most one boolean check per guarded call; the log-only
 watchdog additionally defaults on for an interactive TTY.
@@ -114,9 +114,9 @@ def audit_hook_enabled() -> bool:
 
     Opt-in via ``AGENTGREP_TUI_WATCHDOG`` (the same debug switch as the heartbeat
     watchdog). It is *not* enabled for a bare interactive run: the audit hook is
-    process-wide and, under pytest, escalates a pump-thread blocking-I/O
-    initiation to a raised :class:`BlockingOnPumpError`, so a normal user's
-    session is never converted into an exception.
+    process-wide and can escalate a covered pump-thread blocking-I/O initiation
+    to a raised :class:`BlockingOnPumpError` when armed in raising mode, so a
+    normal user's bare interactive session is never converted into an exception.
 
     Returns
     -------
@@ -433,10 +433,11 @@ def stop_pump_watchdog(timeout: float = 1.0) -> None:
 # --- pump-thread audit hook ------------------------------------------------
 #
 # ``sys.addaudithook`` (PEP 578) fires synchronously on the *acting* thread, so
-# a hook can detect — and, by raising, abort — a blocking I/O *initiation* on
-# the pump thread regardless of how the call was spelled, aliased, or
-# dynamically dispatched. This is the denylist-free complement to the static
-# AST guard: it sees the event, not the source text. It is blind to pure CPU
+# for an event in the finite allowlist below, a hook can detect — and, by
+# raising, abort — a blocking I/O *initiation* on the pump thread regardless of
+# how the operation was spelled, aliased, or dynamically dispatched. ``open``
+# and ``import`` are deliberately excluded. This event check complements manual
+# static review: it sees covered events, not source text. It is blind to pure CPU
 # spin, byte-transfer on already-open handles (``socket.recv``, ``cursor.execute``
 # on a live connection), and native code that issues syscalls without
 # ``PySys_Audit`` — the heartbeat watchdog is the cause-agnostic backstop for
@@ -444,13 +445,13 @@ def stop_pump_watchdog(timeout: float = 1.0) -> None:
 
 
 class BlockingOnPumpError(RuntimeError):
-    """A blocking-I/O initiation was attempted on the pump thread (NB-1)."""
+    """A covered blocking-I/O initiation was attempted on the pump (NB-1)."""
 
 
-#: Audit events that signal a blocking I/O *initiation*. Deliberately excludes
-#: ``open`` and ``import`` — Textual/Rich read theme and syntax files on the
-#: pump during render and lazy imports are legitimate — and byte-transfer events
-#: (``socket.recv`` etc. carry no audit event at all).
+#: Finite eight-event allowlist for blocking I/O *initiation*. Deliberately
+#: excludes ``open`` and ``import`` — Textual/Rich read theme and syntax files
+#: on the pump during render and lazy imports are legitimate — and byte-transfer
+#: events (``socket.recv`` etc. carry no audit event at all).
 _AUDIT_BLOCKING_EVENTS = frozenset(
     {
         "socket.connect",
@@ -470,7 +471,7 @@ _audit_raises: bool = False
 
 
 def _pump_audit_hook(event: str, _args: tuple[object, ...]) -> None:
-    """Flag a blocking-I/O initiation on the pump thread.
+    """Flag a covered blocking-I/O initiation on the pump thread.
 
     Installed process-wide but inert unless :func:`arm_pump_audit` has armed it.
     On the bound pump thread it logs a warning carrying

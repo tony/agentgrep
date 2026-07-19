@@ -1,9 +1,7 @@
 """FastMCP middleware for the ``agentgrep`` server.
 
-Holds :class:`AgentgrepAuditMiddleware`, a per-tool structured-logging hook
-that records each invocation with ``agentgrep_*`` ``extra`` keys. FastMCP's
-own ``TimingMiddleware`` / ``ResponseLimitingMiddleware`` /
-``ErrorHandlingMiddleware`` are wired alongside it from
+Holds the server's response-limiting and structured audit middleware. FastMCP's
+own timing and error-handling middleware are wired alongside them from
 :mod:`agentgrep.mcp.server`.
 """
 
@@ -15,6 +13,8 @@ import time
 import typing as t
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
+from fastmcp.tools.base import ToolResult
 
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
     {"terms", "pattern", "sample_text", "cursor"},
@@ -28,6 +28,27 @@ caller pastes in.
 """
 
 _MAX_LOGGED_STR_LEN: int = 200
+
+
+class AgentgrepResponseLimitingMiddleware(ResponseLimitingMiddleware):
+    """Mark truncated tool results as MCP errors.
+
+    Truncation removes structured content, so a successful result would no
+    longer satisfy the tool's advertised output schema. Error results preserve
+    the bounded text and metadata without triggering output-schema validation.
+    """
+
+    def _truncate_to_result(
+        self,
+        text: str,
+        meta: dict[str, t.Any] | None = None,
+    ) -> ToolResult:
+        truncated = super()._truncate_to_result(text, meta)
+        return ToolResult(
+            content=truncated.content,
+            meta=truncated.meta,
+            is_error=True,
+        )
 
 
 def _redact_digest(value: str) -> dict[str, t.Any]:
@@ -106,7 +127,8 @@ class AgentgrepAuditMiddleware(Middleware):
     ``agentgrep_client_id`` / ``agentgrep_request_id`` (when available), and
     ``agentgrep_args_summary``. The logger name defaults to
     ``agentgrep.audit`` so operators can route it independently of the
-    ``agentgrep`` library logger.
+    ``agentgrep`` library logger. Client-visible :class:`ToolResult` errors use
+    the stable error type ``ToolResultError``.
 
     Parameters
     ----------
@@ -153,15 +175,18 @@ class AgentgrepAuditMiddleware(Middleware):
             raise
 
         duration_ms = (time.monotonic() - start) * 1000.0
-        self._logger.info(
-            "tool call completed",
-            extra={
-                "agentgrep_tool": tool_name,
-                "agentgrep_outcome": "ok",
-                "agentgrep_duration_ms": duration_ms,
-                "agentgrep_client_id": client_id,
-                "agentgrep_request_id": request_id,
-                "agentgrep_args_summary": args_summary,
-            },
-        )
+        extra: dict[str, object] = {
+            "agentgrep_tool": tool_name,
+            "agentgrep_outcome": "ok",
+            "agentgrep_duration_ms": duration_ms,
+            "agentgrep_client_id": client_id,
+            "agentgrep_request_id": request_id,
+            "agentgrep_args_summary": args_summary,
+        }
+        message = "tool call completed"
+        if isinstance(result, ToolResult) and result.is_error:
+            message = "tool call failed"
+            extra["agentgrep_outcome"] = "error"
+            extra["agentgrep_error_type"] = "ToolResultError"
+        self._logger.info(message, extra=extra)
         return result

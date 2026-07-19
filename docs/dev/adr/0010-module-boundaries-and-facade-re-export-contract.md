@@ -73,11 +73,10 @@ step of the migration; everything below it is already in place.
 `__init__.py` re-exports the public names from the owning modules so
 `import agentgrep; agentgrep.SearchRecord` stays byte-stable, and keeps only the
 process entry points (`main`), the TUI launchers (`run_ui`,
-`build_streaming_ui_app`), the pydantic-adapter bridge (`maybe_use_pydantic`), and
-the interpreter setup. It contains no parsing, discovery, matching, or
-orchestration logic. Re-exports that pull from a satellite *package* whose
-`__init__` imports the facade entry point stay in the trailing `# noqa: E402`
-block so they resolve after `main` is defined.
+`build_streaming_ui_app`), and the interpreter setup. It contains no parsing,
+discovery, matching, or orchestration logic. Re-exports that pull from a
+satellite *package* whose `__init__` imports the facade entry point stay in the
+trailing `# noqa: E402` block so they resolve after `main` is defined.
 
 ### Module docstrings state the single responsibility
 
@@ -94,14 +93,16 @@ declare `__all__` as they are created. Sealing the facade `__all__` is treated a
 a deliberate compatibility step rather than a refactor freebie, because adding
 `__all__` to a module that lacked one narrows `from agentgrep import *`.
 
-### Optional-dependency import rules
+### Required-dependency import rules
 
-`pydantic`, `textual`, `fastmcp`, and the `orjson`/`rapidfuzz` accelerators stay
-behind `t.TYPE_CHECKING` or lazy, call-site imports. The pydantic-free CLI JSON
-fallback is mandatory (see `test_json_output_falls_back_without_pydantic`). The
-`agentgrep --help` cold-start budget is preserved by keeping the query registry,
-the events module, and the per-agent parsers off the eager `import agentgrep`
-path; `tests/test_import_time.py` pins it.
+Pydantic is a required dependency and provides schema and validation adapters at
+explicit MCP and event boundaries. CLI JSON and NDJSON output calls the direct
+TypedDict serializers rather than revalidating their payloads through
+`TypeAdapter`. Heavy required frontend dependencies stay behind lazy, call-site
+imports, while optional accelerators use guarded imports. The `agentgrep --help`
+cold-start budget is preserved by keeping the query registry, the events module,
+and the per-agent parsers off the eager `import agentgrep` path. Changes to that
+import boundary require a focused cold-start contract before they land.
 
 ### No native rewrite is implied
 

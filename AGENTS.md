@@ -19,8 +19,8 @@ Key features:
 - Cross-tool search over Codex, Claude Code, and Cursor prompt/history stores
 - CLI entry point with a Textual TUI for interactive browsing
 - MCP server entry point exposing the same search surface as MCP tools
-- Dependency-light request, result, and event types, with Pydantic adapters
-  for MCP schemas, docs, and other typed boundaries where useful
+- Dependency-light request, result, and event types, with required Pydantic
+  adapters for MCP schemas, docs, and other typed boundaries
 - Full type safety (ty, strict warning-as-error)
 
 ### Platform Support
@@ -98,7 +98,7 @@ uv pip install --editable . -G dev
 
 ### Running Tests
 
-The literal pytest loop selects tests that are neither `slow` nor `legacy`:
+The literal pytest loop selects tests that are not marked `slow`:
 
 ```console
 $ uv run py.test
@@ -110,7 +110,7 @@ The equivalent recipe is:
 $ just test
 ```
 
-Run the exhaustive suite, including slow and consolidated legacy coverage:
+Run the exhaustive suite, including slow coverage:
 
 ```console
 $ just test-all
@@ -119,13 +119,15 @@ $ just test-all
 Run one default-lane test file:
 
 ```console
-$ uv run pytest tests/test_query_parser.py
+$ uv run pytest tests/test_pydantic_boundary.py
 ```
 
 Run a slow node by clearing the default selector:
 
 ```console
-$ uv run pytest -m "" tests/test_agentgrep_tui.py::test_streaming_ui_app_mounts_cleanly
+$ uv run pytest \
+    -m "" \
+    tests/test_mcp_response_limiting.py::test_client_accepts_truncated_structured_tool_as_error
 ```
 
 Run tests continuously with the default selector:
@@ -139,19 +141,20 @@ $ just start
 Run the default loop first. Add every resource cluster that owns a changed
 surface:
 
-| Changed files | Additional cluster |
+| Changed files | Required lane |
 | --- | --- |
+| Compatibility facade, CLI helpers, discovery, readers, adapters, or query/engine code | `just test` |
 | `src/agentgrep/ui/**` or TUI tests | `just test-tui` |
 | `src/agentgrep/mcp/**`, `fastmcp.json`, or MCP schemas | `just test-mcp` |
 | `README.md`, `docs/**`, or `src/pytest_documentation/**` | `just test-docs` |
-| Packaging, lockfiles, client configuration, skills, or module boundaries | `just test-setup` |
-| Compatibility facade, legacy CLI helpers, discovery, readers, or adapters | `just test-legacy` |
+| `fastmcp.json` or retained setup configuration | `just test-setup` |
+| Packaging, lockfiles, client configuration, skills, or module boundaries | `just test-all` |
 
 Resource markers describe ownership; `slow` describes execution cost. Prefer a
 module-level resource marker for a coherent file and a function-level `slow`
 marker for mounted apps, fresh MCP clients, subprocesses, Sphinx builds, races,
 or exhaustive matrices. New unmarked tests run by default. Do not add new tests
-to `tests/test_agentgrep.py`; move them to a focused module instead.
+to a catch-all module; give each critical contract a focused module instead.
 
 Before reporting a branch complete, run `just test-all` through the required
 completion gate below. CI clears the default marker expression and runs the
@@ -409,8 +412,8 @@ src/agentgrep/
 
 3. **CLI surface** (`src/agentgrep/cli/`)
    - Argument parsing and output rendering for `agentgrep`
-   - JSON result payload construction, NDJSON/event rendering, and
-     pydantic-aware serialization with a pydantic-free fallback path
+   - JSON result payload construction and NDJSON/event rendering through
+     direct typed serializers
 
 4. **Query language** (`src/agentgrep/query/`)
    - Search field registry, AST, parser, compiler, and date matching helpers
@@ -452,36 +455,34 @@ resize, and cancel at once. ADR 0011 (NB-1..NB-10) is the contract; the
   `concurrent.futures` `.result()`, `json.load(s)`/`dump(s)`, `.read()`, or
   **unbounded CPU** (full-result casefold/sort/regex, `Syntax(...).highlight` on a
   full body). Route bulk UI updates through `stream_apply`; route large/uncached
-  detail builds through an `@offload` worker. Never satisfy the guard by
-  aliasing/`from`-import — move the call off the pump.
-- **The static guard cannot reach 100%.** "Blocks the pump" is a semantic
-  (Rice-undecidable) property; `tests/test_tui_non_blocking.py` follows
-  same-class helper calls, seeds `@on`/scheduler/`call_from_thread`/`subscribe`
-  callees, and resolves import aliases — but it still cannot see cross-module or
-  dynamic dispatch, a `lambda`/`partial` scheduler target, or CPU spin. Apply the
-  skill's review rules by hand, and exercise the change once under
-  `AGENTGREP_TUI_WATCHDOG=1` against a large real store before calling a path
-  non-blocking.
+  detail builds through an `@offload` worker. Never evade review by aliasing or
+  using a `from` import — move the call off the pump.
+- **Static review cannot prove completeness.** "Blocks the pump" is a semantic
+  (Rice-undecidable) property, and no retained automated static gate walks this
+  graph. Apply the skill's entrypoint catalog and helper tracing by hand. The
+  decorators assert thread placement under pytest or an explicitly truthy
+  `AGENTGREP_TUI_WATCHDOG`; the audit hook also requires that explicit opt-in.
+  The log-only heartbeat defaults on for an interactive TTY, a falsey override
+  disables it, and pytest does not auto-start it. Exercise a change once with
+  the explicit watchdog setting against a large real store before calling its
+  path non-blocking.
 
-### Backend availability
+### Dependency boundaries
 
-agentgrep is opportunistic about its dependencies. `pydantic`, `textual`, and
-`fastmcp` are declared, but the CLI JSON path must keep its pydantic-free
-fallback so basic search output remains available when Pydantic cannot be
-imported. Treat Pydantic as a schema, validation, and adapter layer at explicit
-boundaries; do not make Pydantic-only model behavior the semantic source of
-truth for CLI/MCP/search behavior. When adding code that imports an optional
-dependency, keep the fallback path intact and covered by a test (see
-`test_json_output_falls_back_without_pydantic` for the pattern).
+Pydantic is a required dependency. CLI JSON and NDJSON output calls the direct
+TypedDict serializers and envelope builder; Pydantic remains the schema,
+validation, and adapter layer at explicit MCP and event boundaries. Do not make
+Pydantic-only model behavior the semantic source of truth for CLI, MCP, or
+search behavior. Keep genuinely optional accelerators behind guarded imports.
 
 ## Testing Strategy
 
 agentgrep uses pytest with `--doctest-modules` enabled by default. Collection
 spans `src/agentgrep`, `src/pytest_documentation`, `docs`, `fastmcp.json`, and
-`tests`. Focused modules own CLI, engine, query, MCP, docs, setup, and TUI
-contracts; `test_agentgrep.py` retains the consolidated legacy compatibility
-cluster, and the extracted `test_agentgrep_tui*.py` modules own its Textual
-matrix.
+`tests`. Source doctests and executable documentation examples provide the
+baseline. Focused modules under `tests/` retain only critical engine
+cancellation, MCP response-limiting, Pydantic-boundary, and TUI watchdog
+contracts plus shared fixture infrastructure.
 
 ### Testing Guidelines
 
@@ -506,17 +507,6 @@ matrix.
 5. **Running tests continuously**
    - Use pytest-watcher during development: `uv run ptw .`
    - For doctests: `uv run ptw . --now --doctest-modules`
-
-### Example Fixture Usage
-
-```python
-def test_json_output_falls_back_without_pydantic(monkeypatch: pytest.MonkeyPatch) -> None:
-    """JSON output works when pydantic isn't importable."""
-    agentgrep = load_agentgrep_module()
-    # ... build a SearchRecord ...
-    monkeypatch.setattr(agentgrep.importlib, "import_module", fake_import_module)
-    # ... assert result payload shape ...
-```
 
 ## Coding Standards
 
@@ -585,8 +575,8 @@ actually work offline.
 - Any function that reads the user's home directory, opens a Codex /
   Claude / Cursor store, spawns `ripgrep`, opens a SQLite database, or
   starts the Textual TUI. Use a unit test with fixtures instead.
-- MCP tool implementations — they require a FastMCP context. Test via
-  `tests/test_agentgrep_mcp.py`.
+- MCP tool implementations — they require a FastMCP context. Add a focused MCP
+  contract and run `just test-mcp`.
 
 **CRITICAL RULES for doctests that exist:**
 - They MUST actually execute — never comment out function calls or
@@ -714,9 +704,9 @@ agentgrep(refactor[typecheck]): Satisfy ty diagnostics
 why: ty reports a few stricter diagnostics around TypedDict payloads, dynamic class bases, and monkeypatched imports. Making those cases explicit keeps the runtime behavior unchanged while letting the new ty gate run without suppressing broad categories of checks.
 
 what:
-- Cast JSON TypedDict payloads directly in the pydantic-free fallback instead of rebuilding them through dict().
+- Cast JSON TypedDict payloads only at untyped JSON container boundaries.
 - Mark the dynamic Textual App base with the targeted ty unsupported-base suppression.
-- Use pytest monkeypatch for the importlib fallback test instead of assigning over the imported module function directly.
+- Use pytest monkeypatch for import substitution tests instead of assigning over imported functions directly.
 ```
 #### Release commits
 

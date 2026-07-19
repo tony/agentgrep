@@ -27,7 +27,7 @@ readme = "README.md"
 dependencies = [
   "pydantic>=2.11.3",
   "textual>=3.2.0",
-  "fastmcp>=3.0.0",
+  "fastmcp>=3.4.0",
   "rapidfuzz>=3.10.0",
 ]
 
@@ -77,15 +77,12 @@ dev = [
   "ruff",
   "ty>=0.0.58",
   # scripts/mcp_swap.py is a PEP 723 standalone with `tomlkit` as its only
-  # third-party dependency. The script is exercised by tests/test_mcp_swap.py,
-  # which doesn't run through PEP 723, so we install tomlkit in the dev group
-  # to make those tests importable.
+  # third-party dependency. Keep tomlkit in the dev group so the module remains
+  # directly importable during local script development.
   "tomlkit>=0.13",
-  # scripts/benchmark.py is another PEP 723 standalone; same rationale —
-  # tests/test_benchmark_script.py imports the script directly so its
-  # third-party deps (typer plus the direct click import; pydantic and rich
-  # are already in the runtime graph via the project itself / textual) need
-  # to be project-importable.
+  # scripts/benchmark.py is another PEP 723 standalone. Keep its direct click
+  # and typer imports available during local script development; pydantic and
+  # rich are already in the runtime graph via the project itself / textual.
   "click>=8.1",
   "typer>=0.12",
 ]
@@ -256,13 +253,6 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
-# These test names preserve keyboard, protocol, and query-lattice spellings.
-"tests/test_agentgrep.py" = ["N802"]
-"tests/test_agentgrep_tui.py" = ["N802"]
-"tests/test_mcp_swap.py" = ["N802"]
-"tests/test_query_evaluate.py" = ["N802"]
-# Test class attributes preserve MCP wire-format spellings.
-"tests/test_agentgrep_mcp.py" = ["N815"]
 # These modules own intentional terminal output.
 "src/agentgrep/cli/render.py" = ["T201"]
 # typer.Option / typer.Argument calls are metadata, not real callables —
@@ -286,7 +276,7 @@ addopts = [
   # Keep the literal local loop fast. CI and `just test-all` clear this
   # expression explicitly so the exhaustive suite remains mandatory.
   "-m",
-  "not slow and not legacy",
+  "not slow",
 ]
 doctest_optionflags = [
   "ELLIPSIS",
@@ -294,7 +284,6 @@ doctest_optionflags = [
 ]
 markers = [
   "documentation: documentation contracts and executable examples",
-  "legacy: compatibility coverage in the consolidated legacy test module",
   "mcp: MCP protocol, schema, and client integration coverage",
   "setup: packaging, configuration, and repository infrastructure",
   "slow: essential coverage excluded from the default local loop",

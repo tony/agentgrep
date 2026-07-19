@@ -13,7 +13,6 @@ import dataclasses
 import json
 import pathlib
 import sys
-import typing as t
 
 from agentgrep import run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
@@ -39,7 +38,6 @@ from agentgrep.cli.renderers import (
 )
 from agentgrep.cli.serializers import (
     build_envelope,
-    maybe_build_pydantic,
     serialize_find_record,
     serialize_grep_record,
     serialize_search_record,
@@ -67,7 +65,6 @@ __all__ = [
     "format_relative_time",
     "highlight_search_spans",
     "iter_match_lines",
-    "maybe_build_pydantic",
     "print_find_results",
     "print_grep_results",
     "run_find_command",
@@ -114,7 +111,6 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
     collapse the home directory to ``~``. ``--json`` / ``--ndjson`` are
     unaffected by these flags.
     """
-    _, serialize_find, serialize_envelope = maybe_build_pydantic()
     query_data: dict[str, object] = {
         "pattern": args.pattern,
         "agents": list(args.agents),
@@ -124,16 +120,16 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
         "extensions": list(args.extensions),
     }
     if args.output_mode == "json":
-        payload = serialize_envelope(
+        payload = build_envelope(
             "find",
             query_data,
-            [serialize_find(record) for record in records],
+            [dict(serialize_find_record(record)) for record in records],
         )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     if args.output_mode == "ndjson":
         for record in records:
-            print(json.dumps(serialize_find(record), ensure_ascii=False))
+            print(json.dumps(serialize_find_record(record), ensure_ascii=False))
         return
     if args.print0:
         for record in records:
@@ -176,9 +172,6 @@ def stream_find_results(args: FindArgs) -> int:
 
     is_tty = sys.stdout.isatty()
     match_count = 0
-    serialize_find: t.Callable[[FindRecord], dict[str, object]] | None = None
-    if args.output_mode == "ndjson":
-        _, serialize_find, _ = maybe_build_pydantic()
     for event in iter_find_events(
         pathlib.Path.home(),
         args.agents,
@@ -191,8 +184,8 @@ def stream_find_results(args: FindArgs) -> int:
             continue
         if not _find_record_passes(event.record, args):
             continue
-        if args.output_mode == "ndjson" and serialize_find is not None:
-            print(json.dumps(serialize_find(event.record), ensure_ascii=False))
+        if args.output_mode == "ndjson":
+            print(json.dumps(serialize_find_record(event.record), ensure_ascii=False))
         elif args.print0:
             sys.stdout.write(_format_find_text_line(event.record, args))
             sys.stdout.write("\0")
@@ -448,11 +441,10 @@ def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
     from agentgrep.ranking import group_by_session
 
     grouped = group_by_session([(r, s, 0) for r, s in scored])
-    serialize_search, _, serialize_envelope = maybe_build_pydantic()
     results: list[dict[str, object]] = []
     for session_id, entries in grouped:
         for record, score, _similar in entries:
-            entry = dict(serialize_search(record))
+            entry = dict(serialize_search_record(record))
             entry["score"] = score
             if session_id is not None:
                 entry["group_session_id"] = session_id
@@ -465,7 +457,7 @@ def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
             "no_rank": args.no_rank,
             "no_group": args.no_group,
         }
-        payload = serialize_envelope("search", query_data, results)
+        payload = build_envelope("search", query_data, results)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         for result in results:
