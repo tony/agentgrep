@@ -36,11 +36,18 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a39 (Yet to be released)
+## agentgrep 0.1.0a40 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a39 (2026-07-18)
+
+agentgrep 0.1.0a39 is an internal-quality release with no change to how
+agentgrep behaves. It tightens the project's own development checks so that
+lint findings and unnamed type-suppression comments cannot accumulate
+silently, raising the linter and type-checker floors that enforce them.
 
 ### Development
 
