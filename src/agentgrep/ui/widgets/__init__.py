@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from agentgrep.ui.widgets.bookmarks import BookmarkChoice, BookmarkRecall
 from agentgrep.ui.widgets.detail import DetailScroll
 from agentgrep.ui.widgets.dropdown import CompletionDropdown
 from agentgrep.ui.widgets.history import HistoryRecall
@@ -42,6 +43,8 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
     "WELCOME_QUERY_INDEX_META",
+    "BookmarkChoice",
+    "BookmarkRecall",
     "CompletionDropdown",
     "DetailFindInput",
     "DetailFindRequested",

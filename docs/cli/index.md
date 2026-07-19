@@ -46,6 +46,12 @@ Ranked, deduped search grouped by session — best matches first.
 Enumerate on-disk stores with fd-shaped flag grammar.
 :::
 
+:::{grid-item-card} agentgrep bookmark
+:link: bookmark
+:link-type: doc
+Save private canonical pointers without copying prompt content.
+:::
+
 :::{grid-item-card} agentgrep ui
 :link: tui
 :link-type: ref
@@ -160,5 +166,6 @@ $ agentgrep
 grep
 search
 find
+bookmark
 reference
 ```

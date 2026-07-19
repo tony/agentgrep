@@ -468,6 +468,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         parsed = parse_args(argv)
         if parsed is None:
             return 0
+        if isinstance(parsed, BookmarkArgs):
+            return run_bookmark_command(parsed)
         if isinstance(parsed, GrepArgs):
             return run_grep_command(parsed)
         if isinstance(parsed, SearchArgs):
@@ -527,6 +529,7 @@ from agentgrep.cli.help_theme import (  # noqa: E402  (re-exports must follow ma
     should_enable_help_color,
 )
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
+    BookmarkArgs,
     CaseMode,
     FindArgs,
     FindPatternMode,
@@ -553,6 +556,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     format_grep_record,
     print_find_results,
     print_grep_results,
+    run_bookmark_command,
     run_find_command,
     run_grep_command,
     run_search_command,
@@ -600,6 +604,7 @@ __all__ = (
     "AnsiHelpTheme",
     "AnswerNowInputListener",
     "BackendSelection",
+    "BookmarkArgs",
     "CaseMode",
     "ColorMode",
     "ConsoleSearchProgress",
@@ -828,6 +833,7 @@ __all__ = (
     "record_matches_scope",
     "resolve_codex_sqlite_root",
     "resolve_env_root",
+    "run_bookmark_command",
     "run_find_command",
     "run_find_query",
     "run_grep_command",
