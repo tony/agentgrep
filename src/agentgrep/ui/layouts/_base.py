@@ -16,6 +16,7 @@ import typing as t
 from rich.console import Console
 from rich.segment import Segment, Segments
 from textual.app import generate_datetime_filename
+from textual.binding import Binding
 from textual.screen import Screen
 
 from agentgrep.ui import _runtime, commands, theme as ui_theme
@@ -128,6 +129,9 @@ class LayoutScreen(_SCREEN_BASE):
         self._command_matches: tuple[commands.SlashCommand, ...] = ()
         self._enum_dropdown: t.Any = None
         self._screenshot_generation: int = 0
+        #: Bindings this screen installed for the active workflow, tracked by
+        #: ``(key, binding)`` identity so a workflow swap removes exactly its own.
+        self._installed_workflow_bindings: list[tuple[str, Binding]] = []
 
     @property
     def context(self) -> UiContext:
@@ -145,6 +149,7 @@ class LayoutScreen(_SCREEN_BASE):
         """The currently active workflow strategy."""
         return self._workflow
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Attach the active workflow once the layout is mounted.
 
@@ -152,13 +157,68 @@ class LayoutScreen(_SCREEN_BASE):
         ``super().on_mount()`` last, so the workflow's initial dispatch (which
         may start a search and paint chrome) runs after the widgets exist.
         """
-        self._workflow.on_attach(t.cast("t.Any", self))
+        self._attach_workflow()
 
     def set_workflow(self, workflow: Workflow) -> None:
-        """Replace the active workflow and seed its initial dispatch."""
+        """Swap the active workflow and seed its initial dispatch."""
         t.cast("t.Any", self).request_cancel()
         self._workflow = workflow
+        self._attach_workflow()
+
+    def _attach_workflow(self) -> None:
+        """Seed the active workflow and install its key bindings (ADR 0013/0015).
+
+        Centralizes the attach so every entry point (mount, swap, resume) both
+        runs the workflow's initial dispatch *and* installs its ``BINDINGS`` on
+        the screen — the latter was previously declared but never wired, so
+        workflow-owned keys (e.g. deductive's widen/clear) could not fire.
+        """
         self._workflow.on_attach(t.cast("t.Any", self))
+        self._install_workflow_bindings()
+
+    def _install_workflow_bindings(self) -> None:
+        """Install the active workflow's ``BINDINGS`` on this screen, replacing prior.
+
+        ``BindingsMap.copy()`` shares each per-key list with the class-level map,
+        so a fresh list replaces the bucket before appending — otherwise the
+        append would mutate every instance's bindings.
+        """
+        self._remove_workflow_bindings()
+        installed: list[tuple[str, Binding]] = []
+        key_map = self._bindings.key_to_bindings
+        for binding in Binding.make_bindings(self._workflow.BINDINGS):
+            bucket = [*key_map[binding.key]] if binding.key in key_map else []
+            bucket.append(binding)
+            key_map[binding.key] = bucket
+            installed.append((binding.key, binding))
+        self._installed_workflow_bindings = installed
+        self.refresh_bindings()
+
+    def _remove_workflow_bindings(self) -> None:
+        """Drop the bindings a prior workflow installed, matched by identity."""
+        if not self._installed_workflow_bindings:
+            return
+        key_map = self._bindings.key_to_bindings
+        for key, binding in self._installed_workflow_bindings:
+            bucket = key_map.get(key)
+            if not bucket:
+                continue
+            remaining = [existing for existing in bucket if existing is not binding]
+            if remaining:
+                key_map[key] = remaining
+            else:
+                del key_map[key]
+        self._installed_workflow_bindings = []
+
+    @_runtime.pump_only
+    def action_workflow(self, action_id: str) -> None:
+        """Route a workflow-owned key action into the active workflow.
+
+        Bound via parameterized actions in a workflow's ``BINDINGS`` (e.g.
+        ``("ctrl+up", 'workflow("widen")', "Widen")``) so the strategy object
+        never imports Textual. Bounded (one delegating call) — pump-safe.
+        """
+        self._workflow.on_action(t.cast("t.Any", self), action_id)
 
     @_runtime.pump_only
     def _dispatch_slash_text(self, text: str) -> bool | None:

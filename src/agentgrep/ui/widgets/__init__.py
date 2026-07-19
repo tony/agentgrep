@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from agentgrep.ui.widgets.breadcrumb import RefinementBreadcrumb
 from agentgrep.ui.widgets.detail import DetailScroll
 from agentgrep.ui.widgets.dropdown import CompletionDropdown
 from agentgrep.ui.widgets.history import HistoryRecall
@@ -36,13 +37,25 @@ from agentgrep.ui.widgets.status import (
     SlowSourceDiagnosticsRow,
     SpinnerWidget,
 )
+from agentgrep.ui.widgets.transcript import ConversationLog
+from agentgrep.ui.widgets.turns import (
+    ChatTurnKind,
+    MessageTurn,
+    QueryTurn,
+    ResultTurn,
+    SystemTurn,
+    Turn,
+    TurnRenderer,
+)
 from agentgrep.ui.widgets.welcome import WELCOME_QUERY_INDEX_META, WelcomeExamples
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
     "WELCOME_QUERY_INDEX_META",
+    "ChatTurnKind",
     "CompletionDropdown",
+    "ConversationLog",
     "DetailFindInput",
     "DetailFindRequested",
     "DetailFocusRequested",
@@ -53,9 +66,13 @@ __all__ = [
     "FilterInput",
     "FilterRequested",
     "HistoryRecall",
+    "MessageTurn",
     "MeterWidget",
     "PaneHeader",
+    "QueryTurn",
+    "RefinementBreadcrumb",
     "ResultHighlighted",
+    "ResultTurn",
     "ResultsHeader",
     "ResultsScrollChanged",
     "SearchInput",
@@ -64,6 +81,9 @@ __all__ = [
     "SearchingPanel",
     "SlowSourceDiagnosticsRow",
     "SpinnerWidget",
+    "SystemTurn",
+    "Turn",
+    "TurnRenderer",
     "WelcomeExamples",
     "WelcomeQuerySelected",
 ]

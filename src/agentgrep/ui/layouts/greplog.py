@@ -325,6 +325,15 @@ class GrepLogLayout(LayoutScreen):
         """Cooperatively signal the in-flight grep to wrap up (host surface)."""
         self.control.request_answer_now()
 
+    def set_input_text(self, text: str) -> None:
+        """Set the search input's value — the deductive widen re-seed (host surface)."""
+        if self._search_input is not None:
+            self._search_input.value = text
+
+    def update_breadcrumb(self, frames: cabc.Sequence[str]) -> None:
+        """No-op: the grep log shows no refinement breadcrumb (host surface)."""
+        del frames
+
     # --- streaming transport (shared primitives, log-specific present) --------
     def _make_gated_emit(self) -> cabc.Callable[[object], None]:
         """Return a worker emit whose events die with the current generation."""
