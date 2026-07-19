@@ -127,11 +127,13 @@ Three limits are load-bearing and require runtime complements:
 - **Prevention vs. detection.** Manual review reduces known hazards before
   merge; the heartbeat watchdog detects super-threshold stalls only on exercised
   runtime paths. An explicit-env `sys.addaudithook` scoped to the pump thread
-  adds denylist-free *prevention* of CPython-instrumented blocking-I/O
-  *initiation* (socket.connect, getaddrinfo, subprocess, time.sleep,
-  sqlite3.connect): it fires
-  on the acting thread and aborts the syscall regardless of how the call was
-  spelled or dispatched. It is blind to CPU spin, byte-transfer on already-open
+  checks a finite eight-event allowlist: `socket.connect`, `socket.getaddrinfo`,
+  `subprocess.Popen`, `os.system`, `os.exec`, `os.spawn`, `time.sleep`, and
+  `sqlite3.connect`. For those covered events it fires on the acting thread and
+  can abort initiation regardless of how the operation was spelled, aliased, or
+  dynamically dispatched. `open` and `import` are deliberately excluded because
+  Textual/Rich perform legitimate pump-side theme and syntax reads and lazy
+  imports. The hook is also blind to CPU spin, byte-transfer on already-open
   handles, and native syscalls that skip `PySys_Audit`; the wall-clock watchdog
   is the cause-agnostic backstop for that residue.
 

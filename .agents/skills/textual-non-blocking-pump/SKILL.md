@@ -96,17 +96,21 @@ runtime mechanisms, organized by the I/O-vs-CPU asymmetry:
 
 | Hazard | Review / structural prevention | Runtime complement |
 |---|---|---|
-| I/O initiation (`open`, connect, `Popen`, sleep) | Entrypoint catalog, helper tracing, and `@offload` seams | Explicit-env `sys.addaudithook` aborts covered events on the acting thread. |
+| Covered I/O/process initiation | Entrypoint catalog, helper tracing, and `@offload` seams | Explicit-env `sys.addaudithook` can abort allowlisted events on the acting thread. |
 | CPU spin, open-handle transfer, or native I/O | Bound the work or move it to an `@offload` worker. | The heartbeat reports exercised stalls above its wall-clock threshold. |
 
-- **`sys.addaudithook`** (PEP 578) is denylist-FREE: the hook fires synchronously
-  on the *acting* thread, so `if get_ident()==pump_id and event in IO_INITIATORS:
-  raise` **aborts the syscall before it runs** — immune to alias / `Any`-erasure
-  / dynamic dispatch. Reproduced on CPython 3.14: `open()` via `getattr` alias
-  and `sqlite3.connect()` abort; a CPU sort+regex fires **zero** events.
-- **It is blind to** CPU spin, byte-transfer on *already-open* handles
-  (`recv`/`send`, `cursor.execute` on a live connection — the canonical slow-query
-  hang carries no audit event), and native Rust/C syscalls that skip `PySys_Audit`.
+- **`sys.addaudithook` uses a finite eight-event allowlist**:
+  `socket.connect`, `socket.getaddrinfo`, `subprocess.Popen`, `os.system`,
+  `os.exec`, `os.spawn`, `time.sleep`, and `sqlite3.connect`. For those covered
+  events, the hook fires synchronously on the *acting* thread, so raising can
+  abort initiation regardless of how the operation was spelled, aliased, or
+  dynamically dispatched.
+- **`open` and `import` are deliberately excluded** because Textual/Rich
+  legitimately read theme and syntax files on the pump and perform lazy imports
+  there. The hook is also blind to CPU spin, byte-transfer on *already-open*
+  handles (`recv`/`send`, `cursor.execute` on a live connection — the canonical
+  slow-query hang carries no audit event), and native Rust/C syscalls that skip
+  `PySys_Audit`.
 - **The wall-clock watchdog is the cause-agnostic backstop** for exactly that
   residue: it catches anything that stalls past a threshold, of any cause. Ceiling:
   only above threshold, only on exercised inputs, only *after* the freeze (it
@@ -161,7 +165,8 @@ or stale-event paths. These are the judgment calls a reviewer/agent must make:
 3. Follow the call graph by hand one+ hops; no automated static gate does this.
    Look for the four holes: helper-extracted I/O, unclassified entrypoint,
    aliased call, unbounded CPU loop.
-4. Classify the cause: I/O-on-pump → offload + audit hook; unbounded CPU →
+4. Classify the cause: allowlisted I/O-on-pump → offload + audit hook;
+   excluded/unaudited I/O → offload + manual review/watchdog; unbounded CPU →
    bound it (`stream_apply`) or offload + watchdog; stale-event → generation
    token; teardown → empty-stack guard; worker-touches-pump-state → snapshot.
 5. Lock the behavior with the smallest focused regression. If the heartbeat
