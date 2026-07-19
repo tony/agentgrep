@@ -277,14 +277,27 @@ addopts = [
   "--no-header",
   "--showlocals",
   "--doctest-modules",
+  "--strict-markers",
   # The docs-suite plugin is repo-local (not shipped in the wheel, no pytest11
   # entry point), so this run loads it explicitly.
   "-p",
   "pytest_documentation.plugin",
+  # Keep the literal local loop fast. CI and `just test-all` clear this
+  # expression explicitly so the exhaustive suite remains mandatory.
+  "-m",
+  "not slow",
 ]
 doctest_optionflags = [
   "ELLIPSIS",
   "NORMALIZE_WHITESPACE",
+]
+markers = [
+  "documentation: documentation contracts and executable examples",
+  "legacy: compatibility coverage in the consolidated legacy test module",
+  "mcp: MCP protocol, schema, and client integration coverage",
+  "setup: packaging, configuration, and repository infrastructure",
+  "slow: essential coverage excluded from the default local loop",
+  "tui: Textual unit and mounted lifecycle coverage",
 ]
 testpaths = [
   "src/agentgrep",
