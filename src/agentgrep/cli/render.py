@@ -1019,7 +1019,7 @@ def _run_search_query_for_cli(
             progress=progress,
             control=control,
         )
-    from agentgrep.db import DbQueryUnsupported
+    from agentgrep.db import DbQueryUnsupportedError
 
     runner = _facade().run_search_query
     try:
@@ -1037,7 +1037,7 @@ def _run_search_query_for_cli(
             control=control,
             runtime=runtime,
         )
-    except DbQueryUnsupported as exc:
+    except DbQueryUnsupportedError as exc:
         _exit_for_required_cache_miss(exc)
     finally:
         if runtime.db is not None:
@@ -1060,7 +1060,7 @@ def _iter_search_events_for_cli(
             control=control,
         )
         return
-    from agentgrep.db import DbQueryUnsupported
+    from agentgrep.db import DbQueryUnsupportedError
 
     runner = _facade().iter_search_events
     try:
@@ -1077,7 +1077,7 @@ def _iter_search_events_for_cli(
             control=control,
             runtime=runtime,
         )
-    except DbQueryUnsupported as exc:
+    except DbQueryUnsupportedError as exc:
         _exit_for_required_cache_miss(exc)
     finally:
         # Generator finally: runs on exhaustion, close(), or GC, so an

@@ -134,11 +134,11 @@ def _db_search_result(
             # require keeps serving - the caller demanded the cache.
             reason = "partial-coverage"
             return False, []
-        from agentgrep.db import DbQueryUnsupported
+        from agentgrep.db import DbQueryUnsupportedError
 
         try:
             records = db.search_records(query)
-        except DbQueryUnsupported:
+        except DbQueryUnsupportedError:
             reason = "unsupported"
             if runtime.cache_mode == "require":
                 raise

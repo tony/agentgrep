@@ -117,7 +117,7 @@ class DbRecordRow:
     record: SearchRecord
 
 
-class DbQueryUnsupported(RuntimeError):
+class DbQueryUnsupportedError(RuntimeError):
     """Raised when a query cannot be answered from the DB index."""
 
 
@@ -569,7 +569,7 @@ class DbStore:
         """Run one write statement through the telemetry choke point."""
         start = time.perf_counter()
         cursor = self.connection.execute(sql, tuple(params))
-        rows = cursor.rowcount if cursor.rowcount > 0 else 0
+        rows = max(0, cursor.rowcount)
         _ = self._track(stmt_name, sql, time.perf_counter() - start, rows)
         return cursor
 
@@ -1144,7 +1144,7 @@ class DbStore:
         """Serve ``search_records`` ahead of the telemetry flush."""
         if query.regex or query.any_term or query.compiled is not None:
             msg = "query requires live scanner"
-            raise DbQueryUnsupported(msg)
+            raise DbQueryUnsupportedError(msg)
         if not query.agents:
             # Live parity: an empty agent selection discovers zero
             # sources. Returning early also avoids generating the
@@ -1538,13 +1538,12 @@ class DbRuntime:
                     result=result,
                     force=force,
                 )
-            result = self._finish_complete_sync(
+            return self._finish_complete_sync(
                 result,
                 coverage=coverage,
                 prune_missing=prune_missing,
                 seen_source_ids=seen_source_ids,
             )
-            return result
 
         batch_list = tuple(batches)
         total = len(batch_list)

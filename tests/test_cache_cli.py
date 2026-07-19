@@ -639,7 +639,7 @@ def test_grep_cache_require_unsupported_query_exits_without_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Cache-required grep reports unsupported regex queries as CLI errors."""
-    from agentgrep.db import DbQueryUnsupported
+    from agentgrep.db import DbQueryUnsupportedError
 
     class UnsupportedDb:
         """DB stub that rejects the query shape."""
@@ -649,7 +649,7 @@ def test_grep_cache_require_unsupported_query_exits_without_traceback(
             _query: agentgrep.SearchQuery,
         ) -> list[agentgrep.SearchRecord]:
             msg = "query requires live scanner"
-            raise DbQueryUnsupported(msg)
+            raise DbQueryUnsupportedError(msg)
 
         def close(self) -> None:
             """Accept the search path's runtime close."""
