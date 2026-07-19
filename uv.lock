@@ -99,6 +99,7 @@ speedups = [
 dev = [
     { name = "click" },
     { name = "gp-sphinx" },
+    { name = "numpy" },
     { name = "orjson" },
     { name = "pygments" },
     { name = "pytest" },
@@ -165,6 +166,7 @@ provides-extras = ["speedups", "insights-html", "insights-ml", "insights-embeddi
 dev = [
     { name = "click", specifier = ">=8.1" },
     { name = "gp-sphinx", specifier = "==0.0.1a34" },
+    { name = "numpy", specifier = ">=1.24" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "pygments" },
     { name = "pytest" },
