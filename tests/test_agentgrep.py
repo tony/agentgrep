@@ -564,6 +564,7 @@ def test_colorize_query_argument_keyword_and_bare_term() -> None:
     assert f"{theme.query_value}uv{theme.reset}" in out
 
 
+@pytest.mark.documentation
 def test_build_docs_parser_returns_root_parser() -> None:
     """Adapter for ``sphinx-autodoc-argparse`` exposes the root parser."""
     agentgrep = load_agentgrep_module()

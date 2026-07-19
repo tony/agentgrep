@@ -1,7 +1,7 @@
 """Focus-graph tests: ``ctrl+hjkl`` pane traversal and modal focus restore.
 
 Tab order (``search`` → ``filter`` → ``results``) is already covered in
-``test_agentgrep.py``; this pins the directional ``ctrl+jk`` pane navigation
+``test_agentgrep_tui.py``; this pins the directional ``ctrl+jk`` pane navigation
 (which has real per-pane branching in ``action_focus_pane_up`` /
 ``action_focus_pane_down``) and that dismissing the Ctrl-R recall modal restores
 focus to the widget that was focused when it opened (ADR 0012 RW focus graph).

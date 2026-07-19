@@ -627,7 +627,7 @@ async def test_results_streamed_row_is_pinned(
     from agentgrep.ui.app import build_streaming_ui_app
 
     # build_streaming_ui_app returns ``object`` (app.screen.py stays Textual-free);
-    # cast to Any for run_test/query_one, mirroring the test_agentgrep.py pattern.
+    # Cast to Any for run_test/query_one, mirroring the shared TUI support pattern.
     app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
     async with app.run_test():
         results = app.screen.query_one(SearchResultsList)

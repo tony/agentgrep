@@ -476,7 +476,12 @@ dependency, keep the fallback path intact and covered by a test (see
 
 ## Testing Strategy
 
-agentgrep uses pytest with `--doctest-modules` enabled by default (`testpaths = ["src/agentgrep", "tests"]`). Tests live under `tests/` and are split by entry point: `test_agentgrep.py` for the library/CLI/TUI and `test_agentgrep_mcp.py` for the MCP server.
+agentgrep uses pytest with `--doctest-modules` enabled by default. Collection
+spans `src/agentgrep`, `src/pytest_documentation`, `docs`, `fastmcp.json`, and
+`tests`. Focused modules own CLI, engine, query, MCP, docs, setup, and TUI
+contracts; `test_agentgrep.py` retains the consolidated legacy compatibility
+cluster, and the extracted `test_agentgrep_tui*.py` modules own its Textual
+matrix.
 
 ### Testing Guidelines
 

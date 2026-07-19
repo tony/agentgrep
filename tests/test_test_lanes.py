@@ -15,6 +15,7 @@ def test_repository_registers_lane_policy(pytestconfig: pytest.Config) -> None:
     markers = pytestconfig.getini("markers")
 
     assert addopts[-2:] == ["-m", "not slow and not legacy"]
+    assert pytestconfig.getoption("strict_markers") is True
     for marker in ("documentation", "legacy", "mcp", "setup", "slow", "tui"):
         assert any(line.startswith(f"{marker}:") for line in markers)
 
