@@ -127,7 +127,8 @@ class AgentgrepAuditMiddleware(Middleware):
     ``agentgrep_client_id`` / ``agentgrep_request_id`` (when available), and
     ``agentgrep_args_summary``. The logger name defaults to
     ``agentgrep.audit`` so operators can route it independently of the
-    ``agentgrep`` library logger.
+    ``agentgrep`` library logger. Client-visible :class:`ToolResult` errors use
+    the stable error type ``ToolResultError``.
 
     Parameters
     ----------
@@ -174,15 +175,18 @@ class AgentgrepAuditMiddleware(Middleware):
             raise
 
         duration_ms = (time.monotonic() - start) * 1000.0
-        self._logger.info(
-            "tool call completed",
-            extra={
-                "agentgrep_tool": tool_name,
-                "agentgrep_outcome": "ok",
-                "agentgrep_duration_ms": duration_ms,
-                "agentgrep_client_id": client_id,
-                "agentgrep_request_id": request_id,
-                "agentgrep_args_summary": args_summary,
-            },
-        )
+        extra: dict[str, object] = {
+            "agentgrep_tool": tool_name,
+            "agentgrep_outcome": "ok",
+            "agentgrep_duration_ms": duration_ms,
+            "agentgrep_client_id": client_id,
+            "agentgrep_request_id": request_id,
+            "agentgrep_args_summary": args_summary,
+        }
+        message = "tool call completed"
+        if isinstance(result, ToolResult) and result.is_error:
+            message = "tool call failed"
+            extra["agentgrep_outcome"] = "error"
+            extra["agentgrep_error_type"] = "ToolResultError"
+        self._logger.info(message, extra=extra)
         return result

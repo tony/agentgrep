@@ -32,19 +32,17 @@ def build_mcp_server() -> FastMCP:
         # Middleware runs outermost-first. Order rationale:
         #   1. TimingMiddleware — neutral observer; start clock early so
         #      timing captures middleware cost too.
-        #   2. AgentgrepResponseLimitingMiddleware — bound the response before
-        #      ErrorHandlingMiddleware can transform exceptions; keeps the
-        #      size cap independent of error path.
-        #   3. ErrorHandlingMiddleware — transforms exceptions into proper
-        #      MCP errors; sits outside Audit so failed-tool records still
-        #      log the failure with structured extras.
-        #   4. AgentgrepAuditMiddleware — innermost log hook; records
-        #      outcome=ok or outcome=error for every call.
+        #   2. ErrorHandlingMiddleware — transforms exceptions into proper MCP
+        #      errors after Audit records the original failure type.
+        #   3. AgentgrepAuditMiddleware — wraps response limiting so truncated
+        #      ToolResult errors are audit-visible as outcome=error.
+        #   4. AgentgrepResponseLimitingMiddleware — bounds successful tool
+        #      output before the result returns through Audit.
         middleware=[
             TimingMiddleware(),
-            AgentgrepResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
             ErrorHandlingMiddleware(transform_errors=True),
             AgentgrepAuditMiddleware(),
+            AgentgrepResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
         ],
         on_duplicate="error",
     )
