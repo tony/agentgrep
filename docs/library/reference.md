@@ -144,7 +144,7 @@ every surface (CLI, TUI, MCP).
 .. autofunction:: agentgrep.store_catalog.gemini_project_hash
 ```
 
-## DB
+## DB and insights
 
 ```{eval-rst}
 .. autofunction:: agentgrep.db.default_db_path
@@ -161,5 +161,23 @@ every surface (CLI, TUI, MCP).
    :members:
 
 .. autoclass:: agentgrep.db.DbRuntime
+   :members:
+
+.. autoclass:: agentgrep.insights.InsightRunResult
+   :members:
+
+.. autoclass:: agentgrep.insights.VariantEdge
+   :members:
+
+.. autoclass:: agentgrep.insights.OmissionFinding
+   :members:
+
+.. autoclass:: agentgrep.insights.InsightEngine
+   :members:
+
+.. autoclass:: agentgrep.suggestions.SuggestionArtifact
+   :members:
+
+.. autoclass:: agentgrep.suggestions.SuggestionEngine
    :members:
 ```

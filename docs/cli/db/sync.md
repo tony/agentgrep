@@ -35,6 +35,13 @@ Force a full refresh even when sources look unchanged:
 $ agentgrep db sync --force
 ```
 
+Build deterministic insight features during sync instead of deferring
+them:
+
+```console
+$ agentgrep db sync --features inline
+```
+
 Show progress even when writing structured output:
 
 ```console
@@ -71,6 +78,14 @@ sources that no longer appear in discovery — deleted or rotated
 history files stop answering cached searches. Narrowed syncs
 (`--agent`, `--scope`, `--limit-sources`) never prune, because they do
 not observe the full catalog.
+
+## Features
+
+The default `--features defer` mode writes source rows, normalized
+records, and the FTS5 cache immediately, but leaves expensive
+similarity features for the insights pipeline. This keeps
+`agentgrep db sync` focused on cache freshness. Use `--features inline`
+when you want the feature table populated as part of sync itself.
 
 ## Command
 

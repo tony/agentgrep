@@ -37,12 +37,14 @@ __all__ = [
     "FIND_DESCRIPTION",
     "GREP_DESCRIPTION",
     "INLINE_CODE_RE",
+    "INSIGHTS_DESCRIPTION",
     "QUERY_BOOLEAN_KEYWORDS",
     "QUERY_FIELD_TOKEN_RE",
     "QUERY_HIGHLIGHT_ROLES",
     "QUERY_TOKEN_RE",
     "SEARCH_DESCRIPTION",
     "SHELL_TOKEN_RE",
+    "SUGGESTIONS_DESCRIPTION",
     "UI_DESCRIPTION",
     "AnsiColors",
     "ContentFormat",
@@ -241,6 +243,22 @@ CLI_DESCRIPTION = build_description(
                 "agentgrep db explain",
             ),
         ),
+        (
+            "insights",
+            (
+                "agentgrep insights",
+                "agentgrep insights analyze --kind similarity",
+                "agentgrep insights list --limit 10 --json",
+            ),
+        ),
+        (
+            "suggestions",
+            (
+                "agentgrep suggestions",
+                "agentgrep suggestions list --target AGENTS.md",
+                "agentgrep suggestions render <suggestion-id>",
+            ),
+        ),
     ),
 )
 FIND_DESCRIPTION = build_description(
@@ -363,6 +381,48 @@ DB_DESCRIPTION = build_description(
                 "agentgrep db sync --agent codex --scope prompts",
                 "agentgrep db status --json",
                 "agentgrep db explain --ndjson",
+            ),
+        ),
+    ),
+)
+
+
+INSIGHTS_DESCRIPTION = build_description(
+    """
+    Run and inspect deterministic similarity, variant, and omission
+    analysis over the DB index. Insights generate persisted
+    evidence artifacts and do not call an LLM by default.
+    """,
+    (
+        (
+            "insights",
+            (
+                "agentgrep insights",
+                "agentgrep insights analyze --kind similarity",
+                "agentgrep insights analyze --kind omissions --target AGENTS.md",
+                "agentgrep insights list --limit 10 --json",
+                "agentgrep insights explain",
+            ),
+        ),
+    ),
+)
+
+
+SUGGESTIONS_DESCRIPTION = build_description(
+    """
+    List, inspect, and render review-only instruction suggestions derived
+    from omission findings. Suggestions never edit AGENTS.md or skills
+    automatically; they take effect only after a human accepts a patch
+    and the relevant agent reloads context.
+    """,
+    (
+        (
+            "suggestions",
+            (
+                "agentgrep suggestions",
+                "agentgrep suggestions list --target AGENTS.md --json",
+                "agentgrep suggestions show <suggestion-id> --json",
+                "agentgrep suggestions render <suggestion-id>",
             ),
         ),
     ),

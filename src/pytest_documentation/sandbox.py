@@ -683,9 +683,13 @@ def _accepts_data_dependent_empty_result(script: str) -> bool:
             "agentgrep search",
             "agentgrep grep",
             "agentgrep find",
+            "agentgrep insights",
+            "agentgrep suggestions",
             "uv run agentgrep search",
             "uv run agentgrep grep",
             "uv run agentgrep find",
+            "uv run agentgrep insights",
+            "uv run agentgrep suggestions",
         )
     )
 

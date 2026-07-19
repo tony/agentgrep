@@ -18,8 +18,10 @@ from agentgrep.mcp import (
     CatalogAgentSelector,
     DbStatusModel,
     FindToolResponse,
+    InsightsListResponse,
     SearchScopeName,
     SearchToolResponse,
+    SuggestionsListResponse,
 )
 from agentgrep.mcp.models import (
     DiscoverySummaryResponse,
@@ -466,6 +468,42 @@ async def db_status(
 t.cast(t.Any, db_status).__fastmcp__ = types.SimpleNamespace(
     name="db_status",
     title="DB Status",
-    tags=READONLY_TAGS | {"db"},
+    tags=READONLY_TAGS | {"db", "insights"},
+    annotations=None,
+)
+
+
+async def insights_list(
+    db_path: t.Annotated[
+        str | None,
+        Field(default=None, description="Optional agentgrep db path."),
+    ] = None,
+) -> InsightsListResponse:
+    """List persisted deterministic insight artifacts."""
+    raise NotImplementedError(DOCS_ONLY_MESSAGE)
+
+
+t.cast(t.Any, insights_list).__fastmcp__ = types.SimpleNamespace(
+    name="insights_list",
+    title="Insights List",
+    tags=READONLY_TAGS | {"insights"},
+    annotations=None,
+)
+
+
+async def suggestions_list(
+    db_path: t.Annotated[
+        str | None,
+        Field(default=None, description="Optional agentgrep db path."),
+    ] = None,
+) -> SuggestionsListResponse:
+    """List persisted review-only instruction suggestions."""
+    raise NotImplementedError(DOCS_ONLY_MESSAGE)
+
+
+t.cast(t.Any, suggestions_list).__fastmcp__ = types.SimpleNamespace(
+    name="suggestions_list",
+    title="Suggestions List",
+    tags=READONLY_TAGS | {"insights", "suggestions"},
     annotations=None,
 )
