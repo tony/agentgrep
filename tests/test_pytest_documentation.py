@@ -345,7 +345,6 @@ def test_redact_path_prefers_project_relative_then_home(
     )
 
 
-@pytest.mark.slow
 def test_literal_shell_evaluator_uses_temp_home_and_preserves_real_home(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -372,7 +371,6 @@ def test_literal_shell_evaluator_uses_temp_home_and_preserves_real_home(
     assert result.stderr == ""
 
 
-@pytest.mark.slow
 def test_sandbox_isolates_uv_build_env_by_default(tmp_path: pathlib.Path) -> None:
     """By default the sandbox builds an isolated uv cache and project venv."""
     sandbox = TempHomeSandbox(project_root=tmp_path)
@@ -385,7 +383,6 @@ def test_sandbox_isolates_uv_build_env_by_default(tmp_path: pathlib.Path) -> Non
     assert "UV_NO_SYNC" not in env
 
 
-@pytest.mark.slow
 def test_sandbox_reuses_shared_uv_build_env_when_configured(tmp_path: pathlib.Path) -> None:
     """A configured shared uv cache and project env are reused read-only.
 
@@ -411,7 +408,6 @@ def test_sandbox_reuses_shared_uv_build_env_when_configured(tmp_path: pathlib.Pa
     assert env["HOME"] == str(home)
 
 
-@pytest.mark.slow
 def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.Path) -> None:
     """Command examples are executed literally, so real CLI failures are reported."""
     path = tmp_path / "README.md"
@@ -610,7 +606,6 @@ SANDBOX_ERROR_CASES: tuple[SandboxErrorCase, ...] = (
 )
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     SANDBOX_ERROR_CASES,
@@ -842,7 +837,6 @@ def test_documentation_suite_registers_class_and_function_collectors(
     assert [example.source for example in examples] == ["print('from class collector')\n"]
 
 
-@pytest.mark.slow
 def test_console_evaluator_redacts_paths_in_failures(tmp_path: pathlib.Path) -> None:
     """Failure messages redact absolute paths before pytest renders them."""
     secret_path = pathlib.Path("/home/alice/private/token.txt")
@@ -1345,7 +1339,6 @@ EXPECTED_OUTPUT_CASES: tuple[ExpectedOutputCase, ...] = (
 )
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     EXPECTED_OUTPUT_CASES,

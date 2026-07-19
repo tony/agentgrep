@@ -477,7 +477,6 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
     assert any(template.uriTemplate == "agentgrep://sources/{agent}" for template in templates)
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     TOOL_ANNOTATION_CASES,
@@ -642,7 +641,6 @@ async def test_mcp_search_honors_query_language_in_single_tokens(
     assert predicate_data.results[0].text == "alpha content here"
 
 
-@pytest.mark.slow
 async def test_mcp_search_rejects_invalid_query() -> None:
     """A malformed query predicate raises a ToolError with the reason."""
     from fastmcp.exceptions import ToolError
@@ -1394,7 +1392,6 @@ async def test_mcp_list_sources_exposes_searchability_metadata(
     assert inspectable_source["searchable_reason"]
 
 
-@pytest.mark.slow
 async def test_mcp_capabilities_resource_reports_read_only() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -1533,7 +1530,6 @@ async def test_audit_middleware_emits_extras(
     assert duration >= 0.0
 
 
-@pytest.mark.slow
 async def test_audit_middleware_redacts_pattern(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1953,7 +1949,6 @@ async def test_mcp_validate_query_empty_returns_guidance() -> None:
     assert data["error_message"] == "provide terms, query, or both"
 
 
-@pytest.mark.slow
 async def test_mcp_query_language_resource_lists_every_field() -> None:
     """The query-language resource lists each registry field and operators."""
     from agentgrep.query import default_registry, parse_query, scope_widened_for_ast
@@ -1988,7 +1983,6 @@ async def test_mcp_search_tool_description_mentions_query_language() -> None:
     assert "query language" in (description or "")
 
 
-@pytest.mark.slow
 @pytest.mark.documentation
 async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
     """Every docs-only tool shim mirrors its live MCP input schema."""
@@ -2030,7 +2024,6 @@ async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
 
 
 @pytest.mark.documentation
-@pytest.mark.slow
 async def test_docs_list_stores_agent_examples_are_valid_selectors() -> None:
     """Documented agent examples stay inside the MCP selector enum."""
     from docs._ext import agentgrep_fastmcp as docs_tools
@@ -2253,7 +2246,6 @@ async def test_mcp_store_formats_resource() -> None:
     assert all(row["description"] for row in rows)
 
 
-@pytest.mark.slow
 async def test_mcp_capabilities_match_registered_surface() -> None:
     """Capabilities exactly match the live tool, resource, and prompt surface."""
     agentgrep_mcp = load_agentgrep_mcp_module()

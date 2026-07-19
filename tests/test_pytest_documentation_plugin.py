@@ -159,7 +159,6 @@ def test_suite_collects_python_page_examples_as_single_pytest_item(
     result.assert_outcomes(passed=1)
 
 
-@pytest.mark.slow
 def test_plugin_is_dormant_without_configured_suite(pytester: pytest.Pytester) -> None:
     """Loading the plugin alone does not start collecting every documentation file."""
     pytester.makeini(
