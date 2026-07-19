@@ -25,6 +25,7 @@ from tests._agentgrep_tui_support import (
 pytestmark = pytest.mark.tui
 
 
+@pytest.mark.slow
 async def test_streaming_ui_app_mounts_cleanly(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
