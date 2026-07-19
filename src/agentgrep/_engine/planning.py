@@ -22,7 +22,10 @@ from agentgrep._engine.orchestration import (
     source_matches_scope,
     source_order_key,
 )
-from agentgrep._engine.source_filters import source_may_match_query
+from agentgrep._engine.source_filters import (
+    query_needs_prompt_session_sources,
+    source_may_match_query,
+)
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.records import (
     CONVERSATION_STORE_ROLES,
@@ -341,6 +344,7 @@ def build_physical_search_plan(
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
     prompt_history_agents = prompt_history_agents_for_sources(source_list)
+    include_prompt_session_sources = query_needs_prompt_session_sources(query)
     scoped_sources = [
         source
         for source in source_list
@@ -348,6 +352,7 @@ def build_physical_search_plan(
             source,
             query.scope,
             prompt_history_agents=prompt_history_agents,
+            include_prompt_session_sources=include_prompt_session_sources,
         )
     ]
     decisions: list[PlannerDecision] = [
