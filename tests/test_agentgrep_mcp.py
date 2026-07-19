@@ -477,6 +477,7 @@ async def test_mcp_lists_tools_resources_prompts_and_templates() -> None:
     assert any(template.uriTemplate == "agentgrep://sources/{agent}" for template in templates)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     TOOL_ANNOTATION_CASES,
@@ -641,6 +642,7 @@ async def test_mcp_search_honors_query_language_in_single_tokens(
     assert predicate_data.results[0].text == "alpha content here"
 
 
+@pytest.mark.slow
 async def test_mcp_search_rejects_invalid_query() -> None:
     """A malformed query predicate raises a ToolError with the reason."""
     from fastmcp.exceptions import ToolError
@@ -1986,6 +1988,7 @@ async def test_mcp_search_tool_description_mentions_query_language() -> None:
     assert "query language" in (description or "")
 
 
+@pytest.mark.slow
 @pytest.mark.documentation
 async def test_docs_tool_input_schemas_match_live_mcp_schemas() -> None:
     """Every docs-only tool shim mirrors its live MCP input schema."""
@@ -2250,6 +2253,7 @@ async def test_mcp_store_formats_resource() -> None:
     assert all(row["description"] for row in rows)
 
 
+@pytest.mark.slow
 async def test_mcp_capabilities_match_registered_surface() -> None:
     """Capabilities exactly match the live tool, resource, and prompt surface."""
     agentgrep_mcp = load_agentgrep_mcp_module()
