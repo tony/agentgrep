@@ -22,6 +22,7 @@ from agentgrep.mcp import (
 )
 from agentgrep.mcp.models import (
     DiscoverySummaryResponse,
+    InsightsSkillsResponse,
     InspectResultResponse,
     InspectSampleResponse,
     ListSourcesResponse,
@@ -458,5 +459,35 @@ t.cast(t.Any, recent_sessions).__fastmcp__ = types.SimpleNamespace(
     name="recent_sessions",
     title="Recent Sessions",
     tags=READONLY_TAGS | {"search"},
+    annotations=None,
+)
+
+
+async def insights_skills(
+    agent: t.Annotated[
+        AgentSelector,
+        Field(description="Agent to analyze, or 'all'."),
+    ] = "all",
+    limit: t.Annotated[
+        int,
+        Field(ge=1, le=5000, description="Max records to analyze."),
+    ] = 500,
+    since: t.Annotated[
+        str | None,
+        Field(description="Only analyze records on/after this ISO date (e.g. 2026-05-14)."),
+    ] = None,
+    until: t.Annotated[
+        str | None,
+        Field(description="Only analyze records on/before this ISO date."),
+    ] = None,
+) -> InsightsSkillsResponse:
+    """Mine the user's recurring requests across conversations and suggest reusable Skills. Returns skill suggestions, clustered similar prompts, recurring conversations, and the nearest forgotten-but-similar past conversations. Needs the graph level (agentgrep[insights-graph]); reports status='unavailable' with a setup command otherwise."""  # noqa: E501
+    raise NotImplementedError(DOCS_ONLY_MESSAGE)
+
+
+t.cast(t.Any, insights_skills).__fastmcp__ = types.SimpleNamespace(
+    name="insights_skills",
+    title="Insights Skills",
+    tags=READONLY_TAGS | {"insights"},
     annotations=None,
 )

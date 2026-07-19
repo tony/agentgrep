@@ -36,6 +36,54 @@ dependencies = [
 # agentgrep runs without it; stdlib json stays the semantic source of truth
 # (see docs/dev/adr/0002).
 speedups = ["orjson>=3.10"]
+# Insights enrichment ladder (ADR 0005). Each level is independent and the
+# base install pulls in none of these. See docs/cli/insights.md.
+insights-html = ["jinja2>=3.1", "platformdirs>=4"]
+insights-ml = ["scikit-learn>=1.6"]
+# Torch-free default embedding runtime; the model weights download via the
+# same urllib artifact path used for local LLM models.
+insights-embeddings = ["model2vec>=0.8", "numpy>=1.24", "huggingface-hub>=0.20"]
+# Heavier, higher-quality embedding runtime; preferred when installed.
+insights-embeddings-st = ["sentence-transformers>=5.5"]
+# Persistent hybrid index: tantivy (BM25) + sqlite-vec (vectors).
+insights-index = ["tantivy>=0.26", "sqlite-vec>=0.1.9", "numpy>=1.24"]
+# Alternative single-store index backend.
+insights-index-lancedb = ["lancedb>=0.33", "numpy>=1.24"]
+# Prompt/reply/conversation similarity network + workflow mining (sqlite-vec store).
+# scikit-learn powers HDBSCAN archetype clustering; the engine falls back to a
+# greedy cosine pass when it is absent.
+insights-graph = [
+    "model2vec>=0.8",
+    "huggingface-hub>=0.20",
+    "sqlite-vec>=0.1.9",
+    "numpy>=1.24",
+    "scikit-learn>=1.4",
+]
+insights-graph-st = ["sentence-transformers>=5.5"]
+# True IVF-PQ ANN vector backend for the graph similar-edge kNN (scale store).
+insights-graph-lancedb = ["lancedb>=0.33", "numpy>=1.24"]
+# Local-LLM summaries over the Ollama HTTP control plane.
+insights-llm = ["httpx>=0.28"]
+# In-process LiteRT-LM runtime for local Gemma .litertlm artifacts.
+insights-llm-litert = ["litert-lm-api>=0.13"]
+# In-process transformers runtime: a small, non-gated instruction-tuned model on
+# GPU/CUDA (the GPU-capable path where LiteRT's OpenCL delegate is unavailable).
+# The transformers floor covers the Granite and Phi-4 architectures.
+insights-llm-transformers = ["torch>=2.2", "transformers>=4.50", "accelerate>=0.30"]
+# Optional 4-bit NF4 quantization so a larger model (Phi-4-mini, Granite-2b)
+# fits a 4 GB GPU. The fp16 SmolLM2 default works without this.
+insights-llm-transformers-quant = ["bitsandbytes>=0.43"]
+# Every stable level (1-4); excludes the -st embedding runtime and the LLM level.
+insights-all = [
+  "jinja2>=3.1",
+  "platformdirs>=4",
+  "scikit-learn>=1.6",
+  "model2vec>=0.8",
+  "huggingface-hub>=0.20",
+  "tantivy>=0.26",
+  "sqlite-vec>=0.1.9",
+  "numpy>=1.24",
+]
 
 [project.urls]
 "Bug Tracker" = "https://github.com/tony/agentgrep/issues"
@@ -60,6 +108,9 @@ dev = [
   "pytest-asyncio",
   "pytest-rerunfailures>=16.2",
   "pytest-watcher",
+  # Insights tests use real NumPy arrays while injecting the heavier optional
+  # model and vector-store backends.
+  "numpy>=1.24",
   # pytest-xdist powers the opt-in parallel `just test-fast` path. The docs
   # sandbox reuses the project venv read-only (UV_NO_SYNC) so workers skip
   # the cold per-process `uv run` build that otherwise times out in parallel.
@@ -254,6 +305,7 @@ convention = "numpy"
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
 # These modules own intentional terminal output.
+"src/agentgrep/cli/insights_render.py" = ["T201"]
 "src/agentgrep/cli/render.py" = ["T201"]
 # typer.Option / typer.Argument calls are metadata, not real callables —
 # B008 does not apply. E501 is suppressed because a few error messages

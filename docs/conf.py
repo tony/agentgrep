@@ -111,6 +111,8 @@ conf["fastmcp_model_classes"] = (
     "InspectSampleResponse",
     "InspectResultRequest",
     "InspectResultResponse",
+    "InsightsSkillsRequest",
+    "InsightsSkillsResponse",
 )
 conf["fastmcp_section_badge_map"] = {
     "Search": "readonly",
