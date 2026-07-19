@@ -46,6 +46,7 @@ from agentgrep.stores import SEARCHABLE_COVERAGE, StoreRole
 if t.TYPE_CHECKING:
     from agentgrep._engine.planning import PhysicalSearchPlan
     from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep._engine.telemetry import EngineOperationTelemetry
 
 
 def search_sources(
@@ -56,6 +57,7 @@ def search_sources(
     progress: SearchProgress | None = None,
     control: SearchControl | None = None,
     runtime: SearchRuntime | None = None,
+    _operation: EngineOperationTelemetry | None = None,
 ) -> list[SearchRecord]:
     """Parse and filter search results across all selected sources."""
     active_progress = noop_search_progress() if progress is None else progress
@@ -77,6 +79,8 @@ def search_sources(
         progress=active_progress,
         control=active_control,
     )
+    if _operation is not None:
+        _operation.sources_planned(len(sources), len(plan.tasks))
     if active_control.answer_now_requested():
         active_progress.answer_now(0)
         return []
@@ -105,34 +109,46 @@ def run_search_query(
     runtime: SearchRuntime | None = None,
 ) -> list[SearchRecord]:
     """Discover sources and run a normalized search query."""
+    from agentgrep._engine.telemetry import engine_operation
+
     active_backends = select_backends() if backends is None else backends
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
-    active_progress.start(query)
-    interrupted = False
-    try:
-        sources = discover_sources_for_search(
-            home,
-            query,
-            active_backends,
-            version_detail="none",
-        )
-        active_progress.sources_discovered(len(sources))
-        return search_sources(
-            query,
-            sources,
-            active_backends,
-            progress=active_progress,
-            control=active_control,
-            runtime=runtime,
-        )
-    except KeyboardInterrupt:
-        interrupted = True
-        active_progress.interrupt()
-        raise
-    finally:
-        if not interrupted:
-            active_progress.close()
+    with engine_operation(
+        "search",
+        agent_count=len(query.agents),
+        scope=query.scope,
+        limit=query.limit,
+    ) as operation:
+        active_progress.start(query)
+        interrupted = False
+        try:
+            sources = discover_sources_for_search(
+                home,
+                query,
+                active_backends,
+                version_detail="none",
+            )
+            active_progress.sources_discovered(len(sources))
+            records = search_sources(
+                query,
+                sources,
+                active_backends,
+                progress=active_progress,
+                control=active_control,
+                runtime=runtime,
+                _operation=operation,
+            )
+        except KeyboardInterrupt:
+            interrupted = True
+            active_progress.interrupt()
+            raise
+        else:
+            operation.complete(len(records))
+            return records
+        finally:
+            if not interrupted:
+                active_progress.close()
 
 
 def plan_search_sources(
@@ -497,9 +513,20 @@ def run_find_query(
     backends: BackendSelection | None = None,
 ) -> list[FindRecord]:
     """Discover sources and build normalized ``find`` results."""
+    from agentgrep._engine.telemetry import engine_operation
+
     active_backends = select_backends() if backends is None else backends
-    sources = discover_sources(home, agents, active_backends, version_detail="none")
-    return find_sources(pattern, sources, limit)
+    with engine_operation(
+        "find",
+        agent_count=len(agents),
+        limit=limit,
+        pattern_present=pattern is not None,
+    ) as operation:
+        sources = discover_sources(home, agents, active_backends, version_detail="none")
+        operation.sources_planned(len(sources), len(sources))
+        records = find_sources(pattern, sources, limit)
+        operation.complete(len(records))
+        return records
 
 
 def build_grep_command(

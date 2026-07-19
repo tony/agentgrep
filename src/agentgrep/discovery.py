@@ -224,7 +224,8 @@ def resolve_env_root(env_var: str, default: pathlib.Path) -> pathlib.Path:
         "env-override path unavailable, fell back to default",
         extra={
             "agentgrep_env_var": env_var,
-            "agentgrep_env_path": value,
+            "agentgrep_env_path_redacted": True,
+            "agentgrep_env_path_len": len(value),
             "agentgrep_env_path_status": status,
         },
     )

@@ -46,7 +46,9 @@ import threading
 import time
 import typing as t
 
+from agentgrep import _telemetry
 from agentgrep._engine.orchestration import discover_sources_for_search
+from agentgrep._engine.telemetry import isolate_generator_context
 from agentgrep.progress import SearchControl
 from agentgrep.readers import select_backends
 from agentgrep.records import BackendSelection, SearchQuery
@@ -68,6 +70,7 @@ class _AsyncSearchDone:
     """Worker-thread completion sentinel sent through the async event queue."""
 
 
+@isolate_generator_context
 def iter_search_events(
     home: pathlib.Path,
     query: SearchQuery,
@@ -75,7 +78,7 @@ def iter_search_events(
     backends: BackendSelection | None = None,
     control: SearchControl | None = None,
     runtime: SearchRuntime | None = None,
-) -> cabc.Iterator[_events.SearchEvent]:
+) -> cabc.Generator[_events.SearchEvent]:
     """Yield typed events as the search engine scans sources.
 
     Parameters
@@ -120,54 +123,63 @@ def iter_search_events(
     )
     from agentgrep._engine.planning import build_physical_search_plan
     from agentgrep._engine.source_filters import source_may_match_query
+    from agentgrep._engine.telemetry import engine_operation
 
     active_backends = select_backends() if backends is None else backends
     active_control = SearchControl() if control is None else control
     start_time = time.monotonic()
 
-    sources = discover_sources_for_search(
-        home,
-        query,
-        active_backends,
-        version_detail="none",
-    )
-    sources = [s for s in sources if source_may_match_query(query, s)]
-    plan = build_physical_search_plan(
-        query,
-        sources,
-        active_backends,
-        control=active_control,
-    )
+    with engine_operation(
+        "search",
+        agent_count=len(query.agents),
+        scope=query.scope,
+        limit=query.limit,
+    ) as operation:
+        sources = discover_sources_for_search(
+            home,
+            query,
+            active_backends,
+            version_detail="none",
+        )
+        sources = [s for s in sources if source_may_match_query(query, s)]
+        plan = build_physical_search_plan(
+            query,
+            sources,
+            active_backends,
+            control=active_control,
+        )
+        operation.sources_planned(len(sources), len(plan.tasks))
 
-    yield _events.SearchStarted(source_count=len(plan.tasks))
+        yield _events.SearchStarted(source_count=len(plan.tasks))
 
-    match_count = 0
-    for execution_event in select_execution_driver(query, plan).iter_search_plan(
-        query,
-        plan,
-        control=active_control,
-        runtime=runtime,
-    ):
-        if isinstance(execution_event, ExecutionSourceStarted):
-            yield _events.SourceStarted(
-                adapter_id=execution_event.source.adapter_id,
-                index=execution_event.index,
-                total=execution_event.total,
-            )
-        elif isinstance(execution_event, ExecutionRecordEmitted):
-            match_count = execution_event.result_count
-            yield _events.RecordEmitted(record=execution_event.record)
-        elif isinstance(execution_event, ExecutionSourceFinished):
-            yield _events.SourceFinished(
-                adapter_id=execution_event.source.adapter_id,
-                records_seen=execution_event.records_seen,
-                matches_seen=execution_event.matches_seen,
-            )
+        match_count = 0
+        for execution_event in select_execution_driver(query, plan).iter_search_plan(
+            query,
+            plan,
+            control=active_control,
+            runtime=runtime,
+        ):
+            if isinstance(execution_event, ExecutionSourceStarted):
+                yield _events.SourceStarted(
+                    adapter_id=execution_event.source.adapter_id,
+                    index=execution_event.index,
+                    total=execution_event.total,
+                )
+            elif isinstance(execution_event, ExecutionRecordEmitted):
+                match_count = execution_event.result_count
+                yield _events.RecordEmitted(record=execution_event.record)
+            elif isinstance(execution_event, ExecutionSourceFinished):
+                yield _events.SourceFinished(
+                    adapter_id=execution_event.source.adapter_id,
+                    records_seen=execution_event.records_seen,
+                    matches_seen=execution_event.matches_seen,
+                )
 
-    yield _events.SearchFinished(
-        match_count=match_count,
-        elapsed_seconds=time.monotonic() - start_time,
-    )
+        operation.complete(match_count)
+        yield _events.SearchFinished(
+            match_count=match_count,
+            elapsed_seconds=time.monotonic() - start_time,
+        )
 
 
 async def aiter_search_events(
@@ -246,7 +258,7 @@ async def aiter_search_events(
         finally:
             put_from_worker(_AsyncSearchDone())
 
-    worker_task = asyncio.create_task(asyncio.to_thread(run_worker))
+    worker_task = asyncio.create_task(_telemetry.to_thread(run_worker))
     try:
         while True:
             item = await event_queue.get()

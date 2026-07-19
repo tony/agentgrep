@@ -3,9 +3,16 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #     "click>=8.1",
+#     "opentelemetry-api>=1.42.1",
+#     "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+#     "opentelemetry-instrumentation-asyncio>=0.63b1",
+#     "opentelemetry-instrumentation-sqlite3>=0.63b1",
+#     "opentelemetry-sdk>=1.42.1",
 #     "typer>=0.12",
 #     "rich>=13.0",
 #     "pydantic>=2.0",
+#     "pyroscope-io>=1.0.12",
+#     "pyroscope-otel>=1.0.1",
 # ]
 # ///
 """Cross-commit benchmark harness — versatile, project-aware, ``git bisect``-shaped.
@@ -22,11 +29,13 @@ Run ``uv run scripts/benchmark.py --help`` for the subcommand list, or see
 from __future__ import annotations
 
 import atexit
+import collections.abc as cabc
 import contextlib
 import csv
 import dataclasses
 import io
 import json
+import logging
 import math
 import pathlib
 import shlex
@@ -46,6 +55,7 @@ import rich.table
 import typer
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+SRC_ROOT = REPO_ROOT / "src"
 DEFAULT_CONFIG = REPO_ROOT / "scripts" / "benchmark.toml"
 LOCAL_CONFIG = REPO_ROOT / "scripts" / "benchmark.local.toml"
 
@@ -67,6 +77,31 @@ BENCHMARK_ANALYSIS_WARNING_ARTIFACT_KIND = "agentgrep.benchmark.analysis.warning
 type CommandContext = dict[str, str]
 type ProfilePayload = dict[str, object]
 
+logger = logging.getLogger("agentgrep.benchmark")
+
+
+def _telemetry_api() -> t.Any | None:
+    """Return the optional project telemetry API when available."""
+    src_path = str(SRC_ROOT)
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    try:
+        from agentgrep import _telemetry
+    except Exception:
+        return None
+    return _telemetry
+
+
+def _setup_benchmark_telemetry() -> t.Any | None:
+    """Best-effort telemetry bootstrap for benchmark runs."""
+    telemetry = _telemetry_api()
+    if telemetry is None:
+        return None
+    handle = telemetry.setup(repo_root=REPO_ROOT, service_name="agentgrep-benchmark")
+    atexit.register(handle.shutdown)
+    return handle
+
+
 PROFILE_ENGINE_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-search-all-prompts-limit-500",
     "profile-engine-search-all-conversations-limit-500",
@@ -74,12 +109,22 @@ PROFILE_ENGINE_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-grep-all-conversations-max-count-500",
     "profile-engine-find-all-prompts-limit-500",
 )
-PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP: tuple[str, ...] = (
+PROFILE_ENGINE_CURSOR_IDE_LOCAL_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-search-cursor-ide-prompts-limit-500",
     "profile-engine-search-cursor-ide-conversations-limit-500",
     "profile-engine-grep-cursor-ide-prompts-max-count-500",
     "profile-engine-grep-cursor-ide-conversations-max-count-500",
     "profile-engine-find-cursor-ide-prompts-limit-500",
+)
+PROFILE_ENGINE_CURSOR_IDE_FIXTURE_BENCHMARK_GROUP: tuple[str, ...] = (
+    "profile-engine-search-cursor-ide-fixture-prompts-limit-500",
+    "profile-engine-search-cursor-ide-fixture-conversations-limit-500",
+    "profile-engine-grep-cursor-ide-fixture-prompts-max-count-500",
+    "profile-engine-grep-cursor-ide-fixture-conversations-max-count-500",
+)
+PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP: tuple[str, ...] = (
+    *PROFILE_ENGINE_CURSOR_IDE_LOCAL_BENCHMARK_GROUP,
+    *PROFILE_ENGINE_CURSOR_IDE_FIXTURE_BENCHMARK_GROUP,
 )
 PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP: tuple[str, ...] = (
     "profile-engine-search-all-prompts-query-limit-500",
@@ -90,6 +135,7 @@ PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP: tuple[str, ...] = (
 BENCHMARK_COMMAND_GROUPS: dict[str, tuple[str, ...]] = {
     "profile-engine": PROFILE_ENGINE_BENCHMARK_GROUP,
     "profile-engine-cursor-ide": PROFILE_ENGINE_CURSOR_IDE_BENCHMARK_GROUP,
+    "profile-engine-cursor-ide-fixture": PROFILE_ENGINE_CURSOR_IDE_FIXTURE_BENCHMARK_GROUP,
     "query-language": PROFILE_ENGINE_QUERY_LANGUAGE_BENCHMARK_GROUP,
 }
 
@@ -1130,6 +1176,83 @@ def _source_strategy_groups(
     )
 
 
+def _query_language_root_full_scan_warnings(
+    spans: tuple[ProfileSpanSummary, ...],
+) -> list[str]:
+    """Return analyzer warnings for query-language conversation full scans."""
+    command_spans: dict[str, list[ProfileSpanSummary]] = {}
+    for span in spans:
+        command_name = span.command_name
+        if "query" not in command_name or "conversations" not in command_name:
+            continue
+        if span.name != "search.collect.source":
+            continue
+        source_strategy = _span_attribute_text(span.attributes, "agentgrep_source_strategy")
+        if source_strategy != "root_full_scan":
+            continue
+        command_spans.setdefault(command_name, []).append(span)
+
+    warnings: list[str] = []
+    for command_name, grouped_spans in sorted(command_spans.items()):
+        records_seen = sum(
+            _span_attribute_int(span.attributes, "agentgrep_records_seen") for span in grouped_spans
+        )
+        matches_seen = sum(
+            _span_attribute_int(span.attributes, "agentgrep_matches_seen") for span in grouped_spans
+        )
+        duration = sum(span.duration_seconds for span in grouped_spans)
+        top_span = max(grouped_spans, key=lambda span: span.duration_seconds)
+        top = "/".join(
+            (
+                _span_attribute_text(top_span.attributes, "agentgrep_agent"),
+                _span_attribute_text(top_span.attributes, "agentgrep_store"),
+                _span_attribute_text(top_span.attributes, "agentgrep_adapter_id"),
+                _span_attribute_text(top_span.attributes, "agentgrep_source_kind"),
+                _span_attribute_text(top_span.attributes, "agentgrep_source_strategy"),
+            ),
+        )
+        warnings.append(
+            f"{command_name} query-language conversation profile used "
+            f"root_full_scan for {len(grouped_spans)} source span(s), "
+            f"{records_seen} record(s), {matches_seen} match(es), "
+            f"{duration:.3f}s; top={top}",
+        )
+    return warnings
+
+
+def _payload_int(payload: ProfilePayload, key: str) -> int:
+    """Read one integer from a benchmark profile payload."""
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    return 0
+
+
+def _cursor_ide_empty_source_warnings(measurements: cabc.Sequence[Measurement]) -> list[str]:
+    """Return warnings for real-local Cursor IDE rows that found no sources."""
+    warnings: list[str] = []
+    for measurement in measurements:
+        command_name = measurement.command_name
+        if "profile-engine-" not in command_name:
+            continue
+        if "cursor-ide" not in command_name or "cursor-ide-fixture" in command_name:
+            continue
+        payload = measurement.profile_payload
+        if payload is None or payload.get("fixture_kind") is not None:
+            continue
+        discovered = _payload_int(payload, "discovered_source_count")
+        planned = _payload_int(payload, "planned_source_count")
+        if discovered or planned:
+            continue
+        warnings.append(
+            f"{command_name} discovered zero Cursor IDE sources; run "
+            "profile-engine-cursor-ide-fixture for populated SQLite coverage",
+        )
+    return warnings
+
+
 def build_analysis_report(
     measurements: list[Measurement],
     *,
@@ -1149,6 +1272,8 @@ def build_analysis_report(
         warnings.append(f"{sampleless_count} measurement(s) have no samples")
     if profile_capture_errors:
         warnings.append(f"{profile_capture_errors} profile capture(s) failed")
+    warnings.extend(_query_language_root_full_scan_warnings(all_spans))
+    warnings.extend(_cursor_ide_empty_source_warnings(measurements))
     return AnalysisReport(
         artifact_label=_analysis_artifact_label(artifact_label),
         command_summaries=_command_summaries(
@@ -1464,7 +1589,151 @@ def _probe_subcommand(venv: pathlib.Path, subcommand: str, repo: pathlib.Path) -
     return proc.returncode == 0
 
 
+@contextlib.contextmanager
+def _benchmark_subprocess_span(
+    kind: str,
+    *,
+    command_name: str | None = None,
+) -> cabc.Iterator[None]:
+    """Trace one benchmark harness subprocess-shaped operation."""
+    telemetry = _telemetry_api()
+    if telemetry is None:
+        yield
+        return
+    attributes: dict[str, object] = {
+        "agentgrep_surface": "benchmark",
+        "agentgrep_subprocess_kind": kind,
+    }
+    if command_name is not None:
+        attributes["agentgrep_benchmark_command"] = command_name
+    started_at = time.perf_counter()
+    outcome = "ok"
+    with telemetry.span("agentgrep.benchmark.subprocess", **attributes):
+        try:
+            yield
+        except BaseException as exc:
+            outcome = "error"
+            telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+            raise
+        finally:
+            duration = time.perf_counter() - started_at
+            telemetry.set_span_attribute("agentgrep_outcome", outcome)
+            telemetry.set_span_attribute("agentgrep_duration_seconds", duration)
+            telemetry.record_metric(
+                "agentgrep.benchmark.subprocess.count",
+                1,
+                **attributes,
+                agentgrep_outcome=outcome,
+            )
+            telemetry.record_metric(
+                "agentgrep.benchmark.subprocess.duration",
+                duration,
+                **attributes,
+                agentgrep_outcome=outcome,
+            )
+
+
 def _run_one_commit(
+    *,
+    commit: CommitRef,
+    config: Config,
+    bench_names: list[str],
+    query_overrides: dict[str, str],
+    runs: int,
+    warmup: int,
+    no_sync: bool,
+    dry_run: bool,
+    repo: pathlib.Path,
+    prefer_hyperfine: bool,
+    notify: t.Callable[[str], None],
+) -> list[Measurement]:
+    """Checkout ``commit`` under a benchmark run root."""
+    telemetry = _telemetry_api()
+    if telemetry is None:
+        return _run_one_commit_inner(
+            commit=commit,
+            config=config,
+            bench_names=bench_names,
+            query_overrides=query_overrides,
+            runs=runs,
+            warmup=warmup,
+            no_sync=no_sync,
+            dry_run=dry_run,
+            repo=repo,
+            prefer_hyperfine=prefer_hyperfine,
+            notify=notify,
+        )
+    started_at = time.monotonic()
+    with telemetry.span(
+        "agentgrep.benchmark.run",
+        agentgrep_surface="benchmark",
+        agentgrep_benchmark_commit=commit.short_sha,
+        agentgrep_benchmark_count=len(bench_names),
+    ):
+        logger.info(
+            "benchmark run started",
+            extra={
+                "agentgrep_surface": "benchmark",
+                "agentgrep_operation": "benchmark.run",
+                "agentgrep_benchmark_commit": commit.short_sha,
+                "agentgrep_benchmark_count": len(bench_names),
+                "agentgrep_run_count": runs,
+                "agentgrep_warmup_count": warmup,
+                "agentgrep_dry_run": dry_run,
+            },
+        )
+        try:
+            measurements = _run_one_commit_inner(
+                commit=commit,
+                config=config,
+                bench_names=bench_names,
+                query_overrides=query_overrides,
+                runs=runs,
+                warmup=warmup,
+                no_sync=no_sync,
+                dry_run=dry_run,
+                repo=repo,
+                prefer_hyperfine=prefer_hyperfine,
+                notify=notify,
+            )
+        except Exception as exc:
+            duration_ms = (time.monotonic() - started_at) * 1000.0
+            telemetry.set_span_attribute("agentgrep_outcome", "error")
+            telemetry.set_span_attribute("agentgrep_error_type", type(exc).__name__)
+            telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+            logger.info(
+                "benchmark run failed",
+                extra={
+                    "agentgrep_surface": "benchmark",
+                    "agentgrep_operation": "benchmark.run",
+                    "agentgrep_benchmark_commit": commit.short_sha,
+                    "agentgrep_benchmark_count": len(bench_names),
+                    "agentgrep_outcome": "error",
+                    "agentgrep_error_type": type(exc).__name__,
+                    "agentgrep_duration_ms": duration_ms,
+                },
+            )
+            raise
+        duration_ms = (time.monotonic() - started_at) * 1000.0
+        telemetry.set_span_attribute("agentgrep_outcome", "ok")
+        telemetry.set_span_attribute("agentgrep_duration_ms", duration_ms)
+        telemetry.set_span_attribute("agentgrep_measurement_count", len(measurements))
+        logger.info(
+            "benchmark run completed",
+            extra={
+                "agentgrep_surface": "benchmark",
+                "agentgrep_operation": "benchmark.run",
+                "agentgrep_benchmark_commit": commit.short_sha,
+                "agentgrep_benchmark_count": len(bench_names),
+                "agentgrep_measurement_count": len(measurements),
+                "agentgrep_outcome": "ok",
+                "agentgrep_duration_ms": duration_ms,
+            },
+        )
+        return measurements
+
+
+def _run_one_commit_inner(
     *,
     commit: CommitRef,
     config: Config,
@@ -1481,7 +1750,8 @@ def _run_one_commit(
     """Checkout ``commit``, sync, time each bench. Returns one Measurement per bench."""
     results: list[Measurement] = []
     try:
-        _checkout(commit.sha, repo)
+        with _benchmark_subprocess_span("git_checkout"):
+            _checkout(commit.sha, repo)
     except subprocess.CalledProcessError as exc:
         notify(f"[{commit.short_sha}] checkout failed: {exc.stderr.strip()}")
         for name in bench_names:
@@ -1502,7 +1772,8 @@ def _run_one_commit(
         return results
 
     if not no_sync and not dry_run:
-        sync_result = _maybe_sync(config.settings, repo)
+        with _benchmark_subprocess_span("sync"):
+            sync_result = _maybe_sync(config.settings, repo)
         if sync_result is not None and sync_result.returncode != 0:
             # `uv sync` (or whatever sync_command resolves to) failed —
             # the venv may be in a half-resolved state, so don't run any
@@ -1580,7 +1851,12 @@ def _run_one_commit(
             )
             continue
 
-        if bench.skip_if_missing and not _probe_subcommand(venv, bench.skip_if_missing, repo):
+        if bench.skip_if_missing:
+            with _benchmark_subprocess_span("skip_probe", command_name=name):
+                subcommand_available = _probe_subcommand(venv, bench.skip_if_missing, repo)
+        else:
+            subcommand_available = True
+        if not subcommand_available:
             results.append(
                 Measurement(
                     sha=commit.sha,
@@ -1596,16 +1872,50 @@ def _run_one_commit(
             )
             continue
 
-        notify(f"[{commit.short_sha}] {name}")
-        try:
-            samples = time_command(
-                cmd_str,
-                warmup=warmup,
-                runs=runs,
-                timeout_seconds=config.settings.timeout_seconds,
-                prefer_hyperfine=prefer_hyperfine,
+        telemetry = _telemetry_api()
+        command_span = (
+            contextlib.nullcontext()
+            if telemetry is None
+            else telemetry.span(
+                "agentgrep.benchmark.command",
+                agentgrep_surface="benchmark",
+                agentgrep_benchmark_command=name,
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        )
+        with command_span:
+            notify(f"[{commit.short_sha}] {name}")
+            try:
+                with _benchmark_subprocess_span("time_command", command_name=name):
+                    samples = time_command(
+                        cmd_str,
+                        warmup=warmup,
+                        runs=runs,
+                        timeout_seconds=config.settings.timeout_seconds,
+                        prefer_hyperfine=prefer_hyperfine,
+                    )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                results.append(
+                    Measurement(
+                        sha=commit.sha,
+                        short_sha=commit.short_sha,
+                        subject=commit.subject,
+                        command_name=name,
+                        command_string=sanitized_cmd_str,
+                        samples=[],
+                        status="bench_fail",
+                        error=str(exc),
+                        dry_run=dry_run,
+                    ),
+                )
+                continue
+            profile_payload: ProfilePayload | None = None
+            profile_capture_error: str | None = None
+            if _is_profile_engine_command(cmd_str):
+                with _benchmark_subprocess_span("profile_capture", command_name=name):
+                    profile_payload, profile_capture_error = _capture_profile_payload(
+                        cmd_str,
+                        timeout_seconds=config.settings.timeout_seconds,
+                    )
             results.append(
                 Measurement(
                     sha=commit.sha,
@@ -1613,34 +1923,13 @@ def _run_one_commit(
                     subject=commit.subject,
                     command_name=name,
                     command_string=sanitized_cmd_str,
-                    samples=[],
-                    status="bench_fail",
-                    error=str(exc),
+                    samples=samples,
+                    status="ok",
                     dry_run=dry_run,
+                    profile_payload=profile_payload,
+                    profile_capture_error=profile_capture_error,
                 ),
             )
-            continue
-        profile_payload: ProfilePayload | None = None
-        profile_capture_error: str | None = None
-        if _is_profile_engine_command(cmd_str):
-            profile_payload, profile_capture_error = _capture_profile_payload(
-                cmd_str,
-                timeout_seconds=config.settings.timeout_seconds,
-            )
-        results.append(
-            Measurement(
-                sha=commit.sha,
-                short_sha=commit.short_sha,
-                subject=commit.subject,
-                command_name=name,
-                command_string=sanitized_cmd_str,
-                samples=samples,
-                status="ok",
-                dry_run=dry_run,
-                profile_payload=profile_payload,
-                profile_capture_error=profile_capture_error,
-            ),
-        )
     return results
 
 
@@ -1849,6 +2138,7 @@ def cmd_run(
     ),
 ) -> None:
     """Run the configured benchmarks across the targeted commits."""
+    telemetry_handle = _setup_benchmark_telemetry()
     # CLI overrides go through load_config so pydantic validators
     # (e.g. settings.runs >= 1) fire on bad input. model_copy(update=...)
     # would silently skip the validation gate.
@@ -1945,6 +2235,8 @@ def cmd_run(
         notify(f"wrote {output}")
     else:
         typer.echo(rendered)
+    if telemetry_handle is not None:
+        telemetry_handle.shutdown()
 
 
 @app.command("compare")

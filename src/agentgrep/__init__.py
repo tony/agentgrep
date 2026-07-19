@@ -464,20 +464,157 @@ def _write_interrupt_notice() -> None:
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
     """Run the CLI."""
+    from agentgrep import _telemetry
+
+    telemetry = _telemetry.setup(
+        repo_root=pathlib.Path(__file__).resolve().parents[2],
+        service_name="agentgrep-cli",
+    )
     try:
-        parsed = parse_args(argv)
-        if parsed is None:
-            return 0
-        if isinstance(parsed, GrepArgs):
-            return run_grep_command(parsed)
-        if isinstance(parsed, SearchArgs):
-            return run_search_command(parsed)
-        if isinstance(parsed, UIArgs):
-            return run_ui_command(parsed)
-        return run_find_command(parsed)
+        with _telemetry.span(
+            "agentgrep.cli.invocation",
+            agentgrep_surface="cli",
+            agentgrep_arg_count=_cli_arg_count(argv),
+        ):
+            parsed: FindArgs | UIArgs | GrepArgs | SearchArgs | None = None
+            parse_exit: SystemExit | None = None
+            with _telemetry.span("agentgrep.cli.parse", agentgrep_surface="cli"):
+                try:
+                    parsed = parse_args(argv)
+                except SystemExit as exc:
+                    parse_exit = exc
+                    _telemetry.set_span_attribute("agentgrep_outcome", "parse_error")
+                    _telemetry.set_span_attribute(
+                        "agentgrep_exit_code",
+                        _system_exit_code(exc),
+                    )
+                    if _system_exit_code(exc) != 0:
+                        _telemetry.mark_span_error("cli parse error")
+            if parse_exit is not None:
+                exit_code = _system_exit_code(parse_exit)
+                command = _command_name_for_argv(argv)
+                outcome = "help" if exit_code == 0 else "parse_error"
+                _telemetry.set_span_attribute("agentgrep_command", command)
+                _telemetry.set_span_attribute("agentgrep_outcome", outcome)
+                _telemetry.set_span_attribute("agentgrep_exit_code", exit_code)
+                if outcome == "parse_error":
+                    _telemetry.mark_span_error("cli parse error")
+                logger.info(
+                    "cli command completed",
+                    extra={
+                        "agentgrep_surface": "cli",
+                        "agentgrep_operation": "cli.command",
+                        "agentgrep_command": command,
+                        "agentgrep_outcome": outcome,
+                        "agentgrep_exit_code": exit_code,
+                    },
+                )
+                raise parse_exit
+            if parsed is None:
+                _telemetry.set_span_attribute("agentgrep_command", "help")
+                _telemetry.set_span_attribute("agentgrep_outcome", "help")
+                _telemetry.set_span_attribute("agentgrep_exit_code", 0)
+                logger.info(
+                    "cli command completed",
+                    extra={
+                        "agentgrep_surface": "cli",
+                        "agentgrep_operation": "cli.command",
+                        "agentgrep_command": "help",
+                        "agentgrep_outcome": "help",
+                        "agentgrep_exit_code": 0,
+                    },
+                )
+                return 0
+            command = _command_name_for_args(parsed)
+            _telemetry.set_span_attribute("agentgrep_command", command)
+            logger.info(
+                "cli command started",
+                extra={
+                    "agentgrep_surface": "cli",
+                    "agentgrep_operation": "cli.command",
+                    "agentgrep_command": command,
+                },
+            )
+            try:
+                with _telemetry.span(
+                    "agentgrep.cli.dispatch",
+                    agentgrep_surface="cli",
+                    agentgrep_command=command,
+                ):
+                    if isinstance(parsed, GrepArgs):
+                        exit_code = run_grep_command(parsed)
+                    elif isinstance(parsed, SearchArgs):
+                        exit_code = run_search_command(parsed)
+                    elif isinstance(parsed, UIArgs):
+                        exit_code = run_ui_command(parsed)
+                    else:
+                        exit_code = run_find_command(parsed)
+            except BaseException:
+                _telemetry.set_span_attribute("agentgrep_outcome", "error")
+                logger.info(
+                    "cli command failed",
+                    extra={
+                        "agentgrep_surface": "cli",
+                        "agentgrep_operation": "cli.command",
+                        "agentgrep_command": command,
+                        "agentgrep_outcome": "error",
+                    },
+                )
+                raise
+            _telemetry.set_span_attribute("agentgrep_outcome", "ok")
+            _telemetry.set_span_attribute("agentgrep_exit_code", exit_code)
+            logger.info(
+                "cli command completed",
+                extra={
+                    "agentgrep_surface": "cli",
+                    "agentgrep_operation": "cli.command",
+                    "agentgrep_command": command,
+                    "agentgrep_outcome": "ok",
+                    "agentgrep_exit_code": exit_code,
+                },
+            )
+            return exit_code
     except KeyboardInterrupt:
         _write_interrupt_notice()
         _exit_on_sigint()
+    finally:
+        telemetry.shutdown()
+
+
+def _command_name_for_args(args: object) -> str:
+    """Return a stable CLI command name for parsed args."""
+    if isinstance(args, GrepArgs):
+        return "grep"
+    if isinstance(args, SearchArgs):
+        return "search"
+    if isinstance(args, UIArgs):
+        return "ui"
+    return "find"
+
+
+def _cli_arg_count(argv: cabc.Sequence[str] | None) -> int:
+    """Return the CLI argument count without recording raw argv."""
+    return len(sys.argv[1:] if argv is None else argv)
+
+
+def _system_exit_code(exc: SystemExit) -> int:
+    """Return a numeric ``SystemExit`` code."""
+    if isinstance(exc.code, int):
+        return exc.code
+    if exc.code is None:
+        return 0
+    return 1
+
+
+def _command_name_for_argv(argv: cabc.Sequence[str] | None) -> str:
+    """Infer a safe command label from raw argv without recording it."""
+    effective_argv = sys.argv[1:] if argv is None else argv
+    for token in effective_argv:
+        if token in {"grep", "search", "find", "ui"}:
+            return token
+        if token in {"-h", "--help"}:
+            return "help"
+    return "unknown"
 
 
 from agentgrep._engine import (  # noqa: E402  (re-exports must follow main definition)

@@ -276,6 +276,18 @@ $ uv run python scripts/profile_engine.py search-prompts \
     agentgrep-cursor-db-no-match > .tmp/profile-cursor-ide.json
 ```
 
+Run the synthetic populated Cursor IDE SQLite fixture when the local machine
+has no Cursor IDE state:
+
+```console
+$ uv run python scripts/profile_engine.py search-prompts \
+    --agent cursor-ide \
+    --fixture cursor-ide-state-vscdb \
+    --limit 500 \
+    --format json \
+    agentgrep-cursor-fixture-token > .tmp/profile-cursor-ide-fixture.json
+```
+
 Run the full profiler matrix and save a machine-readable artifact:
 
 ```console
@@ -311,7 +323,10 @@ present. Use `--commands profile-engine` for the all-agent profiler
 benchmark group, or pass an exact `profile-engine-*` key for one profiler
 benchmark.
 Use `--commands profile-engine-cursor-ide` for the Cursor IDE SQLite benchmark
-set without expanding the all-agent profiler group.
+set without expanding the all-agent profiler group. That group includes
+real-local Cursor rows plus fixture-backed populated SQLite rows. Use
+`--commands profile-engine-cursor-ide-fixture` when you need only the
+synthetic populated SQLite coverage.
 
 Run one profiler benchmark:
 
@@ -376,6 +391,71 @@ warnings without local paths, raw argv, or prompt text.
 Local profiles are the source of real bottleneck evidence because CI runners do
 not have representative agent-history stores. If CI artifact upload is needed,
 keep it scoped to a separate issue and use sanitized fixture-only payloads.
+
+### OpenTelemetry and LGTM
+
+OpenTelemetry instrumentation lives behind `agentgrep._telemetry`. Do not
+import OpenTelemetry SDK/exporter modules from normal application paths;
+`agentgrep._telemetry_otel` is the lazy optional backend. Packaged users must
+keep working when OTel dependencies, LGTM, Docker, or OTLP endpoints are
+absent.
+
+Use `AGENTGREP_OTEL` as the single project telemetry switch. Do not add a
+second enable variable. Local checkouts and packaged installs stay quiet unless
+explicitly enabled. Standard OTel endpoint variables do not opt agentgrep in;
+honor `OTEL_SDK_DISABLED` and the standard per-signal exporter controls.
+Telemetry setup, export, and shutdown failures must never change CLI, TUI, MCP,
+or test correctness.
+
+`service.version` is the package version only. Do not put debug attempts,
+dirty candidates, pytest retries, or agent-loop identifiers in
+`service.version`. Use separate attributes such as
+`agentgrep.debug.session_id`, `agentgrep.debug.candidate_id`,
+`agentgrep.debug.attempt`, and `agentgrep.pytest.run_id`.
+
+Do not create empty root spans or orphaned low-level spans. Root spans must be
+app-level operations such as `agentgrep.cli.invocation`,
+`agentgrep.tui.session`, `agentgrep.mcp.server`,
+`mcp.server.request`, `mcp.server.tool`, `agentgrep.benchmark.run`,
+`agentgrep.profile_engine.run`, `agentgrep.pytest.session`,
+`agentgrep.pytest.test`, or `agentgrep.otel.smoke`. Child spans should
+represent logical work, not every keypress, render frame, event-loop callback,
+or internal dispatch.
+
+SQLite telemetry must cover `sqlite3.Connection` shortcut methods through
+`agentgrep._telemetry.sqlite_connection_factory()`. Do not rely on
+`SQLite3Instrumentor` alone for SQLite spans; it does not cover the connection
+shortcut path agentgrep uses for source parsing. SQL spans must be children of
+an existing app trace and must not include statement text, bound parameter
+values, prompt text, file contents, or local database paths. SQLite and
+CPU-impacting work metrics must come from normal app, profiler, benchmark, CLI,
+TUI, MCP, and pytest paths, not only from synthetic smoke scripts.
+
+Logs exported through OTel must be trace-linked. Do not export unparented
+logs, raw prompts, raw MCP arguments, raw argv, environment values, file
+contents, secrets, or full local paths. Use redacted shape metadata and stable
+low-cardinality attributes.
+
+When `AGENTGREP_OTEL` is enabled and `AGENTGREP_DEBUG_SESSION_ID` is present,
+traces, logs, metrics, and profiles must all carry enough run identity to
+prove coverage in Grafana. Do not add another agentgrep-specific OTel feature
+flag to hide metrics, traces, logs, or profiles. If metric cardinality later
+becomes a measured project risk, handle that in a follow-up rather than
+preserving blindspots in the instrumentation branch.
+
+Any new subprocess, exporter, auto-instrumentation hook, benchmark command, or
+profiling loop must update `docs/dev/otel-cost-model.md` with its runtime cost
+and signal impact. This includes benchmark warmups, sample counts, extra
+profile-payload captures, Docker/LGTM helper commands, pytest subprocesses,
+and OTLP/Pyroscope flush costs.
+
+Default pytest must be deterministic and offline. Use in-memory telemetry for
+unit assertions. Explicitly instrumented pytest runs use pytest hooks so every
+collected item, including custom documentation items and direct Textual
+`run_test()` cases, gets an `agentgrep.pytest.test` root. Live LGTM checks are
+opt-in through `just otel-acceptance`; they must prove traces, metrics, logs,
+and profiles against the real stack without making ordinary tests depend on
+Docker or network ports.
 
 ## Code Architecture
 
@@ -608,6 +688,33 @@ These rules guide future logging changes; existing code may not yet conform.
 Pass structured data on every log call where useful for filtering, searching, or test assertions. Use the `agentgrep_*` prefix for project-specific keys (e.g., `agentgrep_source` for the backend tag — `codex` / `claude` / `cursor`, `agentgrep_query` for the search query, `agentgrep_command` for the subcommand). Prefer stable scalars; avoid ad-hoc objects.
 
 Treat established keys as compatibility-sensitive — downstream users may build dashboards and alerts on them. Change deliberately.
+
+#### Agentic OTel logging
+
+Critical CLI, MCP, TUI, engine, profiler, benchmark, and sensitive-decision
+boundaries should emit sparse structured `INFO` logs when they are useful for
+agentic debugging loops. Log operation starts only when they help diagnose a
+hang or handoff; otherwise prefer one completion or failure log with
+`agentgrep_surface`, `agentgrep_operation` or surface-specific operation key,
+`agentgrep_outcome`, safe counts, elapsed duration, and bounded strategy/status
+fields.
+
+Emit telemetry-oriented logs from inside active project spans so exported Loki
+records carry trace and span identifiers. Logs must stay invisible to normal
+users: library code keeps `NullHandler`, never installs console handlers, and
+must not change stdout or stderr. OTel export is the application-level opt-in.
+
+Telemetry logs must describe shape, not content. Do not log raw prompts, raw
+query terms, raw argv, raw MCP arguments, environment values, file contents,
+full exception text that may contain content, or local absolute paths. Use
+counts, booleans, enums, error types, redacted path metadata, and length/digest
+summaries instead.
+
+Do not add per-record, per-line, per-keypress, render-frame, or hot-loop logs.
+Use spans, metrics, counters, or bounded aggregate logs for high-volume detail.
+Tests for new telemetry logs should assert on `caplog.records` or the
+in-memory telemetry backend attributes, including trace/span linkage when OTel
+export is involved.
 
 #### Key naming rules
 

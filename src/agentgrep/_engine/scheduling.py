@@ -9,6 +9,7 @@ import queue
 import time
 import typing as t
 
+from agentgrep import _telemetry
 from agentgrep._engine import scanning
 from agentgrep._engine.orchestration import (
     prompt_history_agents_for_sources,
@@ -118,6 +119,29 @@ class _QueueingSourceProgress(NoopSearchProgress):
 type SearchExecutionEvent = (
     ExecutionSourceStarted | ExecutionRecordEmitted | ExecutionSourceFinished
 )
+
+
+def _record_scheduler_work_metrics(
+    *,
+    source_count: int,
+    submitted_count: int,
+    completed_count: int,
+    batch_count: int,
+    emitted_count: int,
+) -> None:
+    """Record scheduler work-loop counters for local OTel metrics."""
+    for work_kind, value in (
+        ("scheduler_sources_total", source_count),
+        ("scheduler_sources_submitted", submitted_count),
+        ("scheduler_sources_completed", completed_count),
+        ("scheduler_batches", batch_count),
+        ("scheduler_records_emitted", emitted_count),
+    ):
+        _telemetry.record_work_metric(
+            value,
+            work_kind=work_kind,
+            agentgrep_surface="engine",
+        )
 
 
 class ExecutionDriver(t.Protocol):
@@ -424,7 +448,8 @@ class FrontierExecutionDriver:
                     control=task_control,
                     cache_key=cache_key,
                 )
-                future = executor.submit(
+                future = _telemetry.executor_submit(
+                    executor,
                     _scan_source_task_to_queue,
                     query,
                     task,
@@ -593,6 +618,13 @@ class FrontierExecutionDriver:
             agentgrep_queue_wait_seconds=queue_wait_seconds,
             agentgrep_emitted_record_count=emitted_count,
         )
+        _record_scheduler_work_metrics(
+            source_count=total,
+            submitted_count=submitted_count,
+            completed_count=completed_count,
+            batch_count=batch_count,
+            emitted_count=emitted_count,
+        )
 
 
 @dataclasses.dataclass(slots=True)
@@ -659,7 +691,8 @@ def _iter_search_plan_whole_sources(
                 source=task.source,
                 task=task,
             )
-            future = executor.submit(
+            future = _telemetry.executor_submit(
+                executor,
                 scanning.scan_source_task,
                 query,
                 task,
@@ -776,6 +809,13 @@ def _iter_search_plan_whole_sources(
         agentgrep_queued_batch_count=0,
         agentgrep_queue_wait_seconds=0.0,
         agentgrep_emitted_record_count=emitted_count,
+    )
+    _record_scheduler_work_metrics(
+        source_count=total,
+        submitted_count=submitted_count,
+        completed_count=completed_count,
+        batch_count=batch_count,
+        emitted_count=emitted_count,
     )
 
 
@@ -927,6 +967,13 @@ def _iter_search_plan_single_worker_batches(
         agentgrep_queued_batch_count=processed_batch_count,
         agentgrep_queue_wait_seconds=0.0,
         agentgrep_emitted_record_count=emitted_count,
+    )
+    _record_scheduler_work_metrics(
+        source_count=total,
+        submitted_count=submitted_count,
+        completed_count=completed_count,
+        batch_count=batch_count,
+        emitted_count=emitted_count,
     )
 
 

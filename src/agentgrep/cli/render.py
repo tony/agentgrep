@@ -9,12 +9,16 @@ in :mod:`agentgrep.cli.renderers`.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import json
+import logging
 import pathlib
 import sys
+import time
+import typing as t
 
-from agentgrep import run_ui
+from agentgrep import _telemetry, run_ui
 from agentgrep._engine import iter_find_events, iter_search_events
 from agentgrep._engine.orchestration import run_search_query
 from agentgrep._text import AnsiColors, format_display_path
@@ -51,6 +55,24 @@ from agentgrep.progress import (
     noop_search_progress,
 )
 from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord, SearchScope
+
+logger = logging.getLogger(__name__)
+
+if t.TYPE_CHECKING:
+    from agentgrep.query.compile import CompiledQuery
+
+type _GrepLineMatch = tuple[int, str, list[tuple[int, int]]]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _EagerGrepMatch:
+    """Cached inverted selection facts for one eager record."""
+
+    line_count: int
+    line_matches: tuple[_GrepLineMatch, ...] | None = None
+
+
+type _EagerGrepMatchCache = dict[int, _EagerGrepMatch]
 
 __all__ = [
     "GrepSummary",
@@ -487,81 +509,280 @@ def build_grep_query(args: GrepArgs) -> SearchQuery:
     else:
         terms = args.patterns
 
+    terms_for_query = () if args.invert_match else terms
+    compiled = _grep_candidate_compiled(args)
     return SearchQuery(
-        terms=terms,
+        terms=terms_for_query,
         scope=args.scope,
         any_term=False,
         regex=regex,
         case_sensitive=case_sensitive,
         agents=args.agents,
-        limit=args.limit,
+        limit=None if args.invert_match else args.limit,
         dedupe=not args.no_dedupe,
-        compiled=args.compiled,
+        compiled=compiled,
         match_surface="text",
     )
 
 
-def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
-    """Emit grep results and return the rg-style exit code."""
-    if args.invert_match:
-        if args.count_only:
-            print("0" if records else "1")
-            return 1 if records else 0
-        print(
-            "error: --invert-match/-v is supported with -c only; "
-            "engine-level line inversion is tracked at "
-            "https://github.com/tony/agentgrep/issues/8",
-            file=sys.stderr,
-        )
-        return 2
+def _grep_candidate_compiled(args: GrepArgs) -> CompiledQuery | None:
+    """Return compiled predicates safe for grep candidate enumeration."""
+    compiled = args.compiled
+    if compiled is None or not args.invert_match:
+        return compiled
+    if not compiled.field_filter_safe:
+        msg = "--invert-match cannot safely separate field predicates from text patterns"
+        raise SystemExit(msg)
+    return dataclasses.replace(
+        compiled,
+        record_predicate=compiled.field_predicate,
+        text_terms=(),
+        is_pure_text=False,
+    )
 
+
+def _grep_record_is_selected(record: SearchRecord, args: GrepArgs) -> bool:
+    """Return whether line-level grep selects at least one record line."""
+    return any(iter_match_lines(record.text, args))
+
+
+def _select_inverted_records(
+    records: list[SearchRecord],
+    args: GrepArgs,
+) -> tuple[list[SearchRecord], _EagerGrepMatchCache]:
+    """Select inverted records, then apply the optional result cap."""
+    if not args.invert_match:
+        return records, {}
+    selected: list[SearchRecord] = []
+    match_cache: _EagerGrepMatchCache = {}
+    for record in records:
+        cache_key = id(record)
+        match_info = match_cache.get(cache_key)
+        if match_info is None:
+            match_info = _collect_eager_invert_match(record, args)
+            match_cache[cache_key] = match_info
+        if match_info.line_count == 0:
+            continue
+        selected.append(record)
+        if args.limit is not None and len(selected) >= args.limit:
+            break
+    return selected, match_cache
+
+
+def _collect_eager_invert_match(record: SearchRecord, args: GrepArgs) -> _EagerGrepMatch:
+    """Collect exactly the inverted match detail required by one eager mode."""
+    if args.output_mode in {"json", "ndjson"}:
+        line_matches = tuple(iter_match_lines(record.text, args))
+        return _EagerGrepMatch(len(line_matches), line_matches)
+    if args.count_only:
+        return _EagerGrepMatch(sum(1 for _match in iter_match_lines(record.text, args)))
+    return _EagerGrepMatch(int(_grep_record_is_selected(record, args)))
+
+
+def _cached_eager_line_matches(
+    record: SearchRecord,
+    args: GrepArgs,
+    match_cache: _EagerGrepMatchCache,
+) -> tuple[_GrepLineMatch, ...]:
+    """Return cached JSON line matches or collect them for a direct caller."""
+    match_info = match_cache.get(id(record))
+    if match_info is not None and match_info.line_matches is not None:
+        return match_info.line_matches
+    return tuple(iter_match_lines(record.text, args))
+
+
+def _cached_eager_line_count(
+    record: SearchRecord,
+    args: GrepArgs,
+    match_cache: _EagerGrepMatchCache,
+) -> int:
+    """Return a cached eager line count or collect it for a direct caller."""
+    match_info = match_cache.get(id(record))
+    if match_info is not None:
+        return match_info.line_count
+    return sum(1 for _match in iter_match_lines(record.text, args))
+
+
+def _grep_emitted_count(
+    records: cabc.Sequence[SearchRecord],
+    args: GrepArgs,
+    match_cache: _EagerGrepMatchCache | None = None,
+) -> int:
+    """Return the bounded record/line count emitted by eager grep paths."""
+    active_cache = {} if match_cache is None else match_cache
+    if args.output_mode in {"json", "ndjson"}:
+        return sum(_cached_eager_line_count(record, args, active_cache) for record in records)
+    if args.count_only:
+        return sum(
+            1 for record in records if _cached_eager_line_count(record, args, active_cache) > 0
+        )
+    if args.files_with_matches:
+        seen: set[str] = set()
+        for record in records:
+            if _cached_eager_line_count(record, args, active_cache) == 0:
+                continue
+            seen.add(format_display_path(record.path))
+        return len(seen)
+    if args.invert_match:
+        return sum(1 for record in records if _grep_record_is_selected(record, args))
+    if args.only_matching:
+        return sum(1 for record in records if _grep_record_is_selected(record, args))
+    return sum(1 for record in records if format_grep_record(record, args))
+
+
+def _record_grep_telemetry(
+    args: GrepArgs,
+    *,
+    candidate_count: int,
+    emitted_count: int,
+    duration_ms: float,
+    outcome: str,
+) -> None:
+    """Emit sparse grep dispatcher telemetry."""
+    if not args.invert_match:
+        return
+    # Metric labels must stay low-cardinality: the per-call candidate/emitted
+    # counts and the duration are the recorded VALUES (and unbounded), so they
+    # ride the span and the log but never the metric label set — otherwise every
+    # grep-invert call mints a unique series and rate()/increase() can never
+    # aggregate, leaving the grep dashboard panels empty.
+    metric_attributes = {
+        "agentgrep_surface": "cli",
+        "agentgrep_operation": "grep.invert",
+        "agentgrep_command": "grep",
+        "agentgrep_scope": args.scope,
+        "agentgrep_output_mode": args.output_mode,
+        "agentgrep_grep_invert": True,
+        "agentgrep_grep_candidate_strategy": "all_candidates",
+        "agentgrep_outcome": outcome,
+    }
+    attributes = {
+        **metric_attributes,
+        "agentgrep_candidate_count": candidate_count,
+        "agentgrep_emitted_count": emitted_count,
+        "agentgrep_duration_ms": duration_ms,
+    }
+    _telemetry.set_span_attribute("agentgrep_grep_invert", True)
+    _telemetry.set_span_attribute(
+        "agentgrep_grep_candidate_strategy",
+        "all_candidates",
+    )
+    _telemetry.record_metric(
+        "agentgrep.grep.candidate.count",
+        candidate_count,
+        **metric_attributes,
+    )
+    _telemetry.record_metric(
+        "agentgrep.grep.emitted.count",
+        emitted_count,
+        **metric_attributes,
+    )
+    _telemetry.record_metric(
+        "agentgrep.grep.duration",
+        duration_ms,
+        **metric_attributes,
+    )
+    logger.info("grep invert completed", extra=attributes)
+
+
+def print_grep_results(
+    records: list[SearchRecord],
+    args: GrepArgs,
+    *,
+    candidate_count: int | None = None,
+) -> int:
+    """Emit grep results and return the rg-style exit code."""
+    return _print_grep_results(
+        records,
+        args,
+        candidate_count=candidate_count,
+        match_cache={},
+    )
+
+
+def _print_grep_results(
+    records: list[SearchRecord],
+    args: GrepArgs,
+    *,
+    candidate_count: int | None,
+    match_cache: _EagerGrepMatchCache,
+) -> int:
+    """Emit grep results with optional eager inverted match reuse."""
     if args.output_mode == "json":
-        json_events = list(_iter_grep_json_events(records, args))
+        json_events = [
+            event
+            for record in records
+            for event in _iter_grep_json_events(
+                [record],
+                args,
+                line_matches=_cached_eager_line_matches(record, args, match_cache),
+            )
+        ]
         total_match_count = sum(1 for event in json_events if event.get("type") == "match")
         json_events.append({"type": "summary", "data": {"matches": total_match_count}})
         print(json.dumps({"command": "grep", "events": json_events}, ensure_ascii=False, indent=2))
         return 0 if total_match_count > 0 else 1
     if args.output_mode == "ndjson":
         emitted_matches = 0
-        for event in _iter_grep_json_events(records, args):
-            print(json.dumps(event, ensure_ascii=False))
-            if event.get("type") == "match":
-                emitted_matches += 1
+        for record in records:
+            for event in _iter_grep_json_events(
+                [record],
+                args,
+                line_matches=_cached_eager_line_matches(record, args, match_cache),
+            ):
+                print(json.dumps(event, ensure_ascii=False))
+                if event.get("type") == "match":
+                    emitted_matches += 1
         return 0 if emitted_matches > 0 else 1
 
     if args.count_only:
         colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
         per_record_counts: list[tuple[SearchRecord, int]] = []
         for record in records:
-            count = sum(1 for _ in iter_match_lines(record.text, args))
+            count = _cached_eager_line_count(record, args, match_cache)
             per_record_counts.append((record, count))
         # rg parity: single-file emits just N; multi-file emits path:N per file.
-        if len(per_record_counts) == 1:
+        input_count = len(per_record_counts) if candidate_count is None else candidate_count
+        if input_count == 1 and per_record_counts:
             print(per_record_counts[0][1])
         else:
             for record, count in per_record_counts:
                 path = format_display_path(record.path)
                 print(f"{colors.path(path)}:{count}")
+        if args.invert_match:
+            return 0 if any(count > 0 for _record, count in per_record_counts) else 1
         return 0 if records else 1
     if args.files_with_matches:
         seen: set[str] = set()
         for record in records:
+            if args.invert_match and _cached_eager_line_count(record, args, match_cache) == 0:
+                continue
             path = format_display_path(record.path)
             if path not in seen:
                 seen.add(path)
                 print(path)
-        return 0 if records else 1
+        return 0 if seen else 1
 
     if not records:
         if args.output_mode == "text":
             print("No matches found.", file=sys.stderr)
         return 1
+    emitted = False
     for record in records:
-        print(format_grep_record(record, args))
+        record_selected = args.only_matching and _grep_record_is_selected(record, args)
+        text = format_grep_record(record, args)
+        if not text and not (args.only_matching and record_selected):
+            continue
+        print(text)
+        emitted = True
         if not args.only_matching and (
             args.heading is True or (args.heading is None and sys.stdout.isatty())
         ):
             print()
+    if not emitted:
+        if args.output_mode == "text":
+            print("No matches found.", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -573,12 +794,7 @@ def _grep_path_is_eager(args: GrepArgs) -> bool:
     (text, NDJSON, vimgrep, only-matching) can emit per record as they
     arrive.
     """
-    return (
-        args.output_mode == "json"
-        or args.count_only
-        or args.files_with_matches
-        or args.invert_match
-    )
+    return args.output_mode == "json" or args.count_only or args.files_with_matches
 
 
 def stream_grep_results(args: GrepArgs) -> int:
@@ -591,17 +807,20 @@ def stream_grep_results(args: GrepArgs) -> int:
     exit code (``0`` if any match was emitted, ``1`` otherwise).
 
     Only the streaming-friendly output modes route here — :func:`run_grep_command`
-    picks :func:`print_grep_results` for JSON, ``-c``, ``-l``, ``-L``,
-    and ``-v`` paths that need the full record list up front.
+    picks :func:`print_grep_results` for JSON, ``-c``, ``-l``, and ``-L``
+    paths that need the full record list up front.
     """
     # Lazy import keeps ``agentgrep.events`` off the eager ``import
     # agentgrep`` path (pinned by tests/test_import_time.py).
     from agentgrep import events
 
+    started_at = time.monotonic()
     query = build_grep_query(args)
     control = SearchControl()
     is_tty = sys.stdout.isatty()
     match_count = 0
+    selected_record_count = 0
+    candidate_count = 0
     pretty = args.style == "pretty"
     summary = GrepSummary() if pretty else None
     for event in iter_search_events(
@@ -610,13 +829,34 @@ def stream_grep_results(args: GrepArgs) -> int:
         control=control,
     ):
         if isinstance(event, events.RecordEmitted):
+            candidate_count += 1
+            line_matches = None
+            record_selected = False
+            if args.invert_match or args.only_matching:
+                line_matches = list(iter_match_lines(event.record.text, args))
+                record_selected = bool(line_matches)
+            if args.invert_match:
+                if not record_selected:
+                    continue
+                selected_record_count += 1
             if args.output_mode == "ndjson":
-                for json_event in _iter_grep_json_events([event.record], args):
+                for json_event in _iter_grep_json_events(
+                    [event.record],
+                    args,
+                    line_matches=line_matches,
+                ):
                     print(json.dumps(json_event, ensure_ascii=False))
                     if json_event.get("type") == "match":
                         match_count += 1
             else:
-                print(format_grep_record(event.record, args))
+                text = format_grep_record(
+                    event.record,
+                    args,
+                    line_matches=line_matches,
+                )
+                if not text and not (args.only_matching and record_selected):
+                    continue
+                print(text)
                 if pretty or (
                     not args.only_matching
                     and (args.heading is True or (args.heading is None and is_tty))
@@ -627,6 +867,8 @@ def stream_grep_results(args: GrepArgs) -> int:
                     summary.add(event.record)
             if is_tty:
                 sys.stdout.flush()
+            if args.invert_match and args.limit is not None and selected_record_count >= args.limit:
+                break
         elif isinstance(event, events.SearchFinished) and summary is not None:
             summary.elapsed = event.elapsed_seconds
     if is_tty and summary is not None and summary.total > 0:
@@ -635,6 +877,13 @@ def stream_grep_results(args: GrepArgs) -> int:
             print(footer, file=sys.stderr)
     if match_count == 0 and args.output_mode == "text":
         print("No matches found.", file=sys.stderr)
+    _record_grep_telemetry(
+        args,
+        candidate_count=candidate_count,
+        emitted_count=match_count,
+        duration_ms=(time.monotonic() - started_at) * 1000.0,
+        outcome="match" if match_count > 0 else "no_match",
+    )
     return 0 if match_count > 0 else 1
 
 
@@ -646,6 +895,7 @@ def run_grep_command(args: GrepArgs) -> int:
     (:func:`print_grep_results`), depending on the requested output mode.
     See :func:`_grep_path_is_eager` for the routing decision.
     """
+    started_at = time.monotonic()
     if not args.patterns:
         msg = "grep requires at least one pattern"
         raise SystemExit(msg)
@@ -673,10 +923,25 @@ def run_grep_command(args: GrepArgs) -> int:
             color_mode=args.color_mode,
             answer_now_hint=False,
         )
-    records = run_search_query(
+    candidate_records = run_search_query(
         pathlib.Path.home(),
         query,
         progress=progress,
         control=control,
     )
-    return print_grep_results(records, args)
+    records, match_cache = _select_inverted_records(candidate_records, args)
+    exit_code = _print_grep_results(
+        records,
+        args,
+        candidate_count=len(candidate_records),
+        match_cache=match_cache,
+    )
+    if args.invert_match:
+        _record_grep_telemetry(
+            args,
+            candidate_count=len(candidate_records),
+            emitted_count=_grep_emitted_count(records, args, match_cache),
+            duration_ms=(time.monotonic() - started_at) * 1000.0,
+            outcome="match" if exit_code == 0 else "no_match",
+        )
+    return exit_code
