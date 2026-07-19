@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.documentation
+
 pytest_plugins = ("pytester",)
 
 # Nested pytester runs configure pytest-asyncio explicitly; their isolated

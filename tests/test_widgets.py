@@ -8,6 +8,8 @@ import sys
 
 import pytest
 
+pytestmark = pytest.mark.documentation
+
 
 @pytest.fixture(scope="session")
 def built_docs(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
@@ -48,6 +50,7 @@ def built_docs(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     return out
 
 
+@pytest.mark.slow
 def test_widgets_render_in_built_docs(built_docs: pathlib.Path) -> None:
     """The mcp-install and library-install widgets render with the right class hooks."""
     # Pygments wraps whitespace in <span class="w"> ... </span>, so look for
@@ -62,6 +65,7 @@ def test_widgets_render_in_built_docs(built_docs: pathlib.Path) -> None:
     assert "SearchQuery" in library_index
 
 
+@pytest.mark.slow
 def test_widget_assets_copied(built_docs: pathlib.Path) -> None:
     """Widget CSS and JS land in ``_static/widgets/<name>/`` after a build."""
     for widget in ("mcp-install", "library-install", "cli-install"):
@@ -131,6 +135,7 @@ def test_cli_install_panel_matrix() -> None:
         assert "--pip-args" not in bodies["days"]
 
 
+@pytest.mark.slow
 def test_backend_index_renders_backend_shortcut_grid(built_docs: pathlib.Path) -> None:
     """The backend index links directly to each backend page near the top."""
     backend_index = (built_docs / "backends" / "index.html").read_text(encoding="utf-8")

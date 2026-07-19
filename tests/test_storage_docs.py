@@ -11,6 +11,8 @@ import typing as t
 import pytest
 from sphinx.application import Sphinx
 
+pytestmark = pytest.mark.documentation
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -65,6 +67,7 @@ def test_storage_badge_css_uses_shared_badge_color_variables() -> None:
     assert "--sab-color" not in css
 
 
+@pytest.mark.slow
 def test_storage_domain_registers_and_resolves_store_targets(tmp_path: pathlib.Path) -> None:
     """Generated store targets resolve through the custom storage domain."""
     srcdir = tmp_path / "src"
@@ -113,6 +116,7 @@ def test_storage_domain_registers_and_resolves_store_targets(tmp_path: pathlib.P
     assert "undefined label" not in warnings
 
 
+@pytest.mark.slow
 def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> None:
     """The generated coverage grid exposes catalog coverage by backend."""
     srcdir = tmp_path / "src"
@@ -205,6 +209,7 @@ def test_storage_coverage_grid_summarizes_catalog(tmp_path: pathlib.Path) -> Non
     assert "undefined label" not in warnings
 
 
+@pytest.mark.slow
 def test_storage_catalog_summary_uses_nested_key_value_cards(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -261,6 +266,7 @@ DESCRIPTION_MARKUP_CASES: tuple[DescriptionMarkupCase, ...] = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     DESCRIPTION_MARKUP_CASES,

@@ -31,6 +31,8 @@ from pytest_documentation import (
 )
 from pytest_documentation.evaluators import _parse_console_source
 
+pytestmark = pytest.mark.documentation
+
 _REPO_ROOT = pathlib.Path(__file__).parents[1]
 
 
@@ -487,6 +489,7 @@ def test_python_page_evaluator_failure_uses_document_line_numbers(
     assert 'File "README.md", line 8' in result.stderr
 
 
+@pytest.mark.slow
 def test_temp_home_sandbox_redirects_uvx_agentgrep_to_local_checkout(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -977,6 +980,7 @@ def test_sandbox_blocks_project_mutating_uv_commands(
         sandbox._plan_script(case.script, sandbox_root=sandbox_root, project=project)
 
 
+@pytest.mark.slow
 def test_console_evaluator_classifies_data_dependent_empty_results(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1001,6 +1005,7 @@ def test_console_evaluator_classifies_data_dependent_empty_results(
     assert "accepted data-dependent empty result" in result.message
 
 
+@pytest.mark.slow
 def test_console_evaluator_keeps_path_tilde_empty_result_as_failure(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1224,6 +1229,7 @@ SPHINX_DOCTEST_RECIPE_CASES: tuple[SphinxDoctestRecipeCase, ...] = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     SPHINX_DOCTEST_RECIPE_CASES,

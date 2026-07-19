@@ -32,6 +32,8 @@ from agentgrep.query import (
     scope_widened_for_ast,
 )
 
+pytestmark = pytest.mark.documentation
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _QUERY_SUBCOMMANDS = frozenset({"search", "grep", "find"})
 # An example command line, with the optional ``$ `` console prompt and an
