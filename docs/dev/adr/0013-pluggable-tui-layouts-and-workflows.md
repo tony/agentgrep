@@ -78,10 +78,11 @@ enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   A layout's streaming transport reuses `_runtime.make_gated_emitter` /
   `@offload` / `@pump_only` / `stream_apply` (ADR 0011 NB-1..NB-10, unchanged)
   with a layout-specific *present*. Every `run_worker` stays `thread=True,
-  exclusive=True` and grouped (the `history` append group excepted), and the
-  static guard scans **every** `ui/layouts/*.py`, not just the HUD. The transport
-  is intentionally *not* hoisted into the base: a shared `present_*` base waits
-  for a third consumer, per the defer-until-consumer rule of ADR 0012.
+  exclusive=True` and grouped (the `history` append group excepted), and manual
+  pump-entrypoint review covers **every** `ui/layouts/*.py`, not just the HUD.
+  The transport is intentionally *not* hoisted into the base: a shared
+  `present_*` base waits for a third consumer, per the defer-until-consumer rule
+  of ADR 0012.
 - **PL-6 — Orthogonality is an internal contract and is proven.** Any workflow
   drives any layout.
   The behavior difference is the workflow's routing (`SearchWorkflow` →

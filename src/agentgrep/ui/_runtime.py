@@ -11,12 +11,12 @@ silently drop:
 - :func:`make_gated_emitter` centralizes the "results bypass the message bus and
   carry a generation token" transport (NB-3, NB-10).
 - A heartbeat watchdog (:func:`start_pump_watchdog`), default-on for an
-  interactive TTY, logs when the pump stalls past a threshold — the oracle the
-  fuzz harness asserts on.
+  interactive TTY, logs when the pump stalls past a threshold; the deterministic
+  runtime-oracle test pins its warning and structured threshold fields.
 
-It is Textual-free and imports only the standard library, so it sits below
-``app.py`` in the layering (ADR 0010) and the guard/unit tests can reach it
-without entering ``build_streaming_ui_app``'s closure. The guards are no-ops
+It is Textual-free and imports only the standard library, so it sits below the
+application shell in the layering (ADR 0010), where focused runtime tests can
+reach it directly. The guards are no-ops
 unless enabled (under pytest, or when ``AGENTGREP_TUI_WATCHDOG`` is truthy), so
 production pays at most one boolean check per guarded call; the log-only
 watchdog additionally defaults on for an interactive TTY.
@@ -435,8 +435,8 @@ def stop_pump_watchdog(timeout: float = 1.0) -> None:
 # ``sys.addaudithook`` (PEP 578) fires synchronously on the *acting* thread, so
 # a hook can detect — and, by raising, abort — a blocking I/O *initiation* on
 # the pump thread regardless of how the call was spelled, aliased, or
-# dynamically dispatched. This is the denylist-free complement to the static
-# AST guard: it sees the event, not the source text. It is blind to pure CPU
+# dynamically dispatched. This is the denylist-free complement to manual static
+# review: it sees the event, not the source text. It is blind to pure CPU
 # spin, byte-transfer on already-open handles (``socket.recv``, ``cursor.execute``
 # on a live connection), and native code that issues syscalls without
 # ``PySys_Audit`` — the heartbeat watchdog is the cause-agnostic backstop for

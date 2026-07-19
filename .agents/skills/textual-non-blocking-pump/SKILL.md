@@ -1,6 +1,6 @@
 ---
 name: textual-non-blocking-pump
-description: Use when writing, reviewing, or auditing agentgrep TUI code (src/agentgrep/ui/) for anything that could freeze the Textual message pump — keystrokes/spinner/cancel hang, a handler that blocks, a slow filter/find/detail render, "the UI froze", a new pump method/timer/worker, or extending the ADR 0011 non-blocking guard. Covers the full pump-entrypoint catalog, the static-vs-runtime defense split, and the per-change review rules.
+description: Use when writing, reviewing, or auditing agentgrep TUI code (src/agentgrep/ui/) for anything that could freeze the Textual message pump — keystrokes/spinner/cancel hang, a handler that blocks, a slow filter/find/detail render, "the UI froze", a new pump method/timer/worker, or revising the ADR 0011 non-blocking safeguards.
 ---
 
 # Keeping the Textual pump non-blocking
@@ -11,15 +11,17 @@ agentgrep's TUI runs on a **single-threaded message pump**. Any callable Textual
 invokes on that thread that runs longer than a frame budget (~16 ms) — or never
 returns — freezes *everything at once*: keystrokes, the spinner, resize, and
 cancel. ADR 0011 (NB-1..NB-10) is the contract; `ui/_runtime.py` has the
-primitives; `tests/test_tui_non_blocking.py` is the static guard.
+primitives; `tests/test_tui_runtime_oracles.py` pins the deterministic heartbeat
+oracle.
 
 **The one idea to internalize:** "blocks the pump" is a *semantic* property of
 runtime behavior, not a *syntactic* property of source text. By Rice's theorem
 no static analyzer can flag *all and only* blocking code (it reduces to
-halting). So the goal is **never 100% static prevention** — it is a **two-gate
-defense**: static analysis *prevents* the decidable, enumerable cases at merge,
-and a cause-agnostic runtime oracle *detects* the undecidable residue. Treat any
-"we'll just lint for it" instinct as the trap this skill exists to correct.
+halting). So the goal is **never 100% static prevention**. Manual entrypoint and
+helper review reduces recognizable risks; enabled decorators and the explicit
+audit mode prevent covered misuse; a cause-agnostic runtime oracle detects the
+super-threshold residue on exercised paths. Treat any "we'll just lint for it"
+instinct as the trap this skill exists to correct.
 
 ## When to use
 
@@ -27,32 +29,33 @@ and a cause-agnostic runtime oracle *detects* the undecidable residue. Treat any
 - A user reports a freeze/hang/jank; the spinner stalls; cancel stops responding.
 - Reviewing a PR that touches `ui/` — especially filter, find-in-detail, detail
   rendering, streaming apply, or anything reading a store.
-- Extending the ADR 0011 guard, the `_runtime` primitives, or the fuzz harness.
+- Revising ADR 0011, the `_runtime` primitives, this review method, or the
+  retained watchdog oracle.
 
 When NOT to use: non-UI engine/MCP work (those run off the pump by construction);
 pure styling/`.tcss` edits with no Python.
 
 ## The trap: why a denylist lint feels like enough and isn't
 
-The static guard now follows same-class `self.helper()` calls, classifies `@on`
-handlers and the callables named at `set_timer`/`set_interval`/
-`call_from_thread`/`subscribe` sites, and resolves import aliases against an
-expanded denylist. But it still cannot be *complete* — by Rice's theorem no
-denylist can. Four holes remain, each the shape of a real hang this repo has
-shipped:
+Manual static review can follow same-class `self.helper()` calls, enumerate
+`@on` handlers and scheduler / `call_from_thread` / `subscribe` targets, and
+search for obvious blocking calls. No automated static gate is retained, and
+manual review still cannot be *complete* — by Rice's theorem no denylist can.
+Four holes remain, each the shape of a real hang this repo has shipped:
 
-1. **Closure is same-class only.** It follows `self.helper()` within a class, but
-   a blocking call reached through *cross-module* dispatch, a stored callable, or
-   `getattr` is still invisible. (The `os.write` history-write hang — commit
-   `8b26d8a3` — was the intra-class version this now catches.)
-2. **Classification needs a name or a seed.** It sees `@on` handlers and the
-   callables *named* at scheduler / `call_from_thread` / `subscribe` sites, but a
-   `lambda` or `functools.partial` handed to a scheduler — and inline reactive
-   `validate_`/`compute_` reached dynamically — still slip.
-3. **The denylist is import-aware but finite.** It resolves `import subprocess as
-   sp` / `from time import sleep` and covers network / fs-walk / `json.load` /
-   `input`, but generic-attr blocking (`Lock.acquire` / `Queue.get` /
-   `Future.result` — no type to match on) is unrepresentable.
+1. **Helper tracing is bounded by reviewer knowledge.** Following
+   `self.helper()` within a class is straightforward, but a blocking call reached
+   through *cross-module* dispatch, a stored callable, or `getattr` is easy to
+   miss. (The `os.write` history-write hang — commit `8b26d8a3` — was an
+   intra-class example.)
+2. **Classification needs explicit enumeration.** Review `@on` handlers and the
+   callables at scheduler / `call_from_thread` / `subscribe` sites, including a
+   `lambda` or `functools.partial`; inline reactive `validate_`/`compute_` hooks
+   must also be found deliberately.
+3. **Text search is finite.** Searching imports and qualified calls can find
+   network / fs-walk / `json.load` / `input`, but generic-attribute blocking
+   (`Lock.acquire` / `Queue.get` / `Future.result` — no type to match on) is not
+   reliably representable.
 4. **Pure-CPU blocking has no call signature at all.** An unbounded
    `casefold`/`sort`/`regex` over the result set, or `Syntax(...).highlight` on a
    full body, cannot be denylisted. This is the undecidable core.
@@ -67,39 +70,34 @@ through `Any`-erasure and direct `builtins.open()`. Type coloring is the
 ## Pump-entrypoint catalog (enumerate, don't prefix-guess)
 
 Every callable below runs on the event-loop thread. A new one that does heavy
-work MUST be `@pump_only` (so both the static classifier and runtime assert
-cover it) and route its heavy work off the pump.
+work MUST be `@pump_only` so enabled runtime assertions check its thread
+placement and reviewers can recognize the seam; route its heavy work off the
+pump.
 
-| Family | Entrypoints | Classifier sees it? |
+| Family | Entrypoints | Manual enumeration cue |
 |---|---|---|
-| Message handlers | `on_*`, `_on_*`, **any `@on(...)`-decorated method (any name)** | prefix: partial; `@on`: **seeded** |
-| Reactivity (inline, sync) | `watch_*`, `validate_*`, `compute_*` — bypass the message queue *and* Textual's own SLOW_THRESHOLD | partial |
-| Render/layout (compositor) | `render`, `render_line`, `__rich__`, `get_content_width/height`, `pre_layout` | partial |
-| Actions | `action_*`, `_action_*` (key bindings, links) | partial |
-| Scheduled callbacks | `set_timer`, `set_interval`, `call_later`, `call_next`, `call_after_refresh` targets — **arbitrary names** | **seeded** (named targets) |
-| Cross-thread callees (NB-8) | anything passed to `call_from_thread(fn, …)` — **arbitrary names** | **seeded** (named targets) |
-| Signals | `subscribe(self, fn)` callbacks (e.g. theme-changed) | **seeded** |
-| Startup | `compose`, `on_mount` (run before the loop, on the pump) | exact/prefix: yes |
-| Async `@work` **without** `thread=True` | the coroutine body runs *on the loop* — CPU without `await` freezes it | n/a |
+| Message handlers | `on_*`, `_on_*`, **any `@on(...)`-decorated method (any name)** | Search prefixes and inspect every `@on` decorator. |
+| Reactivity (inline, sync) | `watch_*`, `validate_*`, `compute_*` — bypass the message queue *and* Textual's own SLOW_THRESHOLD | Search all three prefixes. |
+| Render/layout (compositor) | `render`, `render_line`, `__rich__`, `get_content_width/height`, `pre_layout` | Enumerate exact and prefixed render hooks. |
+| Actions | `action_*`, `_action_*` (key bindings, links) | Search both prefixes. |
+| Scheduled callbacks | `set_timer`, `set_interval`, `call_later`, `call_next`, `call_after_refresh` targets — **arbitrary names** | Inspect each call site and named, `lambda`, or `partial` target. |
+| Cross-thread callees (NB-8) | anything passed to `call_from_thread(fn, …)` — **arbitrary names** | Inspect each call site and target. |
+| Signals | `subscribe(self, fn)` callbacks (e.g. theme-changed) | Inspect each subscription target. |
+| Startup | `compose`, `on_mount` (run before the loop, on the pump) | Search the exact hooks. |
+| Async `@work` **without** `thread=True` | the coroutine body runs *on the loop* — CPU without `await` freezes it | Inspect every `@work` and `run_worker`. |
 
 Off the pump (safe place for blocking work): `@work(thread=True)` /
 `run_worker(..., thread=True)` bodies, decorated `@offload`.
 
-## The two-gate defense (the actual answer)
+## Defense in depth (the actual answer)
 
-No single mechanism both prevents and detects. Build the **pair**, organized by
-the I/O-vs-CPU asymmetry:
+No single mechanism both prevents and detects. Combine manual review with the
+runtime mechanisms, organized by the I/O-vs-CPU asymmetry:
 
-```
-                    PREVENT (merge / dev)            DETECT (CI / runtime)
-  I/O initiation  │ static denylist (decidable)  │ sys.addaudithook (denylist-free,
-  (open/connect/  │ + AST guard                  │   aborts on the acting thread)
-   Popen/sleep)   │                              │
-  ────────────────┼──────────────────────────────┼───────────────────────────────
-  CPU spin /      │ (no call signature —         │ wall-clock watchdog
-  recv on open fd │  NOT statically detectable)  │   (faulthandler / heartbeat /
-  / native I/O    │                              │   sys._current_frames sampling)
-```
+| Hazard | Review / structural prevention | Runtime complement |
+|---|---|---|
+| I/O initiation (`open`, connect, `Popen`, sleep) | Entrypoint catalog, helper tracing, and `@offload` seams | Explicit-env `sys.addaudithook` aborts covered events on the acting thread. |
+| CPU spin, open-handle transfer, or native I/O | Bound the work or move it to an `@offload` worker. | The heartbeat reports exercised stalls above its wall-clock threshold. |
 
 - **`sys.addaudithook`** (PEP 578) is denylist-FREE: the hook fires synchronously
   on the *acting* thread, so `if get_ident()==pump_id and event in IO_INITIATORS:
@@ -115,10 +113,12 @@ the I/O-vs-CPU asymmetry:
   cannot abort a thread mid-C-syscall — only kill the process). This is the
   asyncio `slow_callback_duration` model.
 
-**The `@pump_only`/`@offload` asserts and the audit hook stay opt-in**
-(`PYTEST_CURRENT_TEST` or `AGENTGREP_TUI_WATCHDOG`), since both can raise. The
-log-only heartbeat watchdog **defaults on for an interactive TTY**, so real users
-get the cause-agnostic backstop without risking a crash on a latent violation.
+The `@pump_only` / `@offload` assertions run under pytest or an explicitly
+truthy `AGENTGREP_TUI_WATCHDOG`; the audit hook requires the explicit truthy
+setting because it can raise. The log-only heartbeat watchdog **defaults on for
+an interactive TTY**, a falsey setting forces it off, and pytest does not
+auto-start it. `tests/test_tui_runtime_oracles.py` deterministically pins the
+heartbeat warning without relying on a real-time hang.
 
 ## Review rules (apply on EVERY ui/ change)
 
@@ -135,7 +135,7 @@ or stale-event paths. These are the judgment calls a reviewer/agent must make:
    `time.sleep`, or **unbounded CPU** (full-result `casefold`/`sort`/`regex`,
    `Syntax(...).highlight` on a full body). Route bulk UI updates through
    `stream_apply`; route large/uncached detail builds through an `@offload` worker.
-3. **Never satisfy the guard by aliasing/`from`-import** — that's evasion, not a
+3. **Never satisfy review by aliasing/`from`-import** — that's evasion, not a
    fix. Move the call off the pump.
 4. **Worker bodies must not read/mutate pump-owned state** (widget/theme vars);
    snapshot on the pump and pass it in (cf. `b1bc2f48`).
@@ -147,10 +147,10 @@ or stale-event paths. These are the judgment calls a reviewer/agent must make:
    teardown exceptions are invisible to every blocking oracle (cf. `4895d2a2`).
 7. **Don't raise runtime bounds** (`_DETAIL_ASYNC_BODY_THRESHOLD=20000`,
    `stream_apply` chunk cap `200`) without re-proving the per-frame budget — the
-   static guard cannot verify these constants still gate the inline path.
+   manual review cannot prove these constants still gate the inline path.
 8. **Exercise the change once under `AGENTGREP_TUI_WATCHDOG=1` against a large
-   real store** before claiming a path is non-blocking; the merge gate cannot
-   prove the absence of CPU/data-dependent blocking.
+   real store** before claiming a path is non-blocking; review cannot prove the
+   absence of CPU/data-dependent blocking.
 
 ## Audit procedure (when hunting an existing hang)
 
@@ -158,21 +158,21 @@ or stale-event paths. These are the judgment calls a reviewer/agent must make:
    detail open on a big record, resize, theme switch).
 2. Map the interaction to its pump entrypoint via the catalog — **include the
    arbitrary-named ones** (`@on`, timer, `call_from_thread`, `subscribe`).
-3. Follow the call graph by hand one+ hops (the guard won't). Look for the four
-   holes: helper-extracted I/O, unclassified entrypoint, aliased call, unbounded
-   CPU loop.
+3. Follow the call graph by hand one+ hops; no automated static gate does this.
+   Look for the four holes: helper-extracted I/O, unclassified entrypoint,
+   aliased call, unbounded CPU loop.
 4. Classify the cause: I/O-on-pump → offload + audit hook; unbounded CPU →
    bound it (`stream_apply`) or offload + watchdog; stale-event → generation
    token; teardown → empty-stack guard; worker-touches-pump-state → snapshot.
-5. Lock it with a Pilot regression test; if it's a stall, add a fuzz/watchdog
-   assertion.
+5. Lock the behavior with the smallest focused regression. If the heartbeat
+   contract changes, extend `tests/test_tui_runtime_oracles.py`.
 
-## What the static guard still can't catch
+## What manual static review still can't catch
 
 Two historical CPU stalls here — the filter rebuild
 (`on_filter_completed → set_records → _rebuild_options`) and the find-in-detail
 re-highlight (`_present_detail_find`) — are now bounded by an id-keyed row-render
-cache and a cached syntax base. The *static* residue is the four holes above plus
+cache and a cached syntax base. The review residue is the four holes above plus
 pure-CPU spin: cross-module/dynamic dispatch, `lambda`/`partial` scheduler
 targets, generic-attr blocking, and unbounded loops. The watchdog is the runtime
 backstop for all of them; profile a suspected stall (synthetic records, timings
@@ -182,7 +182,7 @@ only) before reaching for a structural fix.
 
 Pure-CPU/data-dependent blocking, native-extension syscalls, `recv`/`execute` on
 open handles, fast-in-CI/slow-in-prod, sub-threshold jank, stale-event repaint,
-and teardown exceptions all slip the static gate. The watchdog catches the
+and teardown exceptions can all slip manual review. The watchdog catches the
 super-threshold subset on exercised inputs, after the fact. The honest guarantee
 is "high coverage via defense-in-depth," never literal completeness.
 
@@ -191,5 +191,4 @@ is "high coverage via defense-in-depth," never literal completeness.
 - Contract: `docs/dev/adr/0011-non-blocking-tui-invariants.md` (NB-1..NB-10).
 - Primitives: `src/agentgrep/ui/_runtime.py` (`pump_only`/`offload`/`stream_apply`/
   `make_gated_emitter`/`start_pump_watchdog`).
-- Static guard: `tests/test_tui_non_blocking.py`.
-- Fuzz harness: `tests/test_ui_fuzz.py`.
+- Deterministic heartbeat oracle: `tests/test_tui_runtime_oracles.py`.

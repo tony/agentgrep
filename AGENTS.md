@@ -452,16 +452,17 @@ resize, and cancel at once. ADR 0011 (NB-1..NB-10) is the contract; the
   `concurrent.futures` `.result()`, `json.load(s)`/`dump(s)`, `.read()`, or
   **unbounded CPU** (full-result casefold/sort/regex, `Syntax(...).highlight` on a
   full body). Route bulk UI updates through `stream_apply`; route large/uncached
-  detail builds through an `@offload` worker. Never satisfy the guard by
-  aliasing/`from`-import — move the call off the pump.
-- **The static guard cannot reach 100%.** "Blocks the pump" is a semantic
-  (Rice-undecidable) property; `tests/test_tui_non_blocking.py` follows
-  same-class helper calls, seeds `@on`/scheduler/`call_from_thread`/`subscribe`
-  callees, and resolves import aliases — but it still cannot see cross-module or
-  dynamic dispatch, a `lambda`/`partial` scheduler target, or CPU spin. Apply the
-  skill's review rules by hand, and exercise the change once under
-  `AGENTGREP_TUI_WATCHDOG=1` against a large real store before calling a path
-  non-blocking.
+  detail builds through an `@offload` worker. Never evade review by aliasing or
+  using a `from` import — move the call off the pump.
+- **Static review cannot prove completeness.** "Blocks the pump" is a semantic
+  (Rice-undecidable) property, and no retained automated static gate walks this
+  graph. Apply the skill's entrypoint catalog and helper tracing by hand. The
+  decorators assert thread placement under pytest or an explicitly truthy
+  `AGENTGREP_TUI_WATCHDOG`; the audit hook also requires that explicit opt-in.
+  The log-only heartbeat defaults on for an interactive TTY, a falsey override
+  disables it, and pytest does not auto-start it. Exercise a change once with
+  the explicit watchdog setting against a large real store before calling its
+  path non-blocking.
 
 ### Dependency boundaries
 

@@ -85,5 +85,5 @@ def test_watchdog_reports_seeded_cpu_stall_without_waiting(
     assert stall.agentgrep_pump_stall_threshold_ms == 1_000
 
 
-# The existing dynamic SQLite audit contract covers blocking-I/O initiation.
-# This focused contract adds the watchdog's complementary CPU-stall oracle.
+# The explicit audit mode covers CPython-instrumented blocking-I/O initiation.
+# This deterministic contract pins the heartbeat's complementary stall oracle.
