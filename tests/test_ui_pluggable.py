@@ -113,7 +113,7 @@ def test_ui_command_has_no_layout_workflow_fields() -> None:
 
 @pytest.mark.parametrize(
     ("option", "value"),
-    (("--layout", "greplog"), ("--workflow", "browse")),
+    [("--layout", "greplog"), ("--workflow", "browse")],
 )
 def test_ui_command_rejects_layout_workflow_options(option: str, value: str) -> None:
     """The normal ``ui`` command does not advertise component selection."""
@@ -337,12 +337,12 @@ async def test_factory_mounts_only_programmatically_selected_pair(
 
 @pytest.mark.parametrize(
     ("layout_name", "workflow_name", "layout_class_name"),
-    (
+    [
         ("hud", "search", "HudLayout"),
         ("hud", "browse", "HudLayout"),
         ("greplog", "search", "GrepLogLayout"),
         ("greplog", "browse", "GrepLogLayout"),
-    ),
+    ],
 )
 async def test_explorer_app_composition_selects_initial_pair(
     tmp_path: pathlib.Path,

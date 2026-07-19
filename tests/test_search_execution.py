@@ -808,7 +808,7 @@ def test_scan_source_task_collects_the_same_records_as_source_batches(
 
 @pytest.mark.parametrize(
     "case",
-    (
+    [
         SourceScanCacheCase(
             test_id="no-runtime-cache-reads-twice",
             runtime=None,
@@ -833,7 +833,7 @@ def test_scan_source_task_collects_the_same_records_as_source_batches(
             expected_hits=0,
             expected_misses=2,
         ),
-    ),
+    ],
     ids=lambda case: case.test_id,
 )
 def test_scan_source_task_uses_runtime_source_scan_cache(
@@ -1389,14 +1389,14 @@ def test_source_batches_can_yield_partial_results_before_source_finishes(
 
 @pytest.mark.parametrize(
     "case",
-    (
+    [
         BatchSchedulerCase(
             test_id="single-worker-skips-after-first-batch",
             max_workers=1,
             expected_emitted=("newest bliss",),
             expected_skipped=1,
         ),
-    ),
+    ],
     ids=lambda case: case.test_id,
 )
 def test_frontier_driver_merges_source_batches_before_source_finishes(
@@ -2131,7 +2131,7 @@ def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
 
 @pytest.mark.parametrize(
     "config",
-    (
+    [
         pytest.param(None, id="whole-source-worker"),
         pytest.param(
             ExecutionDriverConfig(max_workers=2),
@@ -2145,7 +2145,7 @@ def test_select_execution_driver_uses_frontier_for_bounded_haystack_search(
             ExecutionDriverConfig(max_workers=2, use_source_batches=True),
             id="concurrent-worker-batches",
         ),
-    ),
+    ],
 )
 def test_selected_frontier_driver_forwards_source_progress_on_owner_thread(
     tmp_path: pathlib.Path,

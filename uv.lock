@@ -119,7 +119,7 @@ dev = [
     { name = "sphinx-gp-mermaid", specifier = "==0.0.1a34" },
     { name = "syrupy", specifier = ">=5.1.0" },
     { name = "tomlkit", specifier = ">=0.13" },
-    { name = "ty", specifier = ">=0.0.35" },
+    { name = "ty", specifier = ">=0.0.58" },
     { name = "typer", specifier = ">=0.12" },
 ]
 docs = [

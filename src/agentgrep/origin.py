@@ -452,7 +452,7 @@ def _reconstruct_dashed_dir(name: str) -> str | None:
     whose name contains a literal ``--`` encodes to two adjacent dashes, and
     discarding the empty token between them makes that project unresolvable.
     """
-    encoded = name[1:] if name.startswith("-") else name
+    encoded = name.removeprefix("-")
     tokens = encoded.split("-")
     if len(tokens) > DASH_DECODE_MAX_TOKENS:
         return None

@@ -831,7 +831,7 @@ async def test_greplog_keys_theme_and_screenshot_match_hud_commands(
         assert layout._search_input.value == ""
 
 
-@pytest.mark.parametrize("text", ("/exit", "/quit"))
+@pytest.mark.parametrize("text", ["/exit", "/quit"])
 async def test_exit_aliases_run_in_greplog(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

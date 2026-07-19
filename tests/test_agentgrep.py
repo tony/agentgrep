@@ -3567,10 +3567,10 @@ async def test_apply_recalled_query_fills_box_without_running(
         assert app.screen.all_records == []
 
 
-@pytest.mark.parametrize("input_id", ("search", "filter", "detail-find"))
+@pytest.mark.parametrize("input_id", ["search", "filter", "detail-find"])
 @pytest.mark.parametrize(
     ("key", "cursor", "expected"),
-    (("shift+backspace", 3, "ab"), ("shift+delete", 1, "ac")),
+    [("shift+backspace", 3, "ab"), ("shift+delete", 1, "ac")],
 )
 async def test_shift_delete_aliases_edit_all_inputs(
     tmp_path: pathlib.Path,

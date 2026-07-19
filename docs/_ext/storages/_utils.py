@@ -48,7 +48,7 @@ def literal_paragraph(text: str) -> nodes.paragraph:
 
 def text_paragraph(text: str) -> nodes.paragraph:
     """Return a plain paragraph, using a dash for missing text."""
-    return nodes.paragraph("", text if text else "-")
+    return nodes.paragraph("", text or "-")
 
 
 def markup_body(directive: SphinxDirective, text: str) -> list[nodes.Node]:

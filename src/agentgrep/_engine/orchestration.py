@@ -311,17 +311,17 @@ def direct_source_matches(
             # already ran via the compiled source_predicate during planning,
             # so admit and let the record matcher decide.
             matched = True
-            return matched
+            return matched  # noqa: RET504  # Preserve matched for profiling in finally.
         if source.adapter_id == "claude.history_jsonl.v1":
             # Claude history expands sibling paste-cache files into record
             # text, so a query term can match content that no grep over
             # history.jsonl itself can see. Admission must stay
             # unconditional; the record matcher filters after expansion.
             matched = True
-            return matched
+            return matched  # noqa: RET504  # Preserve matched for profiling in finally.
         if source.source_kind == "sqlite":
             matched = True
-            return matched
+            return matched  # noqa: RET504  # Preserve matched for profiling in finally.
         if backends.grep_tool is not None:
             grep_match = grep_file_matches(
                 source.path,
@@ -334,7 +334,7 @@ def direct_source_matches(
                 return False
             if grep_match is not None:
                 matched = grep_match
-                return matched
+                return matched  # noqa: RET504  # Preserve matched for profiling in finally.
         if source.path.suffix in JSON_FILE_SUFFIXES and backends.json_tool is not None:
             extracted = flatten_json_strings_with_tool(
                 source.path,
@@ -346,9 +346,9 @@ def direct_source_matches(
                 return False
             if extracted is not None:
                 matched = matches_text(extracted, query)
-                return matched
+                return matched  # noqa: RET504  # Preserve matched for profiling in finally.
         matched = matches_text(read_text_file(source.path), query)
-        return matched
+        return matched  # noqa: RET504  # Preserve matched for profiling in finally.
     finally:
         # An answer-now abort is not a non-match; record nothing, matching
         # the pre-try early return above.

@@ -75,7 +75,7 @@ dev = [
   "pygments",
   # Lint / typecheck
   "ruff",
-  "ty>=0.0.35",
+  "ty>=0.0.58",
   # scripts/mcp_swap.py is a PEP 723 standalone with `tomlkit` as its only
   # third-party dependency. The script is exercised by tests/test_mcp_swap.py,
   # which doesn't run through PEP 723, so we install tomlkit in the dev group
@@ -144,6 +144,9 @@ sphinx-ux-badges = false
 [tool.ty.environment]
 python-version = "3.14"
 
+[tool.ty.rules]
+blanket-ignore-comment = "error"
+
 [tool.ty.src]
 include = [
   "src",
@@ -208,10 +211,22 @@ select = [
   "PERF", # Perflint
   "RUF", # Ruff-specific rules
   "D", # pydocstyle
-  "FA100",  # future annotations
+  "FA100", # future annotations
+  "LOG", # flake8-logging
+  "G", # flake8-logging-format
+  "TD", # flake8-todos
+  "FIX", # flake8-fixme
+  "ANN", # flake8-annotations
+  "N", # pep8-naming
+  "T20", # flake8-print
+  "PT", # flake8-pytest-style
+  "RET", # flake8-return
+  "FURB", # refurb
 ]
 ignore = [
   "COM812", # missing trailing comma, ruff format conflict
+  "ANN401", # dynamically typed external boundaries intentionally use Any
+  "PT018", # composite assertions are intentionally kept together
 ]
 extend-safe-fixes = [
   "UP006",
@@ -241,11 +256,20 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
+# These test names preserve keyboard, protocol, and query-lattice spellings.
+"tests/test_agentgrep.py" = ["N802"]
+"tests/test_mcp_swap.py" = ["N802"]
+"tests/test_query_evaluate.py" = ["N802"]
+# Test class attributes preserve MCP wire-format spellings.
+"tests/test_agentgrep_mcp.py" = ["N815"]
+# These modules own intentional terminal output.
+"src/agentgrep/cli/render.py" = ["T201"]
 # typer.Option / typer.Argument calls are metadata, not real callables —
 # B008 does not apply. E501 is suppressed because a few error messages
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
 # more naturally as one line than wrapped.
 "scripts/benchmark.py" = ["B008", "E501"]
+"scripts/mcp_swap.py" = ["T201"]
 
 [tool.pytest.ini_options]
 addopts = [

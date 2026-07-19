@@ -553,6 +553,16 @@ TIMESTAMP_CASES: tuple[TimestampParseCase, ...] = (
         expected=dt.datetime(2026, 7, 18, 12, 0, tzinfo=dt.UTC),
     ),
     TimestampParseCase(
+        test_id="date-z-suffix-parses-utc-midnight",
+        raw="2026-06-01Z",
+        expected=dt.datetime(2026, 6, 1, tzinfo=dt.UTC),
+    ),
+    TimestampParseCase(
+        test_id="z-date-time-separator-is-unparseable",
+        raw="2026-06-01Z12:34:56",
+        expected=None,
+    ),
+    TimestampParseCase(
         test_id="naive-coerced-to-utc",
         raw="2026-07-18T12:00:00",
         expected=dt.datetime(2026, 7, 18, 12, 0, tzinfo=dt.UTC),
