@@ -91,7 +91,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastmcp", specifier = ">=3.0.0" },
+    { name = "fastmcp", specifier = ">=3.4.0" },
     { name = "orjson", marker = "extra == 'speedups'", specifier = ">=3.10" },
     { name = "pydantic", specifier = ">=2.11.3" },
     { name = "rapidfuzz", specifier = ">=3.10.0" },

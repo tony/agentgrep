@@ -27,7 +27,7 @@ readme = "README.md"
 dependencies = [
   "pydantic>=2.11.3",
   "textual>=3.2.0",
-  "fastmcp>=3.0.0",
+  "fastmcp>=3.4.0",
   "rapidfuzz>=3.10.0",
 ]
 
