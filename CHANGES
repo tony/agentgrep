@@ -36,11 +36,18 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a40 (Yet to be released)
+## agentgrep 0.1.0a41 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a40 (2026-07-19)
+
+agentgrep 0.1.0a40 is an internal-quality release with no change to how
+agentgrep behaves. It shortens the everyday test loop contributors run while
+leaving the exhaustive suite to CI, so slower resource-heavy coverage stays
+opt-in locally without weakening release confidence.
 
 ### Development
 
