@@ -14,6 +14,11 @@ explicit `--scope` controls for conversations. Scoring uses rapidfuzz's
 `WRatio` — a token-aware 0-100 similarity — against the space-joined
 terms.
 
+```{terminal-demo} ../_static/demos/vhs/agentgrep-search.mp4
+:poster: ../_static/demos/posters/agentgrep-search.png
+:alt: agentgrep search ranking matching prompts by relevance
+```
+
 ## Examples
 
 Rank prompts by relevance to a multi-term query (terms are AND-matched):

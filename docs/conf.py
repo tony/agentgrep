@@ -40,6 +40,7 @@ conf = merge_sphinx_config(
         "sphinx_autodoc_fastmcp",
         "sphinx_gp_mermaid",
         "sphinx_gp_highlighting",
+        "docs._ext.terminal_demo",
         "docs._ext.storages",
         "docs._ext.widgets",
         "docs._ext.lexers",
@@ -61,13 +62,20 @@ conf = merge_sphinx_config(
         ),
     },
     # AGENTS.md is agent guidance, not a site page; keep Sphinx from
-    # treating it as an orphan document.
+    # treating it as an orphan document. Keep demo sources and alternate
+    # renders out of the static copy while publishing the linked MP4 files.
     exclude_patterns=[
         "_build",
         "node_modules",
         "_mermaid_cache",
         "AGENTS.md",
         "CLAUDE.md",
+        "demos/asciinema/**",
+        "demos/vhs/*.gif",
+        "demos/vhs/*.tape",
+        "demos/vhs/*.webm",
+        "demos/*.py",
+        "demos/*.sh",
     ],
 )
 
