@@ -36,6 +36,54 @@ $ uv run agentgrep grep "docs deploy" --scope all
 
 Allowed values are `prompts`, `conversations`, and `all`.
 
+## DB cache
+
+Search-shaped commands default to `--cache auto`. When an agentgrep
+database already exists and can answer the query, agentgrep can use the
+SQLite index; otherwise it falls back to the live scanner.
+
+Force a fresh live scan for cold-path checks and benchmarks:
+
+```console
+$ uv run agentgrep grep "release" --no-cache
+```
+
+Require the DB path:
+
+```console
+$ uv run agentgrep search "release" --cache require
+```
+
+Set the mode for a whole environment with `AGENTGREP_CACHE` — useful
+for benchmark harnesses, CI jobs, and MCP server configuration blocks,
+where flags do not reach the process. An explicit `--cache` or
+`--no-cache` flag overrides the variable. Valid values are `auto`,
+`require`, and `off`.
+
+Run a whole shell session uncached:
+
+```console
+$ export AGENTGREP_CACHE=off
+```
+
+Fail loudly if the cache cannot serve a query:
+
+```console
+$ AGENTGREP_CACHE=require uv run agentgrep grep "release"
+agentgrep: --cache require needs a synced DB
+```
+
+Set `AGENTGREP_SQL_EXPLAIN` to capture the SQLite query plan for each
+statement shape in profiles and DEBUG logs. Statements are recorded
+with placeholders only — search terms and other bound parameters are
+never captured. Sync a cache first so a query plan exists to capture:
+
+```console
+$ export AGENTGREP_DB=.tmp/config-cache.sqlite \
+    && uv run agentgrep db sync --no-progress \
+    && AGENTGREP_SQL_EXPLAIN=1 uv run agentgrep grep --no-progress --fixed-strings --cache require "release"
+```
+
 ## Output
 
 Text output is optimized for terminal reading:

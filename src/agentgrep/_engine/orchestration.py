@@ -46,6 +46,7 @@ from agentgrep.stores import SEARCHABLE_COVERAGE, StoreRole
 if t.TYPE_CHECKING:
     from agentgrep._engine.planning import PhysicalSearchPlan
     from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep.db import DbRuntime
 
 
 def search_sources(
@@ -95,6 +96,78 @@ def search_sources(
     return records
 
 
+def _db_search_result(
+    query: SearchQuery,
+    runtime: SearchRuntime | None,
+) -> tuple[bool, list[SearchRecord]]:
+    """Return ``(handled, records)`` for cache-backed search attempts.
+
+    Emits one ``search.cache.decision`` profile sample per consulted
+    query — aggregate counters only, never per-record spans.
+    """
+    if runtime is None or runtime.cache_mode == "off":
+        return False, []
+    start = time.perf_counter()
+    handled = False
+    records: list[SearchRecord] = []
+    reason: str | None = None
+    # An opener-provided runtime is opened by this thread for this one
+    # consult and closed before returning: SQLite connections are bound
+    # to their creating thread, so callers that consult from worker
+    # threads (the MCP server) supply an opener instead of a handle.
+    opened_db: DbRuntime | None = None
+    try:
+        db = runtime.db
+        if db is None and runtime.db_opener is not None:
+            opened_db = runtime.db_opener()
+            db = opened_db
+        if db is None:
+            reason = "no-db"
+            if runtime.cache_mode == "require":
+                msg = "DB cache required but no db runtime is configured"
+                raise RuntimeError(msg)
+            return False, []
+        if runtime.cache_mode == "auto" and not db.covers_query(query):
+            # A partial sync (agent subset, narrowed scope, capped or
+            # interrupted run) leaves the index covering less than the
+            # query; auto must not pass off a subset as the answer.
+            # require keeps serving - the caller demanded the cache.
+            reason = "partial-coverage"
+            return False, []
+        from agentgrep.db import DbQueryUnsupportedError
+
+        try:
+            records = db.search_records(query)
+        except DbQueryUnsupportedError:
+            reason = "unsupported"
+            if runtime.cache_mode == "require":
+                raise
+            return False, []
+        if runtime.cache_mode == "auto" and not records:
+            reason = "empty"
+            return False, []
+        # Per-session dedup happens inside DbStore.search_records, before
+        # the limit slice, so cached results keep the event-stream invariant
+        # and result caps count unique records like the live driver.
+        handled = True
+        return True, records
+    finally:
+        if opened_db is not None:
+            opened_db.close()
+        attributes: dict[str, JSONScalar] = {
+            "agentgrep_cache_mode": runtime.cache_mode,
+            "agentgrep_cache_handled": handled,
+            "agentgrep_cache_records": len(records) if handled else 0,
+        }
+        if reason is not None:
+            attributes["agentgrep_cache_fallback_reason"] = reason
+        _record_engine_profile_sample(
+            "search.cache.decision",
+            time.perf_counter() - start,
+            **attributes,
+        )
+
+
 def run_search_query(
     home: pathlib.Path,
     query: SearchQuery,
@@ -111,6 +184,12 @@ def run_search_query(
     active_progress.start(query)
     interrupted = False
     try:
+        cache_handled, cache_records = _db_search_result(query, runtime)
+        if cache_handled:
+            active_progress.sources_discovered(0)
+            active_progress.sources_planned(0, 0)
+            active_progress.finish(len(cache_records))
+            return cache_records
         sources = discover_sources_for_search(
             home,
             query,

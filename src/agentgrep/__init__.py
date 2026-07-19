@@ -267,6 +267,7 @@ from agentgrep.readers import (
     _JSONL_YIELD_INTERVAL_SECONDS,
     _PI_SESSION_HEADER_MARKER,
     _SKIPPED_JSONL_LINE,
+    SQLITE_MMAP_BYTES,
     _combine_raw_skip_lines,
     _decode_jsonl_raw_line,
     _decode_protobuf_text,
@@ -317,6 +318,7 @@ from agentgrep.records import (
     USER_ROLES,
     AgentName,
     BackendSelection,
+    CacheMode,
     ColorMode,
     DiscoveryRoot,
     DiscoveryStoreRoles,
@@ -474,6 +476,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
             return run_search_command(parsed)
         if isinstance(parsed, UIArgs):
             return run_ui_command(parsed)
+        if isinstance(parsed, DbArgs):
+            return run_db_command(parsed)
         return run_find_command(parsed)
     except KeyboardInterrupt:
         _write_interrupt_notice()
@@ -489,6 +493,7 @@ from agentgrep._engine import (  # noqa: E402  (re-exports must follow main defi
     iter_search_events,
 )
 from agentgrep._engine.orchestration import (  # noqa: E402  (re-exports must follow main definition)
+    _db_search_result,
     _source_profile_attributes,
     build_grep_command,
     build_record_match_surface,
@@ -528,6 +533,7 @@ from agentgrep.cli.help_theme import (  # noqa: E402  (re-exports must follow ma
 )
 from agentgrep.cli.parser import (  # noqa: E402  (re-exports must follow main definition)
     CaseMode,
+    DbArgs,
     FindArgs,
     FindPatternMode,
     FindTypeFilter,
@@ -553,6 +559,7 @@ from agentgrep.cli.render import (  # noqa: E402  (re-exports must follow main d
     format_grep_record,
     print_find_results,
     print_grep_results,
+    run_db_command,
     run_find_command,
     run_grep_command,
     run_search_command,
@@ -600,10 +607,12 @@ __all__ = (
     "AnsiHelpTheme",
     "AnswerNowInputListener",
     "BackendSelection",
+    "CacheMode",
     "CaseMode",
     "ColorMode",
     "ConsoleSearchProgress",
     "ContentFormat",
+    "DbArgs",
     "DiscoveryRoot",
     "DiscoverySpec",
     "DiscoveryStoreRoles",

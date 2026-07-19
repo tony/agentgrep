@@ -288,21 +288,34 @@ sanitized payload, `--ndjson` for one child profile run per line, and
 `--format json`, `--format ndjson`, and `--format rich` forms remain available
 for templated invocations.
 
-Profiler artifacts include `schema_version` and `artifact_kind`. Use those
+Profiler artifacts include `schema_version`, `artifact_kind`, and
+`cache_mode` (the resolved `AGENTGREP_CACHE` mode the profiled run
+honored). Use the first two
 fields when a local profile file needs to be distinguished from benchmark rows
 or future fixture-only CI artifacts. Engine profiles include coarse phase spans
 and source-level spans such as `search.discover.group`,
 `search.plan.decision`, `search.plan.strategy_group`,
 `search.plan.prefilter_root`,
 `search.plan.direct_source`, `search.collect.source`, optional
-`search.collect.scheduler`, optional `search.collect.source_scan_cache`,
+`search.collect.scheduler`, optional `search.collect.source_scan_cache`, optional `search.cache.decision`,
 and `find.filter.source`; those spans carry
 agent/store/adapter/count metadata without prompt text or local paths.
 `search.collect.scheduler` is the driver
 summary for source-level scheduling and reports worker, submitted, completed,
 skipped, cancellation-requested, batch, queued-batch, queue-wait, and emitted
 counts. `search.collect.source_scan_cache` reports cache-hit lookups when a
-runtime source-scan cache is active.
+runtime source-scan cache is active. `search.cache.decision` reports one
+aggregate sample per DB-cache consultation: the active cache mode,
+whether the cache served the query, the served record count, and the
+fallback reason when it did not. `db.sql.statement` reports one
+aggregate sample per executed SQL statement shape — statement name,
+execution count (a high `agentgrep_sql_count` is the n+1 signal), rows
+touched, and summed duration; cached-search phases appear as
+`records.probe_fts` / `records.probe_scan` (probe pages; the count is
+the page count) and `records.hydrate`; statement text is placeholder-only and
+bound parameters are never captured. Set `AGENTGREP_SQL_EXPLAIN` to
+attach the SQLite query plan (`agentgrep_sql_plan`, table/index names
+only) to each statement shape once per connection.
 
 Use `scripts/benchmark.py` for timed benchmark sweeps. The profiler-oriented
 benchmark entries are named `profile-engine-*`; each committed benchmark name
@@ -350,8 +363,9 @@ $ uv run scripts/benchmark.py run \
 ```
 
 Benchmark `json` and `ndjson` artifacts include `dry_run`,
-`profile_payload`, `profile_capture_error`, `schema_version`, and
-`artifact_kind`. `command_string` is sanitized with `{repo}`, `{venv}`,
+`profile_payload`, `profile_capture_error`, `schema_version`,
+`artifact_kind`, and `cache_mode` (extracted from the command's env
+prefix; null when the command sets no cache mode). `command_string` is sanitized with `{repo}`, `{venv}`,
 `{home}`, and `{query}` placeholders. For `profile-engine-*` rows,
 `profile_payload` is a separate post-timing profile capture; timing
 conclusions must come from `samples`. Use `--format rich --top-spans N` to

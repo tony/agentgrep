@@ -181,6 +181,16 @@ class SourceRecordModel(AgentGrepModel):
         return cls.model_validate(payload)
 
 
+class DbStatusModel(AgentGrepModel):
+    """DB index status payload."""
+
+    schema_version: str = agentgrep.SCHEMA_VERSION
+    db_path: str
+    db_schema_version: int
+    sources: int
+    records: int
+
+
 class ResultStatsModel(AgentGrepModel):
     """Counters collected while building one MCP result page.
 

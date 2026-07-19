@@ -27,6 +27,14 @@ The generator owns these invariants:
   exits early via :attr:`agentgrep.SearchControl.request_answer_now`
   still fires ``SearchFinished`` so cleanup is uniform.
 
+Cache-served searches keep the same envelope with zero sources: when
+the DB cache answers the query, the stream is ``SearchStarted`` with
+``source_count=0``, one ``RecordEmitted`` per cached record, then
+``SearchFinished`` — no ``SourceStarted``/``SourceFinished`` pairs
+fire because no source is scanned. ``source_count=0`` therefore means
+either "nothing discovered" or "served from cache"; the
+``search.cache.decision`` profile span disambiguates the two.
+
 Cancellation honors the existing :class:`agentgrep.SearchControl`
 primitive — call :meth:`agentgrep.SearchControl.request_answer_now`
 to break out at the next per-record boundary. Async consumers wrap
@@ -46,7 +54,10 @@ import threading
 import time
 import typing as t
 
-from agentgrep._engine.orchestration import discover_sources_for_search
+from agentgrep._engine.orchestration import (
+    _db_search_result,
+    discover_sources_for_search,
+)
 from agentgrep.progress import SearchControl
 from agentgrep.readers import select_backends
 from agentgrep.records import BackendSelection, SearchQuery
@@ -124,6 +135,21 @@ def iter_search_events(
     active_backends = select_backends() if backends is None else backends
     active_control = SearchControl() if control is None else control
     start_time = time.monotonic()
+
+    cache_handled, cache_records = _db_search_result(query, runtime)
+    if cache_handled:
+        yield _events.SearchStarted(source_count=0)
+        match_count = 0
+        for record in cache_records:
+            if active_control.answer_now_requested():
+                break
+            match_count += 1
+            yield _events.RecordEmitted(record=record)
+        yield _events.SearchFinished(
+            match_count=match_count,
+            elapsed_seconds=time.monotonic() - start_time,
+        )
+        return
 
     sources = discover_sources_for_search(
         home,

@@ -47,9 +47,15 @@ Enumerate on-disk stores with fd-shaped flag grammar.
 :::
 
 :::{grid-item-card} agentgrep ui
-:link: tui
-:link-type: ref
-Interactive Textual explorer for browsing prompts and conversations.
+:link: ui
+:link-type: doc
+Open the interactive Textual explorer command surface.
+:::
+
+:::{grid-item-card} agentgrep db
+:link: db/index
+:link-type: doc
+Sync and inspect the persistent DB index.
 :::
 
 :::{grid-item-card} API Reference
@@ -160,5 +166,7 @@ $ agentgrep
 grep
 search
 find
+ui
+db/index
 reference
 ```
