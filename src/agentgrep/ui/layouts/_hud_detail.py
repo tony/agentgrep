@@ -396,9 +396,7 @@ class _HudDetailBase(LayoutScreen):
 
             identity = record_identity(snapshot.record)
         body = (
-            None
-            if snapshot.render_request is None
-            else build_detail_body(snapshot.render_request)
+            None if snapshot.render_request is None else build_detail_body(snapshot.render_request)
         )
         emit(
             _PreparedDetail(

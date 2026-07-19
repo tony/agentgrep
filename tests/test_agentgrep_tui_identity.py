@@ -43,9 +43,7 @@ def _identity_ui_record(
         session_id="session-1" if native else None,
         conversation_id="session-1" if native else None,
         identity_namespace="codex.session" if native else None,
-        position=(
-            RecordPosition(native_id="message-1", quality="native") if native else None
-        ),
+        position=(RecordPosition(native_id="message-1", quality="native") if native else None),
     )
 
 
