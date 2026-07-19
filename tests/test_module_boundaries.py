@@ -12,7 +12,11 @@ from __future__ import annotations
 import pathlib
 import re
 
+import pytest
+
 import agentgrep
+
+pytestmark = pytest.mark.setup
 
 _BARE_FACADE_IMPORT = re.compile(r"(?m)^[ \t]*import agentgrep[ \t]*$")
 _ALLOWED = {"__init__.py", "__main__.py"}

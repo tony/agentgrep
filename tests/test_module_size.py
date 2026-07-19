@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
+
+pytestmark = pytest.mark.setup
+
 _SRC_LINE_BUDGET = 500
 _TEST_LINE_BUDGET = 2500
 
