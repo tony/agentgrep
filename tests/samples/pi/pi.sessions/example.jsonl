@@ -1,9 +1,0 @@
-{"type":"session","version":3,"id":"019e0000-0000-7000-8000-000000000001","timestamp":"2026-05-30T12:00:00.000Z","cwd":"/home/user/project"}
-{"type":"model_change","id":"m1","parentId":null,"timestamp":"2026-05-30T12:00:01.000Z","provider":"openrouter","modelId":"example/model"}
-{"type":"thinking_level_change","id":"tl1","parentId":"m1","timestamp":"2026-05-30T12:00:01.500Z","thinkingLevel":"high"}
-{"type":"message","id":"u1","parentId":"tl1","timestamp":"2026-05-30T12:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"explain the parser design"}],"timestamp":1780228802000}}
-{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-05-30T12:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"The parser walks the session tree."}],"provider":"openrouter","model":"example/model","timestamp":1780228803000}}
-{"type":"message","id":"t1","parentId":"a1","timestamp":"2026-05-30T12:00:04.000Z","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"file contents here"}],"isError":false,"timestamp":1780228804000}}
-{"type":"compaction","id":"c1","parentId":"t1","timestamp":"2026-05-30T12:00:05.000Z","summary":"Compacted earlier discussion about the parser.","firstKeptEntryId":"u1","tokensBefore":1000}
-{"type":"branch_summary","id":"b1","parentId":"c1","timestamp":"2026-05-30T12:00:06.000Z","fromId":"u1","summary":"Branch explored an alternate approach."}
-{"type":"session_info","id":"s1","parentId":"b1","timestamp":"2026-05-30T12:00:07.000Z","name":"Parser design session"}

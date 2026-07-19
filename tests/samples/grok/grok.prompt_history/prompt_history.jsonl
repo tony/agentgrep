@@ -1,3 +1,0 @@
-{"timestamp":"2026-05-25T10:00:00.000000000Z","session_id":"019729a0-0000-7000-8000-000000000001","prompt":"study the recent changes and summarise them","is_bash":false}
-{"timestamp":"2026-05-25T10:01:30.000000000Z","session_id":"019729a0-0000-7000-8000-000000000001","prompt":"uv run pytest --tb=short","is_bash":true}
-{"timestamp":"2026-05-25T10:05:00.000000000Z","session_id":"019729a0-0000-7000-8000-000000000002","prompt":"add a docstring to the main function","is_bash":false}

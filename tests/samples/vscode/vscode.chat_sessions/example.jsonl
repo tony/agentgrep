@@ -1,3 +1,0 @@
-{"kind":0,"v":{"sessionId":"00000000-0000-4000-8000-000000000000","version":3,"requests":[{"requestId":"request_a","message":{"text":"Summarize the build pipeline in this repository"},"response":[{"value":"The pipeline builds, then tests, then publishes."}],"modelId":"gpt-5","timestamp":1779999665000}]}}
-{"kind":2,"k":["requests"],"i":1,"v":[{"requestId":"request_b","message":{"text":"How are releases tagged?"},"response":[{"value":"Tags are pushed manually by the maintainer."}],"modelId":"gpt-5","timestamp":1779999670000}]}
-{"kind":1,"k":["requests",0,"result"],"v":{"metadata":{"toolCallRounds":[{"toolCalls":[{"name":"copilot_readFile"}]}]}}}
