@@ -9,6 +9,7 @@ the tests), so ``import agentgrep`` stays Textual-free (ADR 0010).
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import contextlib
 import dataclasses
@@ -16,6 +17,7 @@ import functools
 import json
 import pathlib
 import re
+import threading
 import time
 import typing as t
 from collections import abc as cabc
@@ -28,6 +30,7 @@ from textual.binding import Binding, BindingType
 from textual.containers import Center, Horizontal, Vertical
 from textual.timer import Timer
 from textual.widgets import Footer, Static
+from textual.widgets.input import Selection
 from textual.worker import Worker, WorkerCancelled
 
 from agentgrep._engine.orchestration import clear_haystack_cache
@@ -53,8 +56,14 @@ from agentgrep.progress import (
 )
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
-from agentgrep.ui import _history, _runtime, _streaming, theme as ui_theme
+from agentgrep.ui import _history, _runtime, _streaming, commands, theme as ui_theme
 from agentgrep.ui._context import UiContext
+from agentgrep.ui._export_preferences import (
+    ExportPreferences,
+    ExportPreferencesError,
+    default_export_directory,
+    save_export_preferences,
+)
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
     SourceScanStarted,
@@ -76,6 +85,7 @@ from agentgrep.ui.widgets import (
     DetailFocusRequested,
     DetailScroll,
     DetailScrollChanged,
+    ExportPane,
     FilterCompleted,
     FilterHeader,
     FilterInput,
@@ -151,10 +161,81 @@ class _DetailSnapshot:
     build_body: bool
 
 
+type _ExportSelection = t.Literal["records", "thread"]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportSnapshot:
+    """Pump-captured values owned by one export worker."""
+
+    selected: SearchRecord
+    records: list[SearchRecord]
+    destination: str | None
+    selection: _ExportSelection
+    preferences: ExportPreferences | None
+    home: pathlib.Path
+    canceled: threading.Event
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportCompleted:
+    """Path-safe worker outcome delivered to the pump."""
+
+    filename: str | None
+    format: str
+    selection: _ExportSelection
+    record_count: int
+    preferences: ExportPreferences | None
+    preference_warning: str | None
+    error: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportPaneReturn:
+    """Exact input and focus state restored after a transient export pane."""
+
+    focused: object | None
+    search_value: str
+    search_selection: Selection
+    zoomed_pane: t.Literal["results", "detail"] | None
+    detail_opened: bool
+
+
+class _ExportSnapshotChangedError(Exception):
+    """Stop a chunked snapshot when its displayed result set changes."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExportRecordView(cabc.Sequence[SearchRecord]):
+    """A zero-copy sequence capped at the result count seen on acceptance."""
+
+    records: list[SearchRecord]
+    count: int
+
+    def __len__(self) -> int:
+        return self.count
+
+    @t.overload
+    def __getitem__(self, index: int) -> SearchRecord: ...
+
+    @t.overload
+    def __getitem__(self, index: slice) -> list[SearchRecord]: ...
+
+    def __getitem__(self, index: int | slice) -> SearchRecord | list[SearchRecord]:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self.count)
+            return self.records[start:stop:step]
+        normalized = index + self.count if index < 0 else index
+        if not 0 <= normalized < self.count:
+            raise IndexError(index)
+        return self.records[normalized]
+
+
 class HudLayout(LayoutScreen):
     """Search box, streaming results list, detail pane, and status chrome."""
 
     ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[results|detail]"
+    EXTRA_SLASH_COMMANDS: t.ClassVar[tuple[commands.SlashCommand, ...]] = commands.export_commands()
 
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any
@@ -165,6 +246,7 @@ class HudLayout(LayoutScreen):
     BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
         ("q", "confirm_quit", "Quit"),
+        Binding("e", "export_selected", "Export selected", show=False),
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
         ("ctrl+c", "smart_quit", "Stop / Quit"),
@@ -236,6 +318,24 @@ class HudLayout(LayoutScreen):
         self._history_path = _history.history_path(self.home)
         self._history = list(ctx.history)
         self._last_recorded_text = self._history[0].text if self._history else ""
+        loaded_export_preferences = ctx.export_preferences
+        if loaded_export_preferences is None:
+            self._export_preferences = ExportPreferences(
+                directory=str(default_export_directory(self.home)),
+            )
+            self._export_preferences_warning = None
+        else:
+            self._export_preferences = loaded_export_preferences.preferences
+            self._export_preferences_warning = loaded_export_preferences.warning
+        # Export is a non-supersedable durable action. The pump prepares one
+        # point-in-time result snapshot in bounded chunks, then transfers sole
+        # ownership to a thread worker. A second request remains blocked until
+        # the first worker reports a terminal outcome.
+        self._export_pending: bool = False
+        self._export_generation: int = 0
+        self._export_cancel_event: threading.Event | None = None
+        self._export_pane: ExportPane | None = None
+        self._export_pane_return: _ExportPaneReturn | None = None
         self._results: SearchResultsList | None = None
         self._detail: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
@@ -561,6 +661,25 @@ class HudLayout(LayoutScreen):
         # mount focus there even when an initial search hides the filter.
         self._search_input.focus()
         self._update_pane_focus()
+        if self._export_preferences_warning is not None:
+            self.notify(
+                self._export_preferences_warning,
+                title="Export preferences",
+                severity="warning",
+            )
+            self._export_preferences_warning = None
+
+    @_runtime.pump_only
+    def on_unmount(self) -> None:
+        """Invalidate export callbacks and cancel work during screen teardown."""
+        self._export_generation += 1
+        self._export_pending = False
+        self._export_pane = None
+        self._export_pane_return = None
+        if self._export_cancel_event is not None:
+            self._export_cancel_event.set()
+            self._export_cancel_event = None
+        self.workers.cancel_group(self, "export")
 
     def _set_empty_state(self, *, empty: bool) -> None:
         """Toggle the pre-search bare-canvas state on ``#body``.
@@ -958,6 +1077,7 @@ class HudLayout(LayoutScreen):
         text = message.payload.text.strip()
         if self._dispatch_slash_text(text) is not None:
             return
+        self._search_input.remember_query_draft()
         self._workflow.on_query(self, text)
 
     # --- WorkflowHost surface: the active workflow drives the layout here -----
@@ -983,6 +1103,528 @@ class HudLayout(LayoutScreen):
     def request_cancel(self) -> None:
         """Cooperatively signal the in-flight search to wrap up (host surface)."""
         self.control.request_answer_now()
+
+    @_runtime.pump_only
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Keep global bindings from escaping an active export action."""
+        if self._export_pane is not None and action in {
+            "confirm_quit",
+            "recall_history",
+        }:
+            return False
+        if action == "export_selected":
+            return self._export_pane is None and self._selected_export_shortcut_record() is not None
+        return super().check_action(action, parameters)
+
+    @_runtime.pump_only
+    def action_export_selected(self) -> None:
+        """Open the detail-pane export flow for one exact selection."""
+        selected = self._selected_export_shortcut_record()
+        if selected is None:
+            return
+        self.open_export_pane("", selected_record=selected)
+
+    @_runtime.pump_only
+    def open_export_pane(
+        self,
+        destination: str,
+        *,
+        selected_record: SearchRecord | None = None,
+    ) -> bool:
+        """Mount one fresh export owner beside the retained detail reader."""
+        if self._export_pane is not None:
+            return False
+        selected = selected_record or self._selected_export_record()
+        if (
+            selected is None
+            or self._detail_column is None
+            or self._body is None
+            or self._search_input is None
+        ):
+            self.notify(
+                "Select a record before exporting",
+                title="Export failed",
+                severity="error",
+            )
+            return False
+
+        search = self._search_input
+        search_value = str(search.value)
+        search_selection = search.selection
+        if search_value.lstrip().startswith("/"):
+            search_value, search_selection = search.query_draft
+
+        preferences = self._export_preferences
+        if destination:
+            explicit = pathlib.Path(destination)
+            preferences = ExportPreferences(
+                directory=str(explicit.parent),
+                filename_template=explicit.name,
+            )
+
+        pane = ExportPane(
+            selected_record=selected,
+            home=self.home,
+            preferences=preferences,
+        )
+        self._export_pane = pane
+        self._export_pane_return = _ExportPaneReturn(
+            focused=self.focused,
+            search_value=search_value,
+            search_selection=search_selection,
+            zoomed_pane=self._zoomed_pane,
+            detail_opened=self._detail_opened,
+        )
+        t.cast("t.Any", self._body).add_class("-export-pane")
+        t.cast("t.Any", self._detail_column).add_class("-exporting")
+        t.cast("t.Any", self._detail_column).mount(pane)
+        return True
+
+    @_runtime.pump_only
+    def on_export_pane_confirmed(self, message: ExportPane.Confirmed) -> None:
+        """Start the durable writer for this pane's frozen reviewed record."""
+        pane = self._export_pane
+        if pane is not message.pane or not pane.is_mounted:
+            return
+        accepted = self.request_export(
+            str(message.intent.destination),
+            selection="records",
+            selected_record=pane.selected_record,
+            preferences=message.intent.preferences,
+        )
+        if not accepted:
+            pane.export_failed("Export could not be started")
+
+    @_runtime.pump_only
+    async def on_export_pane_close_requested(
+        self,
+        message: ExportPane.CloseRequested,
+    ) -> None:
+        """Remove one exact pane, then restore its query and originating focus."""
+        pane = self._export_pane
+        state = self._export_pane_return
+        if pane is not message.pane or state is None:
+            return
+        pane.display = False
+        await pane.remove()
+        if self._export_pane is not pane:
+            return
+        self._export_pane = None
+        self._export_pane_return = None
+        if self._body is not None:
+            t.cast("t.Any", self._body).remove_class("-export-pane")
+        if self._detail_column is not None:
+            t.cast("t.Any", self._detail_column).remove_class("-exporting")
+        self._restore_export_search(state, focus=False)
+        target = state.focused
+        if (
+            target is not None
+            and getattr(target, "is_mounted", False)
+            and getattr(target, "display", False)
+            and not getattr(target, "disabled", False)
+            and getattr(target, "can_focus", False)
+        ):
+            target.focus()
+        elif self._search_input is not None:
+            self._search_input.focus()
+        self._detail_opened = state.detail_opened
+        if state.zoomed_pane is None:
+            self.handle_minimize_command()
+        else:
+            self._set_zoomed_pane(state.zoomed_pane)
+            self._apply_responsive_layout()
+        self._update_pane_focus()
+
+    @_runtime.pump_only
+    def _restore_export_search(self, state: _ExportPaneReturn, *, focus: bool) -> None:
+        """Restore the exact query draft without synthesizing key presses."""
+        if self._search_input is None:
+            return
+        self._search_input.value = state.search_value
+        self._search_input.selection = state.search_selection
+        if focus:
+            self._search_input.focus()
+
+    @_runtime.pump_only
+    def _clear_command_input(self) -> None:
+        """Restore a query without stealing focus from a new export pane."""
+        state = self._export_pane_return
+        if self._export_pane is not None and state is not None:
+            self._restore_export_search(state, focus=False)
+            self._hide_command_completion()
+            return
+        super()._clear_command_input()
+
+    @_runtime.pump_only
+    def request_export(
+        self,
+        destination: str,
+        *,
+        selection: _ExportSelection,
+        selected_record: SearchRecord | None = None,
+        preferences: ExportPreferences | None = None,
+    ) -> bool:
+        """Accept one selected-record or observed-thread export request.
+
+        Only bounded state capture happens synchronously. Thread exports copy
+        the displayed result set through :func:`stream_apply`; identity,
+        rendering, path handling, and durable output stay in the export worker.
+        """
+        if self._export_pending:
+            self.notify(
+                "Export already in progress",
+                title="Export busy",
+                severity="warning",
+            )
+            return False
+        selected = (
+            selected_record if selected_record is not None else self._selected_export_record()
+        )
+        if selected is None:
+            self.notify(
+                "Select a record before exporting",
+                title="Export failed",
+                severity="error",
+            )
+            return False
+
+        self._export_generation += 1
+        generation = self._export_generation
+        canceled = threading.Event()
+        self._export_cancel_event = canceled
+        self._export_pending = True
+        active_records = self.filtered_records
+        active_count = len(active_records)
+        chrome_generation = self._chrome_generation
+        self.call_later(
+            self._snapshot_and_start_export,
+            generation,
+            selected,
+            selection,
+            destination or None,
+            preferences,
+            active_records,
+            active_count,
+            chrome_generation,
+            canceled,
+        )
+        return True
+
+    def _selected_export_record(self) -> SearchRecord | None:
+        """Return the selected result without scanning the full result set."""
+        highlighted = None
+        if self._results is not None:
+            highlighted = t.cast("int | None", getattr(self._results, "highlighted", None))
+        if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
+            return self.filtered_records[highlighted]
+        if self._current_detail_record is not None:
+            return self._current_detail_record
+        return self.filtered_records[0] if self.filtered_records else None
+
+    def _selected_export_shortcut_record(self) -> SearchRecord | None:
+        """Return the live selection owned by the focused content pane."""
+        if self.focused is self._results and self._results is not None:
+            highlighted = t.cast("int | None", getattr(self._results, "highlighted", None))
+            if highlighted is not None and 0 <= highlighted < len(self.filtered_records):
+                return self.filtered_records[highlighted]
+        elif self.focused is self._detail_scroll:
+            current = self._current_detail_record
+            if (
+                current is not None
+                and self._results is not None
+                and self._results.contains_record(current)
+            ):
+                return current
+        return None
+
+    def _export_request_is_live(
+        self,
+        generation: int,
+        canceled: threading.Event,
+    ) -> bool:
+        """Return whether an accepted export may still start or report."""
+        return (
+            generation == self._export_generation
+            and self._export_pending
+            and not canceled.is_set()
+            and self.is_mounted
+        )
+
+    def _thread_snapshot_is_live(
+        self,
+        generation: int,
+        active_records: list[SearchRecord],
+        chrome_generation: int,
+        canceled: threading.Event,
+    ) -> bool:
+        """Return whether an observed-thread snapshot still has one result view."""
+        return (
+            self._export_request_is_live(generation, canceled)
+            and active_records is self.filtered_records
+            and chrome_generation == self._chrome_generation
+        )
+
+    @_runtime.pump_only
+    async def _snapshot_and_start_export(
+        self,
+        generation: int,
+        selected: SearchRecord,
+        selection: _ExportSelection,
+        destination: str | None,
+        preferences: ExportPreferences | None,
+        active_records: list[SearchRecord],
+        active_count: int,
+        chrome_generation: int,
+        canceled: threading.Event,
+    ) -> None:
+        """Copy a coherent result view in bounded chunks, then start the worker."""
+        if not self._export_request_is_live(generation, canceled):
+            self._abort_export_snapshot(generation, canceled, results_changed=False)
+            return
+        if selection == "thread" and not self._thread_snapshot_is_live(
+            generation,
+            active_records,
+            chrome_generation,
+            canceled,
+        ):
+            self._abort_export_snapshot(generation, canceled, results_changed=True)
+            return
+
+        records: list[SearchRecord] = []
+        if selection == "records":
+            records.append(selected)
+        else:
+
+            async def yield_and_gate() -> None:
+                await asyncio.sleep(0)
+                if not self._thread_snapshot_is_live(
+                    generation,
+                    active_records,
+                    chrome_generation,
+                    canceled,
+                ):
+                    raise _ExportSnapshotChangedError
+
+            try:
+                await _runtime.stream_apply(
+                    _ExportRecordView(active_records, active_count),
+                    records.extend,
+                    chunk_size=self._APPLY_CHUNK_SIZE,
+                    yield_between=yield_and_gate,
+                )
+            except _ExportSnapshotChangedError:
+                self._abort_export_snapshot(generation, canceled, results_changed=True)
+                return
+
+        if not self._export_request_is_live(generation, canceled):
+            self._abort_export_snapshot(generation, canceled, results_changed=False)
+            return
+        if selection == "thread" and not self._thread_snapshot_is_live(
+            generation,
+            active_records,
+            chrome_generation,
+            canceled,
+        ):
+            self._abort_export_snapshot(generation, canceled, results_changed=True)
+            return
+
+        snapshot = _ExportSnapshot(
+            selected=selected,
+            records=records,
+            destination=destination,
+            selection=selection,
+            preferences=preferences,
+            home=self.home,
+            canceled=canceled,
+        )
+        emit = _runtime.make_gated_emitter(
+            self.app.call_from_thread,
+            self._apply_export_completed,
+            generation,
+        )
+        streaming = t.cast("StreamingAppLike", t.cast("object", self))
+        streaming.run_worker(
+            functools.partial(self._run_export_in_thread, snapshot, emit),
+            name="export",
+            group="export",
+            description="render and write export",
+            thread=True,
+            exclusive=True,
+        )
+
+    def _abort_export_snapshot(
+        self,
+        generation: int,
+        canceled: threading.Event,
+        *,
+        results_changed: bool,
+    ) -> None:
+        """Release a pre-worker export and optionally report result invalidation."""
+        canceled.set()
+        if generation != self._export_generation:
+            return
+        self._export_pending = False
+        if self._export_cancel_event is canceled:
+            self._export_cancel_event = None
+        if results_changed and self.is_mounted:
+            self.notify(
+                "Export canceled because results changed",
+                title="Export canceled",
+                severity="warning",
+            )
+
+    @_runtime.offload
+    def _run_export_in_thread(
+        self,
+        snapshot: _ExportSnapshot,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Resolve, render, and durably write one pump-owned export snapshot."""
+        from agentgrep.record_export import (
+            ExportError,
+            _ensure_private_directory,
+            render_export,
+            write_export,
+            write_private_export,
+        )
+
+        if snapshot.canceled.is_set():
+            return
+        try:
+            records = self._select_export_records(snapshot)
+            artifact = render_export(
+                records,
+                format="markdown",
+                include_bodies=True,
+                selection=snapshot.selection,
+            )
+            if snapshot.canceled.is_set():
+                return
+            if snapshot.destination is None:
+                written = write_private_export(artifact)
+            else:
+                destination = pathlib.Path(snapshot.destination).expanduser()
+                if (
+                    snapshot.preferences is not None
+                    and destination.parent == default_export_directory(snapshot.home)
+                ):
+                    _ensure_private_directory(destination.parent)
+                written = write_export(
+                    artifact,
+                    destination,
+                    force=False,
+                    protected_paths=(record.path for record in snapshot.records),
+                )
+            if snapshot.canceled.is_set():
+                return
+            saved_preferences: ExportPreferences | None = None
+            preference_warning: str | None = None
+            if snapshot.preferences is not None:
+                try:
+                    save_export_preferences(snapshot.home, snapshot.preferences)
+                except ExportPreferencesError as exc:
+                    preference_warning = str(exc)
+                else:
+                    saved_preferences = snapshot.preferences
+            if snapshot.canceled.is_set():
+                return
+            completed = _ExportCompleted(
+                filename=self._safe_export_filename(written),
+                format=artifact.format,
+                selection=snapshot.selection,
+                record_count=artifact.record_count,
+                preferences=saved_preferences,
+                preference_warning=preference_warning,
+                error=None,
+            )
+        except ExportError as exc:
+            completed = _ExportCompleted(
+                filename=None,
+                format="markdown",
+                selection=snapshot.selection,
+                record_count=0,
+                preferences=None,
+                preference_warning=None,
+                error=str(exc),
+            )
+        except Exception:
+            completed = _ExportCompleted(
+                filename=None,
+                format="markdown",
+                selection=snapshot.selection,
+                record_count=0,
+                preferences=None,
+                preference_warning=None,
+                error="export could not be completed",
+            )
+        if not snapshot.canceled.is_set():
+            emit(completed)
+
+    @staticmethod
+    def _select_export_records(snapshot: _ExportSnapshot) -> cabc.Iterable[SearchRecord]:
+        """Return the exact selected record or matching canonical thread."""
+        if snapshot.selection == "records":
+            return (snapshot.selected,)
+        from agentgrep.identity import record_identity
+        from agentgrep.record_export import ExportSelectionError
+
+        selected_identity = record_identity(snapshot.selected)
+        if selected_identity.thread_id is None:
+            message = "selected record has no observed thread"
+            raise ExportSelectionError(message)
+        return tuple(
+            record
+            for record in snapshot.records
+            if (
+                selected_identity if record is snapshot.selected else record_identity(record)
+            ).thread_id
+            == selected_identity.thread_id
+        )
+
+    @staticmethod
+    def _safe_export_filename(path: pathlib.Path) -> str:
+        """Return one bounded control-free basename for a notification."""
+        name = path.name or "export"
+        safe = "".join(char if char.isprintable() else "?" for char in name)
+        return safe[:160] or "export"
+
+    @_runtime.pump_only
+    def _apply_export_completed(self, generation: int, event: object) -> None:
+        """Release pending state and show a path-safe terminal notification."""
+        if generation != self._export_generation or not isinstance(event, _ExportCompleted):
+            return
+        self._export_pending = False
+        self._export_cancel_event = None
+        if not self.is_mounted:
+            return
+        if event.error is not None:
+            pane = self._export_pane
+            if pane is not None and pane.is_mounted and pane.phase == "saving":
+                pane.export_failed(event.error)
+                return
+            self.notify(
+                event.error,
+                title="Export failed",
+                severity="error",
+            )
+            return
+        if event.preferences is not None:
+            self._export_preferences = event.preferences
+        pane = self._export_pane
+        if pane is not None and pane.phase == "saving":
+            pane.export_succeeded()
+        noun = "record" if event.record_count == 1 else "records"
+        self.notify(
+            f"{event.filename} · {event.format} · {event.selection} · {event.record_count} {noun}",
+            title="Export complete",
+            markup=False,
+        )
+        if event.preference_warning is not None:
+            self.notify(
+                event.preference_warning,
+                title="Export preferences",
+                severity="warning",
+            )
 
     def _record_history(self, text: str) -> None:
         """Append a submitted, non-empty query to the persisted history.
@@ -1038,6 +1680,8 @@ class HudLayout(LayoutScreen):
 
     def action_recall_history(self) -> None:
         """``Ctrl-R``: open the search-history recall modal (idempotent)."""
+        if self._export_pane is not None:
+            return
         if isinstance(self.screen, HistoryRecall):
             return
         seed = ""
@@ -1560,6 +2204,8 @@ class HudLayout(LayoutScreen):
         Guards against the redundant re-render that fires when
         a queued highlight belongs to a superseded filtered result set.
         """
+        if self._export_pane is not None:
+            return
         row_index = message.index
         results = self._results
         if results is None or message.generation != results.generation:
@@ -2644,6 +3290,9 @@ class HudLayout(LayoutScreen):
 
     def action_stop_search(self) -> None:
         """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
+        if self._export_pane is not None:
+            self._export_pane.action_escape()
+            return
         self._cancel_active_action()
 
     @_runtime.pump_only
@@ -2656,6 +3305,9 @@ class HudLayout(LayoutScreen):
         press cancels it; otherwise it arms the same "press ctrl-c again to exit"
         gutter as the inputs, so the warning shows whichever pane holds focus.
         """
+        if self._export_pane is not None:
+            self._export_pane.action_cancel()
+            return
         if self._has_active_actions():
             self._disarm_confirm_exit()
             self._cancel_active_action()
@@ -2756,11 +3408,17 @@ class HudLayout(LayoutScreen):
 
     def action_focus_pane_left(self) -> None:
         """``Ctrl-H``: leave the detail pane back to the results."""
+        if self._export_pane is not None:
+            self._export_pane.action_editor_previous()
+            return
         if self.focused is not None and self.focused.id == "detail-scroll":
             self._focus_widget_by_id("results")
 
     def action_focus_pane_right(self) -> None:
         """``Ctrl-L``: focus the detail pane (to the right / opened below)."""
+        if self._export_pane is not None:
+            self._export_pane.action_editor_next()
+            return
         if self.focused is not None and self.focused.id in (
             "results",
             "filter",
@@ -2776,6 +3434,9 @@ class HudLayout(LayoutScreen):
         top-level search bar. When stacked, the detail sits below the
         results, so ``up`` from the detail lands on the results.
         """
+        if self._export_pane is not None:
+            self._export_pane.action_editor_previous()
+            return
         focused_id = self.focused.id if self.focused is not None else None
         if focused_id == "detail-scroll":
             self._focus_widget_by_id("results" if self._stacked else "filter")
@@ -2790,6 +3451,9 @@ class HudLayout(LayoutScreen):
         When stacked, ``down`` from the results reaches the detail pane
         below them (opening it if needed).
         """
+        if self._export_pane is not None:
+            self._export_pane.action_editor_next()
+            return
         focused_id = self.focused.id if self.focused is not None else None
         if focused_id == "search":
             self._focus_widget_by_id("filter")

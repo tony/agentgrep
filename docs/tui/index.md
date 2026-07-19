@@ -168,6 +168,53 @@ To inspect the full body, rerun the same query with the CLI's `--json` or
 the result's opaque `ref` to {tooliconl}`inspect_result` as
 `inspect_result(ref=...)`.
 
+(tui-export)=
+
+## Export
+
+The HUD offers two pi-like export flows:
+
+- Press `e` with the results list or detail pane focused, or type
+  `/export [PATH]`, to review exactly the selected record in the right detail
+  pane. An optional path seeds the directory and filename fields; without one,
+  the pane starts from the remembered directory and filename template.
+- `/export-thread [PATH]` is the one-shot command. It exports the selected
+  record's observed thread from the current result set after the in-list
+  filter. A record without a canonical thread handle cannot be exported as a
+  thread.
+
+Slash-command text is transient: opening the export pane restores the current
+search term and its exact selection, and returning from the pane restores the
+originating focus. The pane previews the exact filename and keeps both fields
+when No returns to editing. Save is the mutation boundary: No and cancel
+perform no filesystem mutation. Save securely creates the exact app default
+when needed, writes that reviewed new destination, then attempts to write the
+TUI-private preference file. The remembered values change only when that
+preference write succeeds. The contextual `/keys` panel lists the `e` shortcut
+without adding it to the compact footer.
+
+Without `PATH`, `/export-thread` writes a collision-free Markdown artifact to
+agentgrep's private export directory. Its root follows `XDG_DATA_HOME`; when
+set, artifacts go under `$XDG_DATA_HOME/agentgrep/exports`, and otherwise the
+standard XDG data location is used. The directory uses mode `0700`, and each
+artifact uses mode `0600`. With an explicit path, the destination must be new:
+the TUI refuses to overwrite an existing file and rejects symlinks or an alias
+of a selected source store. Use {ref}`agentgrep export <cli-export>` when an
+explicit replacement is needed.
+
+TUI exports include bodies and use Markdown. A success notification shows only
+the artifact's basename, format, selection, and record count; failures omit
+local paths. Work stays off the Textual message pump. Identity, rendering, and
+disk I/O all run in the export worker. A second request reports that an export
+is already in progress, and an observed-thread export cancels if its result
+view changes while the HUD is taking the snapshot.
+
+Export does not replace the loaded results or change the detail selection.
+Source stores remain read-only. A successful reviewed Save may write both the
+new artifact and its TUI-private preference file; the one-shot thread command
+writes only its artifact. See {ref}`ADR 0017 <adr-portable-record-export>` for
+the payload, fidelity, and file-safety contract.
+
 ## Completion
 
 Both the search bar and the in-list filter offer

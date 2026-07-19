@@ -20,6 +20,16 @@ from agentgrep.mcp._library import (
 _REF_PREFIX = "agref1:"
 _CURSOR_PREFIX = "agcur1:"
 
+MAX_RECORD_REF_CHARS = 48 * 1024
+"""Maximum opaque record-ref length accepted at MCP boundaries.
+
+Linux ``PATH_MAX`` includes the trailing NUL, leaving at most 4,095 path bytes.
+JSON can expand each byte to a six-byte ``\\u00xx`` escape, and base64url then
+expands by four thirds: ``4,095 * 6 * 4 / 3 = 32,760`` characters. The 48 KiB
+ceiling leaves more than 16 KiB for the versioned envelope while still bounding
+decode and audit work on untrusted input.
+"""
+
 
 class McpTokenError(ValueError):
     """Raised when an MCP ref or cursor token cannot be parsed."""
@@ -136,7 +146,10 @@ def _display_path_to_path(value: object, home: pathlib.Path) -> pathlib.Path:
         return home
     if value.startswith("~/"):
         return home / value[2:]
-    return pathlib.Path(value).expanduser()
+    if value.startswith("~"):
+        msg = "token path has unsupported leading tilde"
+        raise McpTokenError(msg)
+    return pathlib.Path(value)
 
 
 def _record_fingerprint(payload: dict[str, object]) -> str:
@@ -214,16 +227,21 @@ def search_record_fingerprint(
     return _record_fingerprint(payload)
 
 
-def search_record_fingerprint_matches(record: SearchRecordLike, fingerprint: str) -> bool:
-    """Match current fields with a position-blind v1 fallback."""
+def search_record_fingerprint_candidates(record: SearchRecordLike) -> tuple[str, ...]:
+    """Prepare current and position-blind v1 fingerprints once for a record."""
     text_sha256 = hashlib.sha256(
         record.text.encode("utf-8", "surrogatepass"),
     ).hexdigest()
-    if search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint:
-        return True
+    current = search_record_fingerprint(record, text_sha256=text_sha256)
     if _search_record_coordinate(record) is None:
-        return False
-    return _legacy_search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint
+        return (current,)
+    legacy = _legacy_search_record_fingerprint(record, text_sha256=text_sha256)
+    return (current, legacy)
+
+
+def search_record_fingerprint_matches(record: SearchRecordLike, fingerprint: str) -> bool:
+    """Match current fields with a position-blind v1 fallback."""
+    return fingerprint in search_record_fingerprint_candidates(record)
 
 
 def find_record_fingerprint(record: FindRecordLike) -> str:
@@ -283,6 +301,9 @@ def make_find_ref(record: FindRecordLike) -> str:
 
 def parse_record_ref(ref: str, *, home: pathlib.Path) -> ParsedRecordRef:
     """Parse an opaque result ref."""
+    if len(ref) > MAX_RECORD_REF_CHARS:
+        msg = "ref exceeds maximum length"
+        raise McpTokenError(msg)
     payload = _decode_token(_REF_PREFIX, ref)
     version = payload.get("v")
     if not isinstance(version, int) or isinstance(version, bool) or version != 1:

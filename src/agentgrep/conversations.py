@@ -407,6 +407,39 @@ def _build_conversation_unit(
     )
 
 
+def _group_prepared_conversation_units(
+    records: cabc.Iterable[tuple[SearchRecord, RecordIdentity]],
+) -> tuple[ConversationUnit, ...]:
+    """Group records whose canonical identities are already prepared.
+
+    Parameters
+    ----------
+    records
+        ``(record, identity)`` pairs to consume exactly once.
+
+    Returns
+    -------
+    tuple[ConversationUnit, ...]
+        Canonically ordered units for records with defensible thread IDs.
+
+    Notes
+    -----
+    This function preserves only observed topology. It does not assert source
+    completeness, choose a revision or branch, or invent timestamp order.
+    """
+    groups: dict[str, list[_PreparedRecord]] = {}
+    for record, identity in records:
+        thread_id = identity.thread_id
+        if thread_id is None:
+            continue
+        prepared = _prepare_record(record, identity)
+        groups.setdefault(thread_id, []).append(prepared)
+
+    return tuple(
+        _build_conversation_unit(thread_id, groups[thread_id]) for thread_id in sorted(groups)
+    )
+
+
 def group_conversation_units(
     records: cabc.Iterable[SearchRecord],
 ) -> tuple[ConversationUnit, ...]:
@@ -424,18 +457,14 @@ def group_conversation_units(
 
     Notes
     -----
-    This function preserves only observed topology. It does not assert source
-    completeness, choose a revision or branch, or invent timestamp order.
+    Threadless records are rejected before cryptographic identity preparation.
     """
-    groups: dict[str, list[_PreparedRecord]] = {}
-    for record in records:
-        thread_id = record_thread_id(record)
-        if thread_id is None:
-            continue
-        identity = record_identity(record, prepared_thread_id=thread_id)
-        prepared = _prepare_record(record, identity)
-        groups.setdefault(thread_id, []).append(prepared)
 
-    return tuple(
-        _build_conversation_unit(thread_id, groups[thread_id]) for thread_id in sorted(groups)
-    )
+    def prepare() -> cabc.Iterator[tuple[SearchRecord, RecordIdentity]]:
+        for record in records:
+            thread_id = record_thread_id(record)
+            if thread_id is None:
+                continue
+            yield record, record_identity(record, prepared_thread_id=thread_id)
+
+    return _group_prepared_conversation_units(prepare())

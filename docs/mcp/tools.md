@@ -59,6 +59,38 @@ same origin filters, without rebuilding the request.
 ```{fastmcp-tool-input} search
 ```
 
+## Portable Record Export
+
+```{fastmcp-tool} export_records
+```
+
+**Use when** you already have one to 20 unique `agref1:` search refs and need
+their selected records as one portable inline artifact. The format defaults to
+`ndjson`. Choose `markdown` for a human-readable artifact. Flat `records` are
+the default selection. `thread` requires all refs to resolve to one non-null
+canonical observed thread.
+
+Prompt and history bodies are private by default: `include_bodies` defaults to
+false, and text appears only with `include_bodies=true`. The result carries one
+`TextContent` artifact, at most 400 KiB of UTF-8, plus structured metadata for
+schema, format, selection, body policy, record count, and byte count.
+
+The tool accepts search refs only. It has no local destination, query, or
+cursor argument and never writes a server-local file. Use {tooliconl}`search`
+for discovery and pagination, then pass refs from the desired page. Refs use
+the same exact repeated-occurrence and historical compatibility behavior as
+{tooliconl}`inspect_result`; duplicate physical selections are refused.
+Each ref is limited to 49,152 characters (48 KiB) and is rejected before
+decoding or source discovery when it exceeds that bound. The ceiling fits a
+Linux `PATH_MAX` path after worst-case JSON escaping and base64url encoding.
+
+The deterministic allowlist and observed-thread fidelity are shared with the
+{ref}`CLI export guide <cli-export>`. The tool remains read-only, idempotent,
+and closed-world even when bodies are requested.
+
+```{fastmcp-tool-input} export_records
+```
+
 ## Time-Windowed Activity
 
 ```{fastmcp-tool} recent_sessions

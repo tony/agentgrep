@@ -88,6 +88,8 @@ conf["fastmcp_model_classes"] = (
     "SearchToolResponse",
     "FindRequestModel",
     "FindToolResponse",
+    "ExportRecordsRequest",
+    "ExportRecordsResponse",
     "ResultStatsModel",
     "PageInfoModel",
     "RunStatusModel",

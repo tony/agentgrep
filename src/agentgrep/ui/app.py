@@ -21,12 +21,31 @@ if t.TYPE_CHECKING:
     from agentgrep._types import RunnableAppLike
     from agentgrep.progress import SearchControl
     from agentgrep.records import SearchQuery, SearchScope
+    from agentgrep.ui._export_preferences import ExportPreferencesLoad
 
 __all__ = ["build_streaming_ui_app", "run_ui"]
 
 
 class UiQueryTooLongError(ValueError):
     """Raised when a launch expression cannot fit in the TUI input."""
+
+
+def _load_export_preferences(home: pathlib.Path) -> ExportPreferencesLoad:
+    """Load preferences without warming the root CLI import path.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        User home directory used by preference path defaults.
+
+    Returns
+    -------
+    ExportPreferencesLoad
+        One session-fixed preference snapshot.
+    """
+    from agentgrep.ui._export_preferences import load_export_preferences
+
+    return load_export_preferences(home)
 
 
 def run_ui(
@@ -172,6 +191,7 @@ def build_streaming_ui_app(
         initial_search_text=initial_search_text,
         history=history,
         history_disabled=history_disabled,
+        export_preferences=_load_export_preferences(home),
     )
     config_path = preferences.theme_config_path(home=home)
     selected_theme = preferences.load_theme_name(config_path)

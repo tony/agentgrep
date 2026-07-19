@@ -161,6 +161,13 @@ def test_conversations_module_is_available() -> None:
     assert importlib.util.find_spec("agentgrep.conversations") is not None
 
 
+def test_prepared_conversation_grouping_is_package_private() -> None:
+    """The identity-reuse seam is internal rather than public API."""
+    assert "group_prepared_conversation_units" not in conversations.__all__
+    assert "_group_prepared_conversation_units" not in conversations.__all__
+    assert not hasattr(conversations, "group_prepared_conversation_units")
+
+
 def test_conversation_unit_has_exact_frozen_tuple_contract() -> None:
     """The conversation value has the reviewed shallow-frozen tuple shape."""
     record = _record("hello", position=RecordPosition(ordinal=0, quality="source_order"))
@@ -888,3 +895,63 @@ def test_group_conversation_units_consumes_input_once() -> None:
     _ = group_conversation_units(one_shot)
 
     assert one_shot.iterations == 1
+
+
+def test_private_group_prepared_conversation_units_matches_public_wrapper() -> None:
+    """Caller-prepared identities produce the established public units."""
+    records = (
+        _record("late", position=RecordPosition(ordinal=4, quality="source_order")),
+        _record("early", position=RecordPosition(ordinal=1, quality="source_order")),
+    )
+    prepared = tuple((record, record_identity(record)) for record in records)
+
+    units = conversations._group_prepared_conversation_units(prepared)
+
+    assert _unit_projection(units) == _unit_projection(group_conversation_units(records))
+
+
+def test_private_group_prepared_conversation_units_consumes_input_once() -> None:
+    """Prepared one-shot iterables are neither replayed nor rescanned."""
+    record = _record(
+        "threaded",
+        position=RecordPosition(ordinal=0, quality="source_order"),
+    )
+    prepared = ((record, record_identity(record)),)
+
+    class OneShotPreparedRecords:
+        def __init__(self) -> None:
+            self.iterations = 0
+
+        def __iter__(self) -> t.Iterator[tuple[SearchRecord, RecordIdentity]]:
+            self.iterations += 1
+            if self.iterations > 1:
+                message = "prepared records consumed more than once"
+                raise AssertionError(message)
+            return iter(prepared)
+
+    one_shot = OneShotPreparedRecords()
+
+    _ = conversations._group_prepared_conversation_units(one_shot)
+
+    assert one_shot.iterations == 1
+
+
+def test_private_group_prepared_conversation_units_never_rehashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Supplied identity bundles remain the only identity work performed."""
+    record = _record(
+        "threaded",
+        position=RecordPosition(ordinal=0, quality="source_order"),
+    )
+    prepared = ((record, record_identity(record)),)
+
+    def fail_identity(*_args: object, **_kwargs: object) -> t.NoReturn:
+        pytest.fail("prepared conversation grouping recomputed identity")
+
+    monkeypatch.setattr(conversations, "record_thread_id", fail_identity)
+    monkeypatch.setattr(conversations, "record_identity", fail_identity)
+
+    units = conversations._group_prepared_conversation_units(prepared)
+
+    assert units[0].records == (record,)

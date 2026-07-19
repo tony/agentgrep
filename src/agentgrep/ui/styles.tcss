@@ -417,6 +417,29 @@ Screen {
 #body.-zoom-detail > #results-column {
     display: none;
 }
+/* A transient detail action replaces only the right reader on wide terminals.
+   In the stacked mobile layout it owns the body. Neither presentation rewrites
+   the user's collapsed or logical zoom state, so removing this one class
+   reveals the exact reader layout that was already underneath it. */
+#body.-export-pane > #results-column {
+    display: block;
+    width: 1fr;
+    height: 1fr;
+}
+#body.-export-pane > #detail-column {
+    display: block;
+    width: 1fr;
+    height: 1fr;
+}
+#body.-stacked.-export-pane > #results-column {
+    display: none;
+}
+#detail-column.-exporting > #detail-header,
+#detail-column.-exporting > #detail-scroll,
+#detail-column.-exporting > #detail-find,
+#detail-column.-exporting > #detail-statusline {
+    display: none;
+}
 #filter {
     height: 1;
     /* Dedicated filter/results rules own both separators, leaving this input
@@ -639,4 +662,56 @@ HistoryRecall, HistoryRecall:ansi {
 }
 #history-footer {
     color: $ag-dim;
+}
+
+/* Selected-record export: one quiet detail-pane flow. The exact basename is
+   the only signature treatment; labels and state copy stay subordinate. */
+ExportPane {
+    background: transparent;
+}
+#export-pane-header {
+    height: 1;
+    width: 1fr;
+    color: $accent;
+}
+#export-flow {
+    background: ansi_default;
+}
+.export-label {
+    color: $ag-muted;
+}
+#export-preview,
+#export-review-filename {
+    color: $accent;
+    text-style: bold;
+}
+#export-review-title {
+    color: $text;
+    text-style: bold;
+}
+#export-review-directory {
+    color: $text;
+}
+#export-error {
+    color: $error;
+}
+#export-edit-footer,
+#export-review-status {
+    color: $ag-dim;
+}
+#export-confirm,
+#export-confirm:focus {
+    border: none;
+    background: transparent;
+    background-tint: $foreground 0%;
+    padding: 0;
+}
+#export-confirm > .option-list--option {
+    color: $ag-muted;
+}
+#export-confirm > .option-list--option-highlighted,
+#export-confirm:focus > .option-list--option-highlighted {
+    color: $accent;
+    background: transparent;
+    text-style: bold;
 }

@@ -16,6 +16,7 @@ from pydantic import Field
 from agentgrep.mcp import (
     AgentSelector,
     CatalogAgentSelector,
+    ExportRecordsResponse,
     FindToolResponse,
     SearchScopeName,
     SearchToolResponse,
@@ -30,6 +31,7 @@ from agentgrep.mcp.models import (
     StoreDescriptorModel,
     ValidateQueryResponse,
 )
+from agentgrep.mcp.refs import MAX_RECORD_REF_CHARS
 from agentgrep.query.help import query_language_summary
 
 READONLY_TAGS = {"readonly", "agentgrep"}
@@ -106,6 +108,49 @@ t.cast(t.Any, search).__fastmcp__ = types.SimpleNamespace(
     title="Search",
     tags=READONLY_TAGS | {"search"},
     annotations=None,
+)
+
+
+async def export_records(
+    refs: t.Annotated[
+        list[
+            t.Annotated[
+                str,
+                Field(min_length=1, max_length=MAX_RECORD_REF_CHARS),
+            ]
+        ],
+        Field(
+            min_length=1,
+            max_length=20,
+            description="One to 20 opaque refs returned by search.",
+        ),
+    ],
+    format: t.Annotated[  # noqa: A002 - public MCP argument name.
+        t.Literal["ndjson", "markdown"],
+        Field(description="Inline artifact format."),
+    ] = "ndjson",
+    selection: t.Annotated[
+        t.Literal["records", "thread"],
+        Field(description="Export flat records or one observed thread."),
+    ] = "records",
+    include_bodies: t.Annotated[
+        bool,
+        Field(description="Include prompt/history text in the artifact."),
+    ] = False,
+) -> ExportRecordsResponse:
+    """Return selected refs as one NDJSON or Markdown TextContent artifact with structured export metadata."""  # noqa: E501
+    raise NotImplementedError(DOCS_ONLY_MESSAGE)
+
+
+t.cast(t.Any, export_records).__fastmcp__ = types.SimpleNamespace(
+    name="export_records",
+    title="Export Records",
+    tags=READONLY_TAGS | {"export"},
+    annotations=types.SimpleNamespace(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
 )
 
 
@@ -251,6 +296,7 @@ async def inspect_result(
         str,
         Field(
             min_length=1,
+            max_length=MAX_RECORD_REF_CHARS,
             description="Opaque ref from a search or find result.",
         ),
     ],

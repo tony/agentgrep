@@ -7,9 +7,9 @@ import pathlib
 import typing as t
 
 from fastmcp.exceptions import ToolError
-from pydantic import Field
+from pydantic import Field, ValidationError
 
-from agentgrep.mcp import refs
+from agentgrep.mcp import resolver
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
@@ -27,6 +27,7 @@ from agentgrep.mcp.models import (
     SearchRecordModel,
     StoreDescriptorModel,
 )
+from agentgrep.mcp.refs import MAX_RECORD_REF_CHARS
 from agentgrep.store_catalog import CATALOG
 
 if t.TYPE_CHECKING:
@@ -131,68 +132,27 @@ def _inspect_record_sample_sync(request: InspectSampleRequest) -> InspectSampleR
 
 def _inspect_result_sync(request: InspectResultRequest) -> InspectResultResponse:
     """Resolve an opaque result ref and return source records."""
-    home = pathlib.Path.home()
     try:
-        parsed = refs.parse_record_ref(request.ref, home=home)
-    except refs.McpTokenError as exc:
-        return InspectResultResponse(
-            ref=request.ref,
-            sample_count=0,
-            records=[],
-            error_message=f"invalid ref: {exc}",
-        )
-    backends = agentgrep.select_backends()
-    sources = agentgrep.discover_sources(
-        home,
-        agentgrep.AGENT_CHOICES,
-        backends,
-        include_non_default=True,
-        version_detail="none",
-    )
-    target = next(
-        (
-            source
-            for source in sources
-            if source.adapter_id == parsed.adapter_id
-            and pathlib.Path(source.path).resolve() == parsed.path.resolve()
-        ),
-        None,
-    )
-    if target is None:
-        return InspectResultResponse(
-            ref=request.ref,
-            sample_count=0,
-            records=[],
-            error_message="source not found",
-        )
+        resolved = resolver.resolve_record_refs(
+            (request.ref,),
+            sample_size=request.sample_size,
+        )[0]
+    except resolver.RecordRefResolverError as exc:
+        raise ToolError(str(exc)) from None
     try:
-        records: list[SearchRecordModel] = []
-        for record in agentgrep.iter_source_records(target):
-            if parsed.kind == "search" and (
-                not refs.search_record_fingerprint_matches(record, parsed.fingerprint)
-            ):
-                continue
-            records.append(SearchRecordModel.from_record(record))
-            if parsed.kind == "search" or len(records) >= request.sample_size:
-                break
-    except Exception as exc:
+        records = [SearchRecordModel.from_record(record) for record in resolved.records]
+    except Exception:
         return InspectResultResponse(
             ref=request.ref,
             sample_count=0,
             records=[],
-            error_message=f"{type(exc).__name__}: {exc}",
-        )
-    if not records:
-        return InspectResultResponse(
-            ref=request.ref,
-            sample_count=0,
-            records=[],
-            error_message="record not found",
+            error_message="source record could not be represented",
         )
     return InspectResultResponse(
         ref=request.ref,
         sample_count=len(records),
         records=records,
+        error_message=resolved.error_message,
     )
 
 
@@ -307,8 +267,15 @@ def register(mcp: FastMCP) -> None:
     )
     async def inspect_result_tool(
         ref: t.Annotated[
-            str,
-            Field(min_length=1, description="Opaque ref from a search or find result."),
+            t.Any,
+            Field(
+                description="Opaque ref from a search or find result.",
+                json_schema_extra={
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_RECORD_REF_CHARS,
+                },
+            ),
         ],
         sample_size: t.Annotated[
             int,
@@ -320,7 +287,11 @@ def register(mcp: FastMCP) -> None:
             ),
         ] = 1,
     ) -> InspectResultResponse:
-        request = InspectResultRequest(ref=ref, sample_size=sample_size)
+        try:
+            request = InspectResultRequest(ref=ref, sample_size=sample_size)
+        except ValidationError:
+            message = "invalid inspect request"
+            raise ToolError(message) from None
         return await asyncio.to_thread(_inspect_result_sync, request)
 
     _ = inspect_result_tool
