@@ -17,7 +17,7 @@ import pytest
 from agentgrep.progress import ProgressSnapshot, StreamingRecordsBatch, StreamingSearchFinished
 from agentgrep.records import SearchRecord, SourceHandle
 from agentgrep.ui._seams import _UiStreamingSearchProgress
-from tests.test_agentgrep_tui import _build_empty_ui_app
+from tests._agentgrep_tui_support import _build_empty_ui_app
 
 pytestmark = pytest.mark.tui
 

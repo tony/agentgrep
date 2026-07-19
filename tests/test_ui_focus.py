@@ -19,7 +19,7 @@ import pytest
 
 from agentgrep.records import RecordOrigin
 from agentgrep.ui.widgets import HistoryRecall
-from tests.test_agentgrep_tui import _build_empty_ui_app, load_agentgrep_module
+from tests._agentgrep_tui_support import _build_empty_ui_app, load_agentgrep_module
 
 pytestmark = pytest.mark.tui
 

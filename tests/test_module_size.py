@@ -63,9 +63,9 @@ _RATCHET_CEILINGS: dict[str, int] = {
     "src/agentgrep/ui/layouts/greplog.py": 550,
     "src/agentgrep/ui/layouts/hud.py": 2700,
     "src/agentgrep/ui/widgets/status.py": 800,
-    # The library/CLI/TUI test monolith; its per-domain split is its own
-    # deliverable and must not grow in the meantime.
-    "tests/test_agentgrep.py": 15650,
+    # The remaining library/CLI compatibility module still predates the
+    # generic budget; the extracted TUI matrix must not grow it again.
+    "tests/test_agentgrep.py": 10000,
 }
 
 

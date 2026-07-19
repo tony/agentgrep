@@ -9,7 +9,7 @@ import pytest
 from textual import _xterm_parser as xterm_parser, events
 
 from agentgrep.ui import _terminal_compat
-from tests.test_agentgrep_tui import _build_empty_ui_app
+from tests._agentgrep_tui_support import _build_empty_ui_app
 
 pytestmark = pytest.mark.tui
 

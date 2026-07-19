@@ -19,7 +19,7 @@ from agentgrep.ui.widgets.welcome import (
     _welcome_query_examples,
     _welcome_wordmark,
 )
-from tests.test_agentgrep_tui import _build_empty_ui_app
+from tests._agentgrep_tui_support import _build_empty_ui_app
 
 pytestmark = pytest.mark.tui
 

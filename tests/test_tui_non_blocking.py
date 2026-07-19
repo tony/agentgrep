@@ -28,7 +28,7 @@ import pytest
 
 from agentgrep.ui import _runtime
 from agentgrep.ui.layouts import hud
-from tests.test_agentgrep_tui import _build_empty_ui_app
+from tests._agentgrep_tui_support import _build_empty_ui_app
 
 pytestmark = pytest.mark.tui
 
