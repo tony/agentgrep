@@ -54,6 +54,11 @@ class DocumentationItem(pytest.Item):
         self.add_marker("documentation")
         if example.language:
             self.add_marker(f"documentation_{example.language.replace('-', '_')}")
+        if example.language == "fastmcp-config":
+            self.add_marker("mcp")
+            self.add_marker("setup")
+        else:
+            self.add_marker("slow")
 
     def runtest(self) -> None:
         """Run the registered evaluator for this example."""
@@ -112,6 +117,9 @@ class DocumentationFile(pytest.File):
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register documentation markers."""
+    config.addinivalue_line("markers", "mcp: MCP protocol and schema coverage")
+    config.addinivalue_line("markers", "setup: repository infrastructure coverage")
+    config.addinivalue_line("markers", "slow: essential opt-in local coverage")
     config.addinivalue_line(
         "markers",
         "documentation: documentation example collected by pytest-documentation",

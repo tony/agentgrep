@@ -12,17 +12,45 @@ all_files := "find . -type f -not -path '*/\\.*' | grep -i '.*[.]py$\\|.*[.]rst$
 default:
     @just --list
 
-# Run tests with pytest
+# Run the default non-slow, non-legacy pytest lane.
 [group: 'test']
 test *args:
     uv run py.test {{ args }}
 
-# Run tests in parallel across cores with pytest-xdist (opt-in fast path).
-# --dist=load (default) is fastest here; grouping (loadfile/loadscope) would
-# serialize the largest file, so session/module fixtures rebuild per worker.
+# Run every configured test, including slow and legacy coverage.
 [group: 'test']
-test-fast *args:
-    uv run py.test -n auto {{ args }}
+test-all *args:
+    uv run py.test {{ args }} -m ""
+
+# Run executable examples and documentation infrastructure.
+[group: 'test']
+test-docs *args:
+    uv run py.test {{ args }} -m documentation
+
+# Run the complete MCP resource cluster.
+[group: 'test']
+test-mcp *args:
+    uv run py.test {{ args }} -m mcp
+
+# Run packaging, configuration, and repository infrastructure.
+[group: 'test']
+test-setup *args:
+    uv run py.test {{ args }} -m setup
+
+# Run pure and mounted Textual coverage.
+[group: 'test']
+test-tui *args:
+    uv run py.test {{ args }} -m tui
+
+# Run the consolidated compatibility cluster.
+[group: 'test']
+test-legacy *args:
+    uv run py.test {{ args }} -m legacy
+
+# Run every test excluded only for execution cost.
+[group: 'test']
+test-slow *args:
+    uv run py.test {{ args }} -m slow
 
 # Run tests then start continuous testing with pytest-watcher
 [group: 'test']

@@ -34,7 +34,9 @@ import typing as t
 import pytest
 
 from agentgrep._engine import orchestration
-from tests.test_agentgrep import _build_empty_ui_app, load_agentgrep_module
+from tests._agentgrep_tui_support import _build_empty_ui_app, load_agentgrep_module
+
+pytestmark = pytest.mark.tui
 
 # Tight per-move budgets (seconds). A real wedge blows these; legitimate work
 # (a large synthetic batch, an off-thread detail build) stays well under them.
@@ -376,6 +378,7 @@ async def _run_session(app: t.Any, ctx: _Ctx, *, seed: int, moves: int) -> None:
         assert app.screen._results.option_count == len(app.screen.filtered_records)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("seed", _SEEDS, ids=[f"seed-{s}" for s in _SEEDS])
 async def test_fuzz_session_stays_responsive(
     seed: int,
@@ -394,6 +397,7 @@ async def test_fuzz_session_stays_responsive(
 # --- meta-tests: prove the detector catches real hangs ---------------------
 
 
+@pytest.mark.slow
 async def test_fuzz_detects_blocking_handler(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -17,6 +17,8 @@ import pytest
 import tomlkit
 import tomlkit.items
 
+pytestmark = [pytest.mark.mcp, pytest.mark.setup]
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO_ROOT / "scripts" / "mcp_swap.py"
 

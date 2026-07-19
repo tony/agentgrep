@@ -24,7 +24,13 @@ from agentgrep.records import AGENT_CHOICES
 from agentgrep.ui import theme
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.widgets import WELCOME_QUERY_INDEX_META
-from tests.test_agentgrep import _build_empty_ui_app, _ui_record, load_agentgrep_module
+from tests._agentgrep_tui_support import (
+    _build_empty_ui_app,
+    _ui_record,
+    load_agentgrep_module,
+)
+
+pytestmark = pytest.mark.tui
 
 _STYLESHEET = pathlib.Path(theme.__file__).with_name("styles.tcss")
 
@@ -260,6 +266,7 @@ def test_query_palette_is_readable_after_standard_ansi_downgrade(case: ThemeCase
 # --- live app: registration, application, switching ------------------------
 
 
+@pytest.mark.slow
 async def test_pi_themes_registered_and_active(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -273,6 +280,7 @@ async def test_pi_themes_registered_and_active(
         assert app.theme == theme.DARK_THEME_NAME
 
 
+@pytest.mark.slow
 async def test_stylesheet_applies_accent_token(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -287,6 +295,7 @@ async def test_stylesheet_applies_accent_token(
         assert header._c_accent.lower() == "#8abeb7"
 
 
+@pytest.mark.slow
 async def test_switch_to_light_theme_succeeds(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -303,6 +312,7 @@ async def test_switch_to_light_theme_succeeds(
         assert header._c_accent.lower() == "#477070"
 
 
+@pytest.mark.slow
 async def test_tokyo_night_focused_search_keeps_canvas_flat(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -321,6 +331,7 @@ async def test_tokyo_night_focused_search_keeps_canvas_flat(
         assert search.background_colors[1] == Color.parse("#1a1b26")
 
 
+@pytest.mark.slow
 async def test_theme_switch_recolors_shared_query_highlighting(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -362,6 +373,7 @@ async def test_theme_switch_recolors_shared_query_highlighting(
         assert not any("#5fd7af" in str(span.style) for span in search._value.spans)
 
 
+@pytest.mark.slow
 async def test_themes_composite_queries_against_matching_canvases(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -416,6 +428,7 @@ async def test_themes_composite_queries_against_matching_canvases(
         )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("theme_name", "field_style"),
     [("textual-dark", "color(79)"), ("textual-light", "#007f7f")],
@@ -439,6 +452,7 @@ async def test_switch_to_builtin_theme_does_not_crash(
         assert any(field_style in str(span.style) for span in app.screen._search_input._value.spans)
 
 
+@pytest.mark.slow
 async def test_theme_switch_rerenders_rows(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -461,6 +475,7 @@ async def test_theme_switch_rerenders_rows(
         assert any("#00789c" in style for style in agent_span_styles())
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", _THEME_CASES, ids=_THEME_IDS)
 async def test_selected_result_rows_override_semantic_foregrounds(
     tmp_path: pathlib.Path,
@@ -502,6 +517,7 @@ async def test_selected_result_rows_override_semantic_foregrounds(
                     )
 
 
+@pytest.mark.slow
 async def test_theme_switch_invalidates_filtered_out_row_cache(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -535,6 +551,7 @@ async def test_theme_switch_invalidates_filtered_out_row_cache(
             assert not any("#00d7ff" in style for style in styles)
 
 
+@pytest.mark.slow
 async def test_theme_switch_rebuilds_only_visible_rows(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -576,6 +593,7 @@ async def test_theme_switch_rebuilds_only_visible_rows(
         assert any("#00789c" in style for style in styles)
 
 
+@pytest.mark.slow
 async def test_rapid_theme_switch_renders_the_latest_palette(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

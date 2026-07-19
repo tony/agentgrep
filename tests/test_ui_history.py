@@ -16,6 +16,8 @@ import pytest
 
 from agentgrep.ui import _history
 
+pytestmark = pytest.mark.tui
+
 if t.TYPE_CHECKING:
     import pathlib
 

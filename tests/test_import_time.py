@@ -18,6 +18,8 @@ import typing as t
 
 import pytest
 
+pytestmark = pytest.mark.setup
+
 _DEFERRED_MODULES: tuple[str, ...] = (
     "agentgrep.query",
     "agentgrep.query.parser",

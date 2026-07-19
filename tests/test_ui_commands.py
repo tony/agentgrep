@@ -8,7 +8,11 @@ the app-level integration tests, since they act through the running app.
 
 from __future__ import annotations
 
+import pytest
+
 from agentgrep.ui import commands
+
+pytestmark = pytest.mark.tui
 
 
 def test_registry_has_common_layout_commands() -> None:

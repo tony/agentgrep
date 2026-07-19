@@ -45,6 +45,8 @@ from agentgrep.ui.widgets import (
 from agentgrep.ui.widgets.history import _ROW_TEXT_MAX_CHARS, HistoryRecall
 from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
 
+pytestmark = pytest.mark.tui
+
 
 def _make_record(text: str = "bliss") -> SearchRecord:
     """Build a minimal valid prompt record for widget tests."""
@@ -221,6 +223,7 @@ def test_interactive_widgets_use_public_textual_handlers() -> None:
         assert "on_input_changed" in widget_type.__dict__
 
 
+@pytest.mark.slow
 async def test_search_input_submit_hint_tracks_nonblank_value() -> None:
     """The border affordance follows initial, typed, and loaded query text."""
 
@@ -250,6 +253,7 @@ async def test_search_input_submit_hint_tracks_nonblank_value() -> None:
         assert search.border_subtitle == "Press [bold $accent]Enter[/bold $accent] ↵"
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "query",
     [
@@ -291,6 +295,7 @@ async def test_search_input_submit_hint_fits_supported_minimum_width(query: str)
         assert bottom_rule == "──Press Enter ↵─"
 
 
+@pytest.mark.slow
 async def test_inputs_bound_text_processed_on_the_pump() -> None:
     """Typed, initial, and restored input text share one finite budget."""
     oversized = "x" * (INPUT_MAX_LENGTH + 1)
@@ -329,6 +334,7 @@ async def test_inputs_bound_text_processed_on_the_pump() -> None:
         assert detail_find._debounce_timer is None
 
 
+@pytest.mark.slow
 async def test_detail_find_restore_cancels_queued_user_request() -> None:
     """A restored value cannot leave an earlier user debounce armed."""
     seen: list[str] = []
@@ -352,6 +358,7 @@ async def test_detail_find_restore_cancels_queued_user_request() -> None:
         assert detail_find._debounce_timer is None
 
 
+@pytest.mark.slow
 async def test_history_filter_bounds_seed_text() -> None:
     """History filtering cannot restore an unbounded query onto the pump."""
     oversized = "x" * (INPUT_MAX_LENGTH + 1)
@@ -605,6 +612,7 @@ def test_results_list_constructs_empty() -> None:
     assert results.option_count == 0
 
 
+@pytest.mark.slow
 async def test_results_streamed_row_is_pinned(
     snapshot: object,
     tmp_path: pathlib.Path,
@@ -619,7 +627,7 @@ async def test_results_streamed_row_is_pinned(
     from agentgrep.ui.app import build_streaming_ui_app
 
     # build_streaming_ui_app returns ``object`` (app.screen.py stays Textual-free);
-    # cast to Any for run_test/query_one, mirroring the test_agentgrep.py pattern.
+    # Cast to Any for run_test/query_one, mirroring the shared TUI support pattern.
     app = t.cast("t.Any", build_streaming_ui_app(tmp_path, _make_query(), control=SearchControl()))
     async with app.run_test():
         results = app.screen.query_one(SearchResultsList)
@@ -628,6 +636,7 @@ async def test_results_streamed_row_is_pinned(
         assert results._render_record(_make_record()).plain == snapshot
 
 
+@pytest.mark.slow
 async def test_set_records_defers_row_rendering_to_visible_lines(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -658,6 +667,7 @@ async def test_set_records_defers_row_rendering_to_visible_lines(
         assert 0 < built <= results.size.height
 
 
+@pytest.mark.slow
 async def test_results_highlight_clamps_and_posts_typed_record(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -692,6 +702,7 @@ async def test_results_highlight_clamps_and_posts_typed_record(
         assert messages[-1].programmatic is False
 
 
+@pytest.mark.slow
 async def test_results_page_keys_match_option_list_from_no_cursor(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -715,6 +726,7 @@ async def test_results_page_keys_match_option_list_from_no_cursor(
         assert results.highlighted == 0
 
 
+@pytest.mark.slow
 async def test_results_hover_and_click_track_scrolled_rows(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -766,6 +778,7 @@ async def test_results_hover_and_click_track_scrolled_rows(
         assert results._hovered is None
 
 
+@pytest.mark.slow
 async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) -> None:
     """Replacing the model reuses cached rows rather than re-rendering them.
 
@@ -788,6 +801,7 @@ async def test_filter_rebuild_reuses_cached_row_renders(tmp_path: pathlib.Path) 
         assert all(a is b for a, b in zip(before, after, strict=True))
 
 
+@pytest.mark.slow
 async def test_results_render_cache_evicts_oldest_rows(tmp_path: pathlib.Path) -> None:
     """Rendering beyond the row-cache limit evicts the least-recently used row."""
     from agentgrep.progress import SearchControl
@@ -809,6 +823,7 @@ async def test_results_render_cache_evicts_oldest_rows(tmp_path: pathlib.Path) -
         assert (theme_name, id(records[-1])) in results._render_cache
 
 
+@pytest.mark.slow
 async def test_results_line_cache_reuses_final_strip(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -840,6 +855,7 @@ async def test_results_line_cache_reuses_final_strip(
         assert render_lines_calls == 1
 
 
+@pytest.mark.slow
 async def test_results_line_cache_invalidates_render_inputs(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -894,6 +910,7 @@ async def test_results_line_cache_invalidates_render_inputs(
         assert replaced is not resized
 
 
+@pytest.mark.slow
 async def test_results_caches_verify_record_identity_on_key_collision(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

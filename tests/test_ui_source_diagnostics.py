@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from agentgrep.ui._source_diagnostics import (
     SlowSourceDiagnostics,
     SourceScanFinished,
     SourceScanStarted,
 )
+
+pytestmark = pytest.mark.tui
 
 
 def test_slow_source_survives_a_concurrent_fast_tail() -> None:

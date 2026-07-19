@@ -42,6 +42,15 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### Faster local test feedback (#137)
+
+Contributors now get faster local test feedback without giving up release
+confidence. The everyday suite focuses on high-signal coverage, while CI still
+runs the complete suite and project guidance points changes to the relevant
+deeper checks.
+
 ## agentgrep 0.1.0a39 (2026-07-18)
 
 agentgrep 0.1.0a39 is an internal-quality release with no change to how

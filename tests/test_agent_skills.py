@@ -7,6 +7,8 @@ import typing as t
 
 import pytest
 
+pytestmark = pytest.mark.setup
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SKILLS_ROOT = _REPO_ROOT / ".agents" / "skills"
 

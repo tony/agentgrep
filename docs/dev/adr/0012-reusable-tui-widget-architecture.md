@@ -112,7 +112,7 @@ Strangler-fig, one concern per gate-green commit, `app.py` a thin facade through
 5. **Document and test the focus graph.** Tab order, modal trap/restore, and global-vs-focused key precedence, with Pilot focus-traversal tests.
 6. **Stop for CORE; gate OPTIONAL work.** File `MarkdownRecordDetail`, `ConversationScrollbackLog`, and `KillRingTextArea` as separate issues/ADRs, each requiring a measured baseline before any code (RW-7).
 
-Per-step exit criterion (every step): `rm -rf docs/_build; uv run ruff check . --fix --show-fixes; uv run ruff format .; uv run ty check; uv run py.test --reruns 0 -vvv; just build-docs` exits 0, and `app.py` still imports every extracted symbol.
+Per-step exit criterion (every step): `rm -rf docs/_build; uv run ruff check . --fix --show-fixes; uv run ruff format .; uv run ty check; uv run py.test -m "" --reruns 0 -vvv; just build-docs` exits 0, and `app.py` still imports every extracted symbol.
 
 ## Consequences
 

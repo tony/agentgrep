@@ -21,6 +21,8 @@ from agentgrep.ui.completion import (
     keyword_completion_candidates,
 )
 
+pytestmark = pytest.mark.tui
+
 
 class QueryCase(t.NamedTuple):
     """One search-bar completion input and its expected suggestion."""

@@ -14,6 +14,8 @@ import typing as t
 
 import pytest
 
+pytestmark = [pytest.mark.documentation, pytest.mark.mcp, pytest.mark.setup]
+
 
 def _load_mcp_install() -> t.Any:
     """Import the widget module, ensuring the repo root is importable."""
