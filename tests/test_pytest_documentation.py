@@ -345,6 +345,7 @@ def test_redact_path_prefers_project_relative_then_home(
     )
 
 
+@pytest.mark.slow
 def test_literal_shell_evaluator_uses_temp_home_and_preserves_real_home(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -371,6 +372,7 @@ def test_literal_shell_evaluator_uses_temp_home_and_preserves_real_home(
     assert result.stderr == ""
 
 
+@pytest.mark.slow
 def test_sandbox_isolates_uv_build_env_by_default(tmp_path: pathlib.Path) -> None:
     """By default the sandbox builds an isolated uv cache and project venv."""
     sandbox = TempHomeSandbox(project_root=tmp_path)
@@ -383,6 +385,7 @@ def test_sandbox_isolates_uv_build_env_by_default(tmp_path: pathlib.Path) -> Non
     assert "UV_NO_SYNC" not in env
 
 
+@pytest.mark.slow
 def test_sandbox_reuses_shared_uv_build_env_when_configured(tmp_path: pathlib.Path) -> None:
     """A configured shared uv cache and project env are reused read-only.
 
@@ -408,6 +411,7 @@ def test_sandbox_reuses_shared_uv_build_env_when_configured(tmp_path: pathlib.Pa
     assert env["HOME"] == str(home)
 
 
+@pytest.mark.slow
 def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.Path) -> None:
     """Command examples are executed literally, so real CLI failures are reported."""
     path = tmp_path / "README.md"
@@ -427,6 +431,7 @@ def test_literal_shell_evaluator_fails_unsupported_cli_option(tmp_path: pathlib.
     assert result.returncode == 7
 
 
+@pytest.mark.slow
 def test_python_page_evaluator_shares_namespace_in_temp_home(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -464,6 +469,7 @@ def test_python_page_evaluator_shares_namespace_in_temp_home(
     assert not (real_home / "page-marker").exists()
 
 
+@pytest.mark.slow
 def test_python_page_evaluator_failure_uses_document_line_numbers(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -604,6 +610,7 @@ SANDBOX_ERROR_CASES: tuple[SandboxErrorCase, ...] = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     SANDBOX_ERROR_CASES,
@@ -677,6 +684,7 @@ def test_console_evaluator_redacts_home_in_exception_messages(
     assert str(pathlib.Path.home()) not in result.message
 
 
+@pytest.mark.slow
 def test_temp_home_sandbox_copies_dirty_git_project(tmp_path: pathlib.Path) -> None:
     """Dirty worktree content is what documentation examples execute against."""
     project = tmp_path / "project"
@@ -730,6 +738,7 @@ CLONE_FALLBACK_CASES: tuple[CloneFallbackCase, ...] = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     CLONE_FALLBACK_CASES,
@@ -789,6 +798,7 @@ def test_prepare_project_copy_fallback_survives_failed_clone(
     assert not (destination / "partial.txt").exists()
 
 
+@pytest.mark.slow
 def test_literal_shell_evaluator_accepts_expected_error_output(tmp_path: pathlib.Path) -> None:
     """Console transcripts can document expected non-zero command output."""
     path = tmp_path / "README.md"
@@ -832,6 +842,7 @@ def test_documentation_suite_registers_class_and_function_collectors(
     assert [example.source for example in examples] == ["print('from class collector')\n"]
 
 
+@pytest.mark.slow
 def test_console_evaluator_redacts_paths_in_failures(tmp_path: pathlib.Path) -> None:
     """Failure messages redact absolute paths before pytest renders them."""
     secret_path = pathlib.Path("/home/alice/private/token.txt")
@@ -851,6 +862,7 @@ def test_console_evaluator_redacts_paths_in_failures(tmp_path: pathlib.Path) -> 
     assert "/home/<user>/private/token.txt" in result.failure_message()
 
 
+@pytest.mark.slow
 def test_sandbox_reports_blocked_commands_as_classified_failures(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1030,6 +1042,7 @@ def test_console_evaluator_keeps_path_tilde_empty_result_as_failure(
     assert result.returncode == 1
 
 
+@pytest.mark.slow
 def test_temp_home_sandbox_keeps_profile_artifacts_inside_temp_project(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1058,6 +1071,7 @@ def test_temp_home_sandbox_keeps_profile_artifacts_inside_temp_project(
     assert not real_output.exists()
 
 
+@pytest.mark.slow
 def test_temp_home_sandbox_records_claude_mcp_add_in_temp_home(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1086,6 +1100,7 @@ def test_temp_home_sandbox_records_claude_mcp_add_in_temp_home(
     assert "claude mcp add shim" in result.message
 
 
+@pytest.mark.slow
 def test_temp_home_sandbox_treats_standalone_cd_agentgrep_as_sequence_step(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1107,6 +1122,7 @@ def test_temp_home_sandbox_treats_standalone_cd_agentgrep_as_sequence_step(
     assert "standalone sequence step accepted" in result.message
 
 
+@pytest.mark.slow
 def test_temp_home_sandbox_accepts_ref_dependent_benchmark_recipes(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1329,6 +1345,7 @@ EXPECTED_OUTPUT_CASES: tuple[ExpectedOutputCase, ...] = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     EXPECTED_OUTPUT_CASES,

@@ -22,6 +22,7 @@ _NESTED_RUN_ARGS = (
 )
 
 
+@pytest.mark.slow
 def test_suite_collects_markdown_examples_as_pytest_items(pytester: pytest.Pytester) -> None:
     """A configured suite turns documentation examples into normal pytest items."""
     pytester.makeconftest(
@@ -49,6 +50,7 @@ def test_suite_collects_markdown_examples_as_pytest_items(pytester: pytest.Pytes
     result.assert_outcomes(passed=1)
 
 
+@pytest.mark.slow
 def test_pytest_failure_uses_document_location(pytester: pytest.Pytester) -> None:
     """Failure output points at the documentation file and exact example line."""
     pytester.makeconftest(
@@ -77,6 +79,7 @@ def test_pytest_failure_uses_document_location(pytester: pytest.Pytester) -> Non
     result.stdout.fnmatch_lines(["*docs.md:4*broken*", "*assert 1 == 2*"])
 
 
+@pytest.mark.slow
 def test_pytest_failure_renders_classified_documentation_reason(
     pytester: pytest.Pytester,
 ) -> None:
@@ -118,6 +121,7 @@ def test_pytest_failure_renders_classified_documentation_reason(
     )
 
 
+@pytest.mark.slow
 def test_suite_collects_python_page_examples_as_single_pytest_item(
     pytester: pytest.Pytester,
 ) -> None:
@@ -155,6 +159,7 @@ def test_suite_collects_python_page_examples_as_single_pytest_item(
     result.assert_outcomes(passed=1)
 
 
+@pytest.mark.slow
 def test_plugin_is_dormant_without_configured_suite(pytester: pytest.Pytester) -> None:
     """Loading the plugin alone does not start collecting every documentation file."""
     pytester.makeini(
