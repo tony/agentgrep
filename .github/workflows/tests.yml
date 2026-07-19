@@ -32,7 +32,7 @@ jobs:
       - name: Type check (ty)
         run: uv run ty check --output-format github
       - name: Tests (pytest)
-        run: uv run pytest
+        run: uv run pytest -m ""
 
   release:
     runs-on: ubuntu-latest
