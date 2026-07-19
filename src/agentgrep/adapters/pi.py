@@ -12,7 +12,9 @@ from agentgrep.adapters._common import (
     _unix_millis_to_isoformat,
 )
 from agentgrep.adapters._extract import (
+    _record_position,
     build_search_record,
+    extract_parent_message_id,
     flatten_content_value,
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
@@ -21,7 +23,7 @@ from agentgrep.origin import (
 )
 from agentgrep.readers import (
     _PI_SESSION_HEADER_MARKER,
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     _keep_jsonl_header_lines,
     _read_first_matching_jsonl_record,
     as_optional_str,
@@ -119,6 +121,7 @@ def parse_pi_session_file(
     are emitted as history text. Metadata-only entries are skipped.
     """
     session_id: str | None = source.path.stem
+    native_session_id: str | None = None
     conversation_id: str | None = None
     session_origin: RecordOrigin | None = None
     if reverse:
@@ -130,22 +133,24 @@ def parse_pi_session_file(
             accept_record=lambda record: record.get("type") == "session",
         )
         if header is not None and as_optional_str(header.get("type")) == "session":
-            session_id = as_optional_str(header.get("id")) or session_id
+            native_session_id = as_optional_str(header.get("id"))
+            session_id = native_session_id or session_id
             conversation_id = as_optional_str(header.get("cwd"))
             session_origin = _record_origin(cwd=conversation_id)
     # The session header feeds session_id/cwd into later records, so the
     # text prefilter must never drop it.
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=_keep_jsonl_header_lines(raw_skip_line, _PI_SESSION_HEADER_MARKER),
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    for event in events:
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -153,7 +158,10 @@ def parse_pi_session_file(
         if not entry_type:
             continue
         if entry_type == "session":
-            session_id = as_optional_str(mapping.get("id")) or session_id
+            observed_session_id = as_optional_str(mapping.get("id"))
+            if observed_session_id is not None:
+                native_session_id = observed_session_id
+                session_id = observed_session_id
             conversation_id = as_optional_str(mapping.get("cwd"))
             session_origin = _record_origin(cwd=conversation_id, fallback=session_origin)
             continue
@@ -167,6 +175,14 @@ def parse_pi_session_file(
                 session_origin,
             )
             if candidate is not None:
+                candidate.identity_namespace = (
+                    "pi.session" if native_session_id is not None else None
+                )
+                candidate.position = _record_position(
+                    native_id=mapping.get("id"),
+                    parent_native_id=extract_parent_message_id(mapping),
+                    ordinal=positioned_event.source_ordinal(),
+                )
                 yield build_search_record(source, candidate)
             continue
         text = _pi_entry_text(entry_type, mapping)
@@ -184,6 +200,12 @@ def parse_pi_session_file(
             session_id=session_id,
             conversation_id=conversation_id,
             origin=session_origin,
+            identity_namespace=("pi.session" if native_session_id is not None else None),
+            position=_record_position(
+                native_id=mapping.get("id"),
+                parent_native_id=extract_parent_message_id(mapping),
+                ordinal=positioned_event.source_ordinal(),
+            ),
         )
 
 
@@ -237,10 +259,17 @@ def parse_pi_context_mode_db(
         columns = sqlite_column_names(connection, "session_events")
         project_dir_expr = sqlite_column_expr(columns, "project_dir")
         cursor = connection.execute(
-            f"SELECT session_id, type, data, created_at, {project_dir_expr} "
+            f"SELECT id, session_id, type, data, created_at, {project_dir_expr} "
             "FROM session_events ORDER BY id",
         )
-        for session_id_raw, type_raw, data_raw, created_raw, project_dir_raw in cursor:
+        for (
+            event_id_raw,
+            session_id_raw,
+            type_raw,
+            data_raw,
+            created_raw,
+            project_dir_raw,
+        ) in cursor:
             data_text = as_optional_str(data_raw)
             if not data_text or not data_text.strip():
                 continue
@@ -262,6 +291,8 @@ def parse_pi_context_mode_db(
                 session_id=session_id,
                 conversation_id=session_id,
                 origin=origins[project_dir],
+                identity_namespace=("pi.session" if session_id is not None else None),
+                position=_record_position(native_id=event_id_raw),
             )
     except sqlite3.DatabaseError:
         return

@@ -13,6 +13,9 @@ import importlib
 import pathlib
 import typing as t
 
+if t.TYPE_CHECKING:
+    from agentgrep.identity import RecordIdentity
+
 AgentName = t.Literal[
     "codex",
     "claude",
@@ -178,6 +181,15 @@ class SearchRecordLike(t.Protocol):
     conversation_id: str | None
     origin: object | None
     metadata: dict[str, object]
+    identity_namespace: str | None
+    position: RecordPositionLike | None
+
+
+class RecordPositionLike(t.Protocol):
+    """Structural source coordinate used by canonical identity."""
+
+    native_id: str | None
+    ordinal: int | None
 
 
 class FindRecordLike(t.Protocol):
@@ -297,6 +309,8 @@ class AgentGrepModule(t.Protocol):
     def serialize_search_record(
         self,
         record: SearchRecordLike,
+        *,
+        prepared: RecordIdentity | None = None,
     ) -> dict[str, object]: ...
 
     def serialize_find_record(

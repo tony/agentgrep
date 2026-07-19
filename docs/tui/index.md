@@ -76,6 +76,33 @@ without cancelling the search or changing its results, theme, or zoom.
 It accepts no path argument. In a terminal, Textual saves the SVG to your
 downloads directory; in a browser session, it initiates a download.
 
+## Slash commands
+
+Type `/` in the primary input to open the same compact, pi-like command menu in
+the HUD and greplog layouts. Keep typing to filter it, or use `/help` to see the
+whole active command set. `Ctrl-P` is intentionally inert; the slash menu
+replaces the larger Textual command palette without covering your results.
+
+The shared commands are:
+
+- `/clear` clears the current search and results.
+- `/exit` or `/quit` closes agentgrep.
+- `/help` lists the active slash commands, and `/keys` toggles the active key
+  bindings panel.
+- `/theme` toggles the theme; `/theme dark` and `/theme light` select one
+  directly.
+- `/maximize` gives a content pane the available body space while keeping the
+  primary input and footer reachable. In the HUD, it follows the last-used
+  results or detail pane; use `/maximize results` or `/maximize detail` to be
+  explicit. In greplog, use `/maximize` or `/maximize log`.
+- `/minimize` restores the normal split or greplog status area.
+- `/screenshot` captures the current screen as an automatically named SVG.
+
+`/screenshot` first clears the command text and menu, then captures the active
+layout without cancelling the search or changing its results, theme, or zoom.
+It accepts no path argument. In a terminal, Textual saves the SVG to your
+downloads directory; in a browser session, it initiates a download.
+
 ## Command
 
 ```{eval-rst}
@@ -114,6 +141,32 @@ render in the viewer's local timezone with offset
 When the selected record carries {class}`~agentgrep.RecordOrigin`, the
 detail header also shows available cwd, repo, worktree, branch, and cwd
 hash values.
+
+The HUD detail header places full `Record:`, `Content:`, and `Thread:` handles
+immediately after `Adapter:`. In a narrow pane, those labels compact to `R:`,
+`C:`, and `T:` so each complete fixed-width handle stays on one line. Metadata
+ellipsizes instead of word-wrapping when the pane is too narrow to contain its
+value. On the first selection, dim `…` values reserve the identity rows while
+identity is prepared away from the Textual message pump. A missing logical
+occurrence or thread renders as `—`; the content handle is always available
+once preparation finishes. The handles are comparison vocabulary, not copy
+shortcuts or resolvers. See the {ref}`deterministic record identity contract
+<adr-deterministic-record-identity>` for the exact boundary.
+
+This is a HUD detail feature only. Compact result rows, the greplog layout, and
+pane status lines keep their existing shapes.
+
+### Bounded detail view
+
+The HUD caps the displayed detail body at 1,000 lines and 65,536 characters so
+formatting and find-in-detail cannot stall the interface on a very large
+record. An overflow marker reports that more lines or characters remain. This
+only bounds the TUI render; agentgrep does not change the source record.
+
+To inspect the full body, rerun the same query with the CLI's `--json` or
+`--ndjson` output and read the result's `text` field. From an MCP client, pass
+the result's opaque `ref` to {tooliconl}`inspect_result` as
+`inspect_result(ref=...)`.
 
 ## Completion
 

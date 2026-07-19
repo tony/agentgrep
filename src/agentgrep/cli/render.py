@@ -377,6 +377,8 @@ def _print_search_text(
     args: SearchArgs,
 ) -> None:
     """Render ranked search results with pretty snippets."""
+    from agentgrep.identity import record_identity
+
     colors = AnsiColors.for_stream(args.color_mode, sys.stdout)
     patterns = _compile_search_patterns(args)
     first_group = True
@@ -401,6 +403,13 @@ def _print_search_text(
                 colors.path(format_display_path(record.path)),
             )
             lines.append(colors.dim(f"  {' · '.join(provenance_parts)}"))
+            prepared = record_identity(record)
+            for label, value in (
+                ("Record:", prepared.record_id),
+                ("Content:", prepared.content_id),
+                ("Thread:", prepared.thread_id),
+            ):
+                lines.append(f"  {colors.dim(label)} {value or '—'}")
             print("\n".join(lines))
             print()
 

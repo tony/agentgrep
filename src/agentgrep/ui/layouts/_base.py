@@ -128,6 +128,10 @@ class LayoutScreen(_SCREEN_BASE):
         self._command_matches: tuple[commands.SlashCommand, ...] = ()
         self._enum_dropdown: t.Any = None
         self._screenshot_generation: int = 0
+        self._confirm_exit_pending = False
+        self._confirm_exit_key: t.Literal["q", "ctrl-c"] | None = None
+        self._confirm_exit_timer: object | None = None
+        self._ctrlc_gutter: t.Any = None
 
     @property
     def context(self) -> UiContext:
@@ -145,6 +149,7 @@ class LayoutScreen(_SCREEN_BASE):
         """The currently active workflow strategy."""
         return self._workflow
 
+    @_runtime.pump_only
     def on_mount(self) -> None:
         """Attach the active workflow once the layout is mounted.
 
@@ -152,10 +157,18 @@ class LayoutScreen(_SCREEN_BASE):
         ``super().on_mount()`` last, so the workflow's initial dispatch (which
         may start a search and paint chrome) runs after the widgets exist.
         """
+        self._ctrlc_gutter = next(iter(self.query("#ctrlc-gutter")), None)
         self._workflow.on_attach(t.cast("t.Any", self))
+
+    @_runtime.pump_only
+    def on_descendant_focus(self, event: object) -> None:
+        """Cancel a pending quit confirmation when focus moves."""
+        del event
+        self._disarm_confirm_exit()
 
     def set_workflow(self, workflow: Workflow) -> None:
         """Replace the active workflow and seed its initial dispatch."""
+        self._disarm_confirm_exit()
         t.cast("t.Any", self).request_cancel()
         self._workflow = workflow
         self._workflow.on_attach(t.cast("t.Any", self))
@@ -369,18 +382,52 @@ class LayoutScreen(_SCREEN_BASE):
             return False
         return bool(self.app.select_theme(target))
 
-    # --- input control defaults (the shared SearchInput reaches these) --------
-    # SearchInput.on_key routes ctrl-c and the non-ctrl-c "disarm" through
-    # ``self.screen``, so every layout that hosts it needs these. The HUD
-    # overrides them with its staged confirm-exit gutter; other layouts get a
-    # sane default (clear the box, then quit on an empty box).
+    # --- shared staged quit confirmation --------------------------------------
+    @_runtime.pump_only
+    def action_confirm_quit(self) -> None:
+        """``Q``: warn in the bottom gutter, then exit on a second press."""
+        self._arm_or_confirm_exit("q")
+
+    @_runtime.pump_only
     def _handle_input_ctrl_c(self, widget: object) -> None:
-        """Default ctrl-c inside an input: clear it, else quit on an empty box."""
+        """Clear a focused input, then stage Ctrl-C exit when it is empty."""
         target = t.cast("t.Any", widget)
         if str(getattr(target, "value", "")):
             target.value = ""
+            self._disarm_confirm_exit()
             return
-        self.app.exit()
+        self._arm_or_confirm_exit("ctrl-c")
 
+    @_runtime.pump_only
+    def _arm_or_confirm_exit(self, key: t.Literal["q", "ctrl-c"]) -> None:
+        """Arm ``key`` as the required repeated quit confirmation."""
+        if self._confirm_exit_key == key:
+            self._disarm_confirm_exit()
+            self.app.exit()
+            return
+        self._confirm_exit_pending = True
+        self._confirm_exit_key = key
+        self._set_ctrlc_gutter(f"press {key} again to exit")
+        if self._confirm_exit_timer is not None:
+            t.cast("t.Any", self._confirm_exit_timer).stop()
+        self._confirm_exit_timer = self.set_timer(2.0, self._disarm_confirm_exit)
+
+    @_runtime.pump_only
     def _disarm_confirm_exit(self) -> None:
-        """No-op by default; the HUD overrides this to cancel its confirm gutter."""
+        """Cancel a pending quit confirmation and hide its gutter."""
+        if not self._confirm_exit_pending:
+            return
+        self._confirm_exit_pending = False
+        self._confirm_exit_key = None
+        if self._confirm_exit_timer is not None:
+            t.cast("t.Any", self._confirm_exit_timer).stop()
+            self._confirm_exit_timer = None
+        self._set_ctrlc_gutter("")
+
+    def _set_ctrlc_gutter(self, message: str) -> None:
+        """Show ``message`` in the bottom gutter, or hide it when empty."""
+        if self._ctrlc_gutter is None:
+            return
+        gutter = t.cast("t.Any", self._ctrlc_gutter)
+        gutter.update(message)
+        gutter.set_class(bool(message), "-shown")

@@ -42,6 +42,37 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Consistent record handles across search (#80)
+
+Search results now share one identity vocabulary across terminal and agent
+surfaces: content handles compare normalized content, record handles
+distinguish stored turns, and thread handles group records only when the
+backend exposes a defensible conversation anchor. In particular,
+repeated content can share one content handle while stored turns keep separate
+record handles. MCP refs and cursors remain opaque version 1 tokens, but they
+are snapshot-relative rather than durable storage keys. A position-blind
+search ref keeps bounded first-match fallback behavior only while its other
+normalized fingerprint inputs still match; newly emitted refs use a
+position-aware fingerprint when the source exposes a defensible coordinate.
+Canonical handles sit alongside them for durable comparison.
+
+Stores with missing occurrence or thread topology report null values instead
+of inventing relationships from filenames or timestamps. That conservative
+contract gives bookmarks, export, and similarity features a common foundation
+without making them depend on one another. See the {ref}`deterministic record
+identity contract <adr-deterministic-record-identity>`.
+
+#### Predictable TUI commands and focus (#111)
+
+The HUD and grep-log now share the same pi-like slash-command menu instead of
+Textual's global command palette. Zoom keeps the command input and focused
+content visible, `/minimize` restores the normal layout, and `/screenshot`
+captures a clean SVG without changing the active search. `/keys`, theme
+switching, filtered-row colors, focus repair, and repeated-key quit
+confirmation now behave consistently across the two layouts.
+
 ## agentgrep 0.1.0a41 (2026-07-19)
 
 agentgrep 0.1.0a41 makes Pydantic a required dependency and removes the

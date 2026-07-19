@@ -109,11 +109,19 @@ def _decode_token(prefix: str, token: str) -> dict[str, object]:
     encoded = token.removeprefix(prefix)
     padded = encoded + "=" * (-len(encoded) % 4)
     try:
-        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        raw = base64.b64decode(
+            padded.encode("ascii"),
+            altchars=b"-_",
+            validate=True,
+        )
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeEncodeError, ValueError, json.JSONDecodeError) as exc:
         msg = "token is not valid encoded JSON"
         raise McpTokenError(msg) from exc
+    canonical = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    if encoded != canonical:
+        msg = "token is not valid encoded JSON"
+        raise McpTokenError(msg)
     if not isinstance(payload, dict):
         msg = "token payload must be an object"
         raise McpTokenError(msg)
@@ -137,27 +145,85 @@ def _record_fingerprint(payload: dict[str, object]) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
-    ).encode("utf-8")
+    ).encode("utf-8", "surrogatepass")
     return hashlib.sha256(raw).hexdigest()
 
 
-def search_record_fingerprint(record: SearchRecordLike) -> str:
-    """Return a stable privacy-preserving fingerprint for a search record."""
+def _search_record_coordinate(record: SearchRecordLike) -> tuple[str, str | int] | None:
+    """Return the validated occurrence coordinate for a search record."""
+    position = record.position
+    if position is None:
+        return None
+    if isinstance(position.native_id, str) and position.native_id:
+        return ("native", position.native_id)
+    if (
+        isinstance(position.ordinal, int)
+        and not isinstance(position.ordinal, bool)
+        and position.ordinal >= 0
+    ):
+        return ("ordinal", position.ordinal)
+    return None
+
+
+def _search_record_fingerprint_payload(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str,
+) -> dict[str, object]:
+    """Build the position-blind v1 search fingerprint payload."""
+    return {
+        "kind": "search",
+        "record_kind": record.kind,
+        "role": record.role,
+        "agent": record.agent,
+        "store": record.store,
+        "adapter_id": record.adapter_id,
+        "path": agentgrep.format_display_path(record.path),
+        "timestamp": record.timestamp,
+        "session_id": record.session_id,
+        "conversation_id": record.conversation_id,
+        "text_sha256": text_sha256,
+    }
+
+
+def _legacy_search_record_fingerprint(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str,
+) -> str:
+    """Return the historical position-blind v1 search fingerprint."""
     return _record_fingerprint(
-        {
-            "kind": "search",
-            "record_kind": record.kind,
-            "role": record.role,
-            "agent": record.agent,
-            "store": record.store,
-            "adapter_id": record.adapter_id,
-            "path": agentgrep.format_display_path(record.path),
-            "timestamp": record.timestamp,
-            "session_id": record.session_id,
-            "conversation_id": record.conversation_id,
-            "text_sha256": hashlib.sha256(record.text.encode("utf-8")).hexdigest(),
-        },
+        _search_record_fingerprint_payload(record, text_sha256=text_sha256),
     )
+
+
+def search_record_fingerprint(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str | None = None,
+) -> str:
+    """Return a stable privacy-preserving fingerprint for a search record."""
+    if text_sha256 is None:
+        text_sha256 = hashlib.sha256(
+            record.text.encode("utf-8", "surrogatepass"),
+        ).hexdigest()
+    payload = _search_record_fingerprint_payload(record, text_sha256=text_sha256)
+    coordinate = _search_record_coordinate(record)
+    if coordinate is not None:
+        payload["position"] = coordinate
+    return _record_fingerprint(payload)
+
+
+def search_record_fingerprint_matches(record: SearchRecordLike, fingerprint: str) -> bool:
+    """Match current fields with a position-blind v1 fallback."""
+    text_sha256 = hashlib.sha256(
+        record.text.encode("utf-8", "surrogatepass"),
+    ).hexdigest()
+    if search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint:
+        return True
+    if _search_record_coordinate(record) is None:
+        return False
+    return _legacy_search_record_fingerprint(record, text_sha256=text_sha256) == fingerprint
 
 
 def find_record_fingerprint(record: FindRecordLike) -> str:
@@ -174,7 +240,11 @@ def find_record_fingerprint(record: FindRecordLike) -> str:
     )
 
 
-def make_search_ref(record: SearchRecordLike) -> str:
+def make_search_ref(
+    record: SearchRecordLike,
+    *,
+    text_sha256: str | None = None,
+) -> str:
     """Build an opaque ref for a search result."""
     return _encode_token(
         _REF_PREFIX,
@@ -185,7 +255,10 @@ def make_search_ref(record: SearchRecordLike) -> str:
                 kind="search",
                 adapter_id=record.adapter_id,
                 path=agentgrep.format_display_path(record.path),
-                fingerprint=search_record_fingerprint(record),
+                fingerprint=search_record_fingerprint(
+                    record,
+                    text_sha256=text_sha256,
+                ),
             ),
         ),
     )
@@ -211,7 +284,8 @@ def make_find_ref(record: FindRecordLike) -> str:
 def parse_record_ref(ref: str, *, home: pathlib.Path) -> ParsedRecordRef:
     """Parse an opaque result ref."""
     payload = _decode_token(_REF_PREFIX, ref)
-    if payload.get("v") != 1:
+    version = payload.get("v")
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
         msg = "unsupported ref version"
         raise McpTokenError(msg)
     kind = payload.get("kind")
@@ -271,7 +345,13 @@ def make_search_cursor(
 def parse_search_cursor(cursor: str) -> SearchCursor:
     """Parse an opaque search page cursor."""
     payload = _decode_token(_CURSOR_PREFIX, cursor)
-    if payload.get("v") != 1 or payload.get("tool") != "search":
+    version = payload.get("v")
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != 1
+        or payload.get("tool") != "search"
+    ):
         msg = "cursor is not a search cursor"
         raise McpTokenError(msg)
     offset = payload.get("offset")
@@ -283,7 +363,7 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     cwd = payload.get("cwd")
     repo = payload.get("repo")
     branch = payload.get("branch")
-    if not isinstance(offset, int) or offset < 0:
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
         msg = "cursor offset must be non-negative"
         raise McpTokenError(msg)
     if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
@@ -301,7 +381,7 @@ def parse_search_cursor(cursor: str) -> SearchCursor:
     if not isinstance(case_sensitive, bool):
         msg = "cursor case_sensitive must be a boolean"
         raise McpTokenError(msg)
-    if not isinstance(limit, int) or limit < 1:
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         msg = "cursor limit must be positive"
         raise McpTokenError(msg)
     if cwd is not None and not isinstance(cwd, str):
@@ -353,14 +433,20 @@ def make_find_cursor(
 def parse_find_cursor(cursor: str) -> FindCursor:
     """Parse an opaque find page cursor."""
     payload = _decode_token(_CURSOR_PREFIX, cursor)
-    if payload.get("v") != 1 or payload.get("tool") != "find":
+    version = payload.get("v")
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != 1
+        or payload.get("tool") != "find"
+    ):
         msg = "cursor is not a find cursor"
         raise McpTokenError(msg)
     offset = payload.get("offset")
     pattern = payload.get("pattern")
     agent = payload.get("agent")
     limit = payload.get("limit")
-    if not isinstance(offset, int) or offset < 0:
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
         msg = "cursor offset must be non-negative"
         raise McpTokenError(msg)
     if pattern is not None and not isinstance(pattern, str):
@@ -369,7 +455,7 @@ def parse_find_cursor(cursor: str) -> FindCursor:
     if agent not in t.get_args(AgentSelector):
         msg = "cursor agent is invalid"
         raise McpTokenError(msg)
-    if not isinstance(limit, int) or limit < 1:
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         msg = "cursor limit must be positive"
         raise McpTokenError(msg)
     return FindCursor(

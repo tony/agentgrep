@@ -24,6 +24,7 @@ from agentgrep.records import (
     USER_ROLES,
     MessageCandidate,
     RecordOrigin,
+    RecordPosition,
     SearchRecord,
     SourceHandle,
 )
@@ -256,12 +257,128 @@ def extract_model(mapping: dict[str, object]) -> str | None:
     return None
 
 
+def _normalize_native_id(value: object) -> str | None:
+    """Normalize one source-provided coordinate.
+
+    Parameters
+    ----------
+    value : object
+        Candidate native coordinate.
+
+    Returns
+    -------
+    str or None
+        The non-empty string or decimal integer representation, excluding
+        booleans, or ``None`` when the value is not a native coordinate.
+    """
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
 def extract_session_id(mapping: dict[str, object]) -> str | None:
     """Extract a session identifier."""
-    for key in ("session_id", "sessionId", "id"):
+    for key in ("session_id", "sessionId"):
         value = as_optional_str(mapping.get(key))
         if value is not None:
             return value
+    return None
+
+
+def extract_message_id(mapping: dict[str, object]) -> str | None:
+    """Extract an explicit message identifier.
+
+    Parameters
+    ----------
+    mapping : dict[str, object]
+        Source message mapping.
+
+    Returns
+    -------
+    str or None
+        The first validated message identifier from an explicit schema key.
+    """
+    for key in ("message_id", "messageId", "uuid"):
+        value = _normalize_native_id(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def extract_parent_message_id(mapping: dict[str, object]) -> str | None:
+    """Extract an explicit parent-message identifier.
+
+    Parameters
+    ----------
+    mapping : dict[str, object]
+        Source message mapping.
+
+    Returns
+    -------
+    str or None
+        The first validated parent identifier from an explicit schema key.
+    """
+    for key in ("parent_id", "parentId", "parentUuid"):
+        value = _normalize_native_id(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _record_position(
+    *,
+    native_id: object = None,
+    parent_native_id: object = None,
+    ordinal: object = None,
+) -> RecordPosition | None:
+    """Build a validated source position when one coordinate is available.
+
+    Parameters
+    ----------
+    native_id : object
+        Candidate backend-native record coordinate.
+    parent_native_id : object
+        Candidate backend-native parent coordinate.
+    ordinal : object
+        Candidate non-negative source-order coordinate.
+
+    Returns
+    -------
+    RecordPosition or None
+        A validated position preferring native identity, or ``None`` when no
+        usable native or source-order coordinate exists.
+    """
+    if (
+        native_id is None
+        and parent_native_id is None
+        and isinstance(ordinal, int)
+        and not isinstance(ordinal, bool)
+        and ordinal >= 0
+    ):
+        return RecordPosition(ordinal=ordinal, quality="source_order")
+
+    normalized_native_id = _normalize_native_id(native_id)
+    normalized_parent_id = _normalize_native_id(parent_native_id)
+    normalized_ordinal = (
+        ordinal
+        if isinstance(ordinal, int) and not isinstance(ordinal, bool) and ordinal >= 0
+        else None
+    )
+    if normalized_native_id is not None:
+        return RecordPosition(
+            native_id=normalized_native_id,
+            parent_native_id=normalized_parent_id,
+            ordinal=normalized_ordinal,
+            quality="native",
+        )
+    if normalized_ordinal is not None:
+        return RecordPosition(
+            parent_native_id=normalized_parent_id,
+            ordinal=normalized_ordinal,
+            quality="source_order",
+        )
     return None
 
 
@@ -308,4 +425,6 @@ def build_search_record(source: SourceHandle, candidate: MessageCandidate) -> Se
         session_id=candidate.session_id,
         conversation_id=candidate.conversation_id,
         origin=candidate.origin,
+        identity_namespace=candidate.identity_namespace,
+        position=candidate.position,
     )

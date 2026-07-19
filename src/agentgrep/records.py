@@ -57,8 +57,10 @@ __all__ = [
     "OutputMode",
     "ProgressMode",
     "RawJsonlSkipLine",
+    "RecordIdStability",
     "RecordOrigin",
     "RecordOriginPayload",
+    "RecordPosition",
     "SearchMatchSurface",
     "SearchQuery",
     "SearchRecord",
@@ -103,6 +105,7 @@ type SummaryRow = tuple[object, object, object, object, object, object, object, 
 type KeyValueRow = tuple[object, object]
 type DiscoveryRoot = pathlib.Path | tuple[pathlib.Path, ...]
 type FindSourceTypeFilter = t.Literal["prompts", "history", "sessions", "all"]
+type RecordIdStability = t.Literal["native", "source_order"]
 
 # --- Domain constants ------------------------------------------------------
 
@@ -233,6 +236,10 @@ class SearchRecordPayload(t.TypedDict):
     model: str | None
     session_id: str | None
     conversation_id: str | None
+    content_id: str
+    record_id: str | None
+    record_id_stability: RecordIdStability | None
+    thread_id: str | None
     origin: RecordOriginPayload | None
     metadata: dict[str, object]
 
@@ -375,6 +382,16 @@ class SourceHandle:
     origin_summary: SourceOriginSummary | None = None
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class RecordPosition:
+    """Backend-native or source-order position of one normalized record."""
+
+    native_id: str | None = None
+    parent_native_id: str | None = None
+    ordinal: int | None = None
+    quality: RecordIdStability | None = None
+
+
 @dataclasses.dataclass(slots=True)
 class SearchRecord:
     """Normalized prompt/history record."""
@@ -393,6 +410,8 @@ class SearchRecord:
     conversation_id: str | None = None
     metadata: dict[str, object] = dataclasses.field(default_factory=dict)
     origin: RecordOrigin | None = None
+    identity_namespace: str | None = None
+    position: RecordPosition | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -420,6 +439,8 @@ class MessageCandidate:
     session_id: str | None = None
     conversation_id: str | None = None
     origin: RecordOrigin | None = None
+    identity_namespace: str | None = None
+    position: RecordPosition | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

@@ -165,6 +165,22 @@ scripts and non-MCP agents, two machine-readable modes mirror `grep`:
 $ agentgrep search bliss --json
 ```
 
+### Identity handles
+
+Ranked terminal detail places three full, fixed-width handle rows immediately
+after each result's provenance: `Record:`, `Content:`, and `Thread:`. Content is
+always available. When a store cannot support logical occurrence or thread
+identity, the corresponding human row uses an em dash (`—`) instead of
+inventing a value. The handles compare records; they are not resolvers.
+
+Every result in both JSON and NDJSON includes `content_id`, `record_id`,
+`record_id_stability`, and `thread_id`. The latter three keys remain present
+with JSON null values when the source cannot support them, so consumers do not
+have to infer identity availability from a missing key. See the
+{ref}`deterministic record identity contract
+<adr-deterministic-record-identity>` for the distinction between content,
+logical occurrence, thread, and physical location.
+
 When a backend exposes project context, each serialized
 {class}`~agentgrep.SearchRecord` can include an `origin` object with
 `cwd`, `repo`, `worktree`, `branch`, `remote`, and `cwd_hash` fields.

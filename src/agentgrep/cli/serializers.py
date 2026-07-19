@@ -8,6 +8,8 @@ own the CLI wire shape without a redundant validation round trip.
 
 from __future__ import annotations
 
+import typing as t
+
 from agentgrep._text import format_display_path
 from agentgrep.origin_serializers import serialize_record_metadata, serialize_record_origin
 from agentgrep.records import (
@@ -23,9 +25,20 @@ from agentgrep.records import (
     SourceVersionDetectionPayload,
 )
 
+if t.TYPE_CHECKING:
+    from agentgrep.identity import RecordIdentity
 
-def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
+
+def serialize_search_record(
+    record: SearchRecord,
+    *,
+    prepared: RecordIdentity | None = None,
+) -> SearchRecordPayload:
     """Serialize a search record to a JSON-compatible mapping."""
+    if prepared is None:
+        from agentgrep.identity import record_identity
+
+        prepared = record_identity(record)
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": record.kind,
@@ -40,6 +53,10 @@ def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
         "model": record.model,
         "session_id": record.session_id,
         "conversation_id": record.conversation_id,
+        "content_id": prepared.content_id,
+        "record_id": prepared.record_id,
+        "record_id_stability": prepared.record_id_stability,
+        "thread_id": prepared.thread_id,
         "origin": serialize_record_origin(record.origin),
         "metadata": serialize_record_metadata(record.metadata),
     }

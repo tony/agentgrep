@@ -11,6 +11,7 @@ from agentgrep.adapters._common import (
     _record_origin,
     _unix_millis_to_isoformat,
 )
+from agentgrep.adapters._extract import _record_position
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec
 from agentgrep.readers import (
     as_optional_str,
@@ -85,13 +86,27 @@ def parse_opencode_db(
         if not {"session", "message", "part"}.issubset(sqlite_table_names(connection)):
             return
         cursor = connection.execute(
-            "SELECT p.data, m.data, s.title, s.directory, s.id "
+            "SELECT p.id, p.data, m.data, s.title, s.directory, s.id "
             "FROM part p "
             "JOIN message m ON p.message_id = m.id "
             "JOIN session s ON p.session_id = s.id "
             "ORDER BY s.id, m.id, p.id",
         )
-        for part_raw, message_raw, title_raw, directory_raw, session_id_raw in cursor:
+        previous_session_id: object = object()
+        session_ordinal = -1
+        for (
+            part_id_raw,
+            part_raw,
+            message_raw,
+            title_raw,
+            directory_raw,
+            session_id_raw,
+        ) in cursor:
+            if session_id_raw != previous_session_id:
+                previous_session_id = session_id_raw
+                session_ordinal = 0
+            else:
+                session_ordinal += 1
             part_data = _opencode_json_object(part_raw)
             if part_data is None:
                 continue
@@ -129,6 +144,11 @@ def parse_opencode_db(
                 conversation_id=session_id,
                 origin=_record_origin(cwd=directory),
                 metadata={"directory": directory} if directory else {},
+                identity_namespace=("opencode.session" if session_id is not None else None),
+                position=_record_position(
+                    native_id=part_id_raw,
+                    ordinal=session_ordinal,
+                ),
             )
     except sqlite3.DatabaseError:
         return
