@@ -9,7 +9,7 @@ import pytest
 
 from agentgrep.insights.loader import (
     BackendLoadError,
-    BackendUnavailable,
+    BackendUnavailableError,
     load_modules,
     module_available,
     probe_modules,
@@ -56,8 +56,8 @@ def test_load_modules_returns_loaded_by_name() -> None:
 
 
 def test_load_modules_raises_backend_unavailable_with_setup() -> None:
-    """A missing module raises BackendUnavailable carrying the setup command."""
-    with pytest.raises(BackendUnavailable) as excinfo:
+    """A missing module raises BackendUnavailableError carrying the setup command."""
+    with pytest.raises(BackendUnavailableError) as excinfo:
         load_modules(
             ("missing",),
             level="ml",

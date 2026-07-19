@@ -285,6 +285,7 @@ convention = "numpy"
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
 # These modules own intentional terminal output.
+"src/agentgrep/cli/insights_render.py" = ["T201"]
 "src/agentgrep/cli/render.py" = ["T201"]
 # typer.Option / typer.Argument calls are metadata, not real callables —
 # B008 does not apply. E501 is suppressed because a few error messages

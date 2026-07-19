@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from agentgrep.insights.loader import (
     BackendError,
-    BackendUnavailable,
+    BackendUnavailableError,
     load_modules,
     probe_modules,
 )
@@ -262,7 +262,7 @@ def run_level(
             model_cache=model_cache,
         )
         enrichment = builder(context)
-    except BackendUnavailable as exc:
+    except BackendUnavailableError as exc:
         diagnostics.append(
             ReportDiagnostic(
                 severity="warning",
