@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
-from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
 from agentgrep._engine.runtime import SearchRuntime
 from agentgrep.mcp._library import SERVER_VERSION
 from agentgrep.mcp.instructions import _build_instructions
-from agentgrep.mcp.middleware import AgentgrepAuditMiddleware
+from agentgrep.mcp.middleware import (
+    AgentgrepAuditMiddleware,
+    AgentgrepResponseLimitingMiddleware,
+)
 from agentgrep.mcp.prompts import register_prompts
 from agentgrep.mcp.resources import register_resources
 from agentgrep.mcp.tools import register_tools
@@ -30,7 +32,7 @@ def build_mcp_server() -> FastMCP:
         # Middleware runs outermost-first. Order rationale:
         #   1. TimingMiddleware — neutral observer; start clock early so
         #      timing captures middleware cost too.
-        #   2. ResponseLimitingMiddleware — bound the response before
+        #   2. AgentgrepResponseLimitingMiddleware — bound the response before
         #      ErrorHandlingMiddleware can transform exceptions; keeps the
         #      size cap independent of error path.
         #   3. ErrorHandlingMiddleware — transforms exceptions into proper
@@ -40,7 +42,7 @@ def build_mcp_server() -> FastMCP:
         #      outcome=ok or outcome=error for every call.
         middleware=[
             TimingMiddleware(),
-            ResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
+            AgentgrepResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
             ErrorHandlingMiddleware(transform_errors=True),
             AgentgrepAuditMiddleware(),
         ],
