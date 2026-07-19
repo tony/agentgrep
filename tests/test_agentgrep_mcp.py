@@ -720,6 +720,7 @@ async def test_mcp_search_tool_sorts_records_across_sources(
     assert [record.text for record in data.results] == ["bliss new", "bliss old"]
 
 
+@pytest.mark.slow
 async def test_mcp_find_tool_and_sources_resource(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -755,6 +756,7 @@ async def test_mcp_find_tool_and_sources_resource(
     assert all(row["agent"] == "cursor-ide" for row in source_payload)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     RESULT_SHAPE_CASES,
@@ -804,6 +806,7 @@ def test_mcp_run_status_model_accepts_adr_vocabulary(
     assert RunStatusModel(state=state).state == state
 
 
+@pytest.mark.slow
 async def test_mcp_search_cursor_returns_next_page_without_duplicate(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1354,6 +1357,7 @@ def test_mcp_search_ref_fingerprint_distinguishes_kind_and_role(
     assert refs.make_search_ref(prompt_like) != refs.make_search_ref(history_like)
 
 
+@pytest.mark.slow
 async def test_mcp_list_sources_exposes_searchability_metadata(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1465,6 +1469,7 @@ def test_mcp_capabilities_hide_backend_executable_paths(
     assert backends.json_tool is None
 
 
+@pytest.mark.slow
 async def test_mcp_prompt_guides_search() -> None:
     agentgrep_mcp = load_agentgrep_mcp_module()
 
@@ -1526,6 +1531,7 @@ async def test_audit_middleware_emits_extras(
     assert duration >= 0.0
 
 
+@pytest.mark.slow
 async def test_audit_middleware_redacts_pattern(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1686,6 +1692,7 @@ def test_catalog_agent_selector_tracks_store_catalog() -> None:
     assert set(t.get_args(CatalogAgentSelector)) == catalog_agents | {"all"}
 
 
+@pytest.mark.slow
 async def test_mcp_list_stores_returns_catalog_entries() -> None:
     """``list_stores`` enumerates the StoreCatalog."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1906,6 +1913,7 @@ async def test_mcp_validate_query_substring_match() -> None:
     assert data["matches"] is True
 
 
+@pytest.mark.slow
 async def test_mcp_validate_query_validates_query_language() -> None:
     """``validate_query`` reports query-language parse/compile validity."""
     agentgrep_mcp = load_agentgrep_mcp_module()
@@ -1943,6 +1951,7 @@ async def test_mcp_validate_query_empty_returns_guidance() -> None:
     assert data["error_message"] == "provide terms, query, or both"
 
 
+@pytest.mark.slow
 async def test_mcp_query_language_resource_lists_every_field() -> None:
     """The query-language resource lists each registry field and operators."""
     from agentgrep.query import default_registry, parse_query, scope_widened_for_ast
