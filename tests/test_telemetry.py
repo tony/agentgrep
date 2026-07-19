@@ -2830,7 +2830,7 @@ def test_sanitizing_span_processor_fails_closed(
 
     from agentgrep import _telemetry_otel
 
-    class ProcessorError(RuntimeError):
+    class ProcessorFailureError(RuntimeError):
         """Synthetic processor failure."""
 
     class ThrowingProcessor(SpanProcessor):
@@ -2843,22 +2843,22 @@ def test_sanitizing_span_processor_fails_closed(
             parent_context: Context | None = None,
         ) -> None:
             del span, parent_context
-            raise ProcessorError
+            raise ProcessorFailureError
 
         def on_end(self, span: ReadableSpan) -> None:
             self.ended.append(span)
-            raise ProcessorError
+            raise ProcessorFailureError
 
         def shutdown(self) -> None:
-            raise ProcessorError
+            raise ProcessorFailureError
 
         def force_flush(self, timeout_millis: int = 30_000) -> bool:
             del timeout_millis
-            raise ProcessorError
+            raise ProcessorFailureError
 
     def fail_sanitize(span: ReadableSpan) -> ReadableSpan:
         del span
-        raise ProcessorError
+        raise ProcessorFailureError
 
     raw_span = ReadableSpan("tools/call private")
     delegate = ThrowingProcessor()
