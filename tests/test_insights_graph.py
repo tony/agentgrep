@@ -9,7 +9,7 @@ import typing as t
 import pytest
 
 import agentgrep
-from agentgrep.insights.enrichers import graph as G
+from agentgrep.insights.enrichers import graph as graph_mod
 
 
 def _importer(modules: dict[str, t.Any]) -> t.Callable[[str], t.Any]:
@@ -67,19 +67,19 @@ def test_claude_event_human_vs_tool() -> None:
 
 def test_looks_like_user_ask_filters_tool_noise() -> None:
     """Short prose asks are kept; tool output and dumps are dropped."""
-    assert G.looks_like_user_ask("rebase onto trunk and resolve conflicts")
-    assert not G.looks_like_user_ask("[master 3a9497f] ci: add gate")
-    assert not G.looks_like_user_ask("x" * 2500)
-    assert not G.looks_like_user_ask("M .tmux\n M .tmuxp\n M .zshrc")
+    assert graph_mod.looks_like_user_ask("rebase onto trunk and resolve conflicts")
+    assert not graph_mod.looks_like_user_ask("[master 3a9497f] ci: add gate")
+    assert not graph_mod.looks_like_user_ask("x" * 2500)
+    assert not graph_mod.looks_like_user_ask("M .tmux\n M .tmuxp\n M .zshrc")
 
 
 def test_normalize_ask_collapses_slash_commands() -> None:
     """A wrapped slash-command invocation collapses to clean ``/name args``."""
     wrapped = "<command-message>pr:pr</command-message>\n<command-name>/pr:pr</command-name>"
-    assert G.normalize_ask(wrapped) == "/pr:pr"
+    assert graph_mod.normalize_ask(wrapped) == "/pr:pr"
     with_args = "<command-name>/pr:deslop</command-name><command-args>--apply-rebase</command-args>"
-    assert G.normalize_ask(with_args) == "/pr:deslop --apply-rebase"
-    assert G.normalize_ask("just a normal ask") == "just a normal ask"
+    assert graph_mod.normalize_ask(with_args) == "/pr:deslop --apply-rebase"
+    assert graph_mod.normalize_ask("just a normal ask") == "just a normal ask"
 
 
 def test_reconstruct_turns_classifies_roles_in_order() -> None:
@@ -89,7 +89,7 @@ def test_reconstruct_turns_classifies_roles_in_order() -> None:
         _rec("use the registry", conversation="c1", role="assistant", kind="history"),
         _rec("write a test", conversation="c1"),
     ]
-    turns = G.reconstruct_turns(records)
+    turns = graph_mod.reconstruct_turns(records)
     assert [(turn.position, turn.role) for turn in turns["c1"]] == [
         (0, "user"),
         (1, "assistant"),
@@ -103,7 +103,7 @@ def test_reconstruct_turns_drops_tool_noise_prompts() -> None:
         _rec("add a lint rule", conversation="c1"),
         _rec("[master abc1234] chore: bump deps", conversation="c1"),
     ]
-    turns = G.reconstruct_turns(records)
+    turns = graph_mod.reconstruct_turns(records)
     assert [turn.text for turn in turns["c1"]] == ["add a lint rule"]
 
 
@@ -114,7 +114,7 @@ def test_extract_nodes_builds_structural_edges_and_sequences() -> None:
         _rec("a reply", conversation="c1", role="assistant", kind="history"),
         _rec("second ask", conversation="c1"),
     ]
-    nodes = G.extract_nodes(G.reconstruct_turns(records))
+    nodes = graph_mod.extract_nodes(graph_mod.reconstruct_turns(records))
     assert len(nodes.prompts) == 2
     assert len(nodes.replies) == 1
     assert len(nodes.exchanges) == 1
@@ -127,7 +127,7 @@ def test_topk_similar_edges_links_identical_vectors() -> None:
     """Identical prompt vectors across conversations become a similar edge."""
     numpy = pytest.importorskip("numpy")
     matrix = numpy.array([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=numpy.float32)
-    edges = G.topk_similar_edges(numpy, matrix, ["a", "b", "c"], k=2, threshold=0.99)
+    edges = graph_mod.topk_similar_edges(numpy, matrix, ["a", "b", "c"], k=2, threshold=0.99)
     assert ("a", "b", "similar", 1.0) in edges
 
 
@@ -338,11 +338,11 @@ def test_persist_conversations_uses_vector_override(tmp_path: pathlib.Path) -> N
 
     turns = {
         "c1": [
-            G.Turn(conversation_id="c1", position=0, role="user", text="add a lint rule"),
-            G.Turn(conversation_id="c1", position=1, role="assistant", text="done"),
+            graph_mod.Turn(conversation_id="c1", position=0, role="user", text="add a lint rule"),
+            graph_mod.Turn(conversation_id="c1", position=1, role="assistant", text="done"),
         ]
     }
-    nodes = G.extract_nodes(turns)
+    nodes = graph_mod.extract_nodes(turns)
     prompt_matrix = numpy.array([[1.0, 0.0, 0.0, 0.0]], dtype=numpy.float32)
     reply_matrix = numpy.array([[0.0, 1.0, 0.0, 0.0]], dtype=numpy.float32)
     override_vector = numpy.array([0.0, 0.0, 1.0, 0.0], dtype=numpy.float32)
@@ -355,7 +355,7 @@ def test_persist_conversations_uses_vector_override(tmp_path: pathlib.Path) -> N
 
     store = GraphStore.open(tmp_path / "g.db", sqlite_vec=sqlite_vec, dim=4, model_id="m")
     try:
-        ids, matrix = G._persist_conversations(
+        ids, matrix = graph_mod._persist_conversations(
             store, numpy, turns, nodes, prompt_matrix, reply_matrix, _override
         )
     finally:
@@ -462,11 +462,13 @@ def test_topk_similar_edges_via_knn_matches_dense(tmp_path: pathlib.Path) -> Non
             )
         dense = {
             (a, b)
-            for a, b, _kind, _w in G.topk_similar_edges(numpy, matrix, ids, k=3, threshold=0.5)
+            for a, b, _kind, _w in graph_mod.topk_similar_edges(
+                numpy, matrix, ids, k=3, threshold=0.5
+            )
         }
         streamed = {
             (a, b)
-            for a, b, _kind, _w in G.topk_similar_edges_via_knn(
+            for a, b, _kind, _w in graph_mod.topk_similar_edges_via_knn(
                 lambda vector, k: store.knn("prompt", vector, k=k),
                 matrix,
                 ids,
@@ -499,14 +501,17 @@ def test_lance_vector_backend_returns_nearest(tmp_path: pathlib.Path) -> None:
 
 def test_fitness_heuristics_pure() -> None:
     """The subsequence/contiguity/resolution helpers behave as documented."""
-    assert G._is_subsequence([0, 2], [0, 1, 2, 3]) is True
-    assert G._is_subsequence([2, 0], [0, 1, 2, 3]) is False
-    assert G._is_contiguous([1, 2], [0, 1, 2, 3]) is True
-    assert G._is_contiguous([0, 2], [0, 1, 2, 3]) is False
-    resolved = [G.Turn("c", 0, "user", "deploy the app")]
-    retried = [G.Turn("c", 0, "user", "deploy the app"), G.Turn("c", 1, "user", "still failing")]
-    assert G._conversation_resolved(resolved) is True
-    assert G._conversation_resolved(retried) is False
+    assert graph_mod._is_subsequence([0, 2], [0, 1, 2, 3]) is True
+    assert graph_mod._is_subsequence([2, 0], [0, 1, 2, 3]) is False
+    assert graph_mod._is_contiguous([1, 2], [0, 1, 2, 3]) is True
+    assert graph_mod._is_contiguous([0, 2], [0, 1, 2, 3]) is False
+    resolved = [graph_mod.Turn("c", 0, "user", "deploy the app")]
+    retried = [
+        graph_mod.Turn("c", 0, "user", "deploy the app"),
+        graph_mod.Turn("c", 1, "user", "still failing"),
+    ]
+    assert graph_mod._conversation_resolved(resolved) is True
+    assert graph_mod._conversation_resolved(retried) is False
 
 
 def test_mine_workflows_ranks_resolved_chain_above_retried() -> None:
@@ -527,16 +532,18 @@ def test_mine_workflows_ranks_resolved_chain_above_retried() -> None:
         records.append(_rec("check the logs", conversation=conversation))
         records.append(_rec("still failing", conversation=conversation))
 
-    by_conversation = G.reconstruct_turns(records)
-    nodes = G.extract_nodes(by_conversation)
+    by_conversation = graph_mod.reconstruct_turns(records)
+    nodes = graph_mod.extract_nodes(by_conversation)
     texts = [turn.text for turn in nodes.prompts]
     label_of = {text: index for index, text in enumerate(dict.fromkeys(texts))}
     prompt_labels = [label_of[text] for text in texts]
     prompt_ids = [
-        G._node_id("prompt", turn.conversation_id, turn.position) for turn in nodes.prompts
+        graph_mod._node_id("prompt", turn.conversation_id, turn.position) for turn in nodes.prompts
     ]
 
-    workflows = G._mine_workflows(seq_mod, nodes, prompt_labels, prompt_ids, by_conversation)
+    workflows = graph_mod._mine_workflows(
+        seq_mod, nodes, prompt_labels, prompt_ids, by_conversation
+    )
     assert workflows, "expected at least the two recurring chains"
     by_lead = {w["example"].split(" → ")[0][:12]: w for w in workflows}
     deploy = next(w for k, w in by_lead.items() if k.startswith("deploy"))
@@ -563,7 +570,7 @@ def test_skill_suggestions_ranks_templates_and_lifts_cap() -> None:
         "summarize",
         "validate",
     ]
-    prompts: list[G.Turn] = []
+    prompts: list[graph_mod.Turn] = []
     clusters: list[list[int]] = []
     # 12 distinct recurring asks with decreasing support (14..3), each spanning
     # three conversations, so the raised cap and the ranking are both observable.
@@ -573,7 +580,7 @@ def test_skill_suggestions_ranks_templates_and_lifts_cap() -> None:
         for occurrence in range(support):
             members.append(len(prompts))
             prompts.append(
-                G.Turn(
+                graph_mod.Turn(
                     conversation_id=f"conv-{index}-{occurrence % 3}",
                     position=occurrence,
                     role="user",
@@ -582,7 +589,7 @@ def test_skill_suggestions_ranks_templates_and_lifts_cap() -> None:
             )
         clusters.append(members)
 
-    suggestions = G._skill_suggestions([], clusters, prompts)
+    suggestions = graph_mod._skill_suggestions([], clusters, prompts)
     templates = [s for s in suggestions if s["type"] == "template"]
     assert len(templates) > 8  # the old hard cap of 8 is lifted
     scores = [s["score"] for s in templates]
@@ -595,6 +602,6 @@ def test_skill_suggestions_drops_barely_recurring_macros() -> None:
         {"support": 2, "example": "commit → push", "pattern": ["commit", "push"]},
         {"support": 4, "example": "test → commit → push", "pattern": ["test", "commit", "push"]},
     ]
-    suggestions = G._skill_suggestions(workflows, [], [])
+    suggestions = graph_mod._skill_suggestions(workflows, [], [])
     macros = [s for s in suggestions if s["type"] == "macro"]
     assert [s["support"] for s in macros] == [4]  # the support-2 chain is dropped

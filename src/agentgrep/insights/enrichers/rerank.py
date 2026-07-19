@@ -134,12 +134,11 @@ def _cross_encoder_keeper(
             related[j].append(probability)
         mean_related = [(sum(values) / len(values)) if values else 1.0 for values in related]
         median = statistics.median(mean_related)
-        kept = [
+        return [
             member
             for member, mean in zip(members, mean_related, strict=True)
             if not (mean < _CE_ABS_FLOOR and mean < _CE_REL_RATIO * median)
         ]
-        return kept
 
     return _keep
 
@@ -170,11 +169,10 @@ def _tfidf_keeper(texts: list[str], import_module: ImportModule) -> t.Any:
             sum(a * b for a, b in zip(row, centroid, strict=True)) / centroid_norm for row in unit
         ]
         median = statistics.median(cohesion)
-        kept = [
+        return [
             member
             for member, value in zip(members, cohesion, strict=True)
             if not (value < _TFIDF_ABS_FLOOR and value < _TFIDF_REL_RATIO * median)
         ]
-        return kept
 
     return _keep
