@@ -63,10 +63,11 @@ comprehension tax for the advanced one.
 ## Examples that run
 
 Console examples under `docs/` are executed, not decorative: the
-documentation suite in the root `conftest.py` collects every
-```` ```console ```` fence (plus `README.md` and `fastmcp.json`) and
-runs it as a literal shell script — `testpaths` includes `docs`, so
-pytest runs every one on `just test`.
+documentation suite collects every ```` ```console ```` fence (plus
+`README.md` and `fastmcp.json`) and runs it as a literal shell script.
+`testpaths` includes `docs`; executable examples carry the `documentation`
+and `slow` markers, so `just test-docs` runs every one while the default loop
+keeps them opt-in.
 
 - Examples run in a temp-home sandbox seeded with sample stores from
   `tests/samples` (Codex history and session JSONL, Claude Code
@@ -136,7 +137,7 @@ list left exact. Read it before reshaping another page.
 - Is anything framed by its flag or record field that should be named
   by concept instead?
 - Are the MCP, library, and scripting parts clearly marked opt-in?
-- Do the console examples pass under `just test`, and did you leave
+- Do the console examples pass under `just test-docs`, and did you leave
   every code block, table, error string, and cross-reference exact?
 - Did `just build-docs` stay clean — no new warning, no broken
   cross-reference?

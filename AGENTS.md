@@ -98,26 +98,64 @@ uv pip install --editable . -G dev
 
 ### Running Tests
 
-```bash
-# Run all tests
-just test
-# or directly with pytest
-uv run pytest
+The literal pytest loop selects tests that are neither `slow` nor `legacy`:
 
-# Run a single test file
-uv run pytest tests/test_agentgrep.py
-
-# Run a specific test
-uv run pytest tests/test_agentgrep.py::test_json_output_falls_back_without_pydantic
-
-# Run tests with test watcher
-just start
-# or
-uv run ptw .
-
-# Run tests with doctests
-uv run ptw . --now --doctest-modules
+```console
+$ uv run py.test
 ```
+
+The equivalent recipe is:
+
+```console
+$ just test
+```
+
+Run the exhaustive suite, including slow and consolidated legacy coverage:
+
+```console
+$ just test-all
+```
+
+Run one default-lane test file:
+
+```console
+$ uv run pytest tests/test_query_parser.py
+```
+
+Run a slow node by clearing the default selector:
+
+```console
+$ uv run pytest -m "" tests/test_agentgrep_tui.py::test_streaming_ui_app_mounts_cleanly
+```
+
+Run tests continuously with the default selector:
+
+```console
+$ just start
+```
+
+### Test clusters by changed files
+
+Run the default loop first. Add every resource cluster that owns a changed
+surface:
+
+| Changed files | Additional cluster |
+| --- | --- |
+| `src/agentgrep/ui/**` or TUI tests | `just test-tui` |
+| `src/agentgrep/mcp/**`, `fastmcp.json`, or MCP schemas | `just test-mcp` |
+| `README.md`, `docs/**`, or `src/pytest_documentation/**` | `just test-docs` |
+| Packaging, lockfiles, client configuration, skills, or module boundaries | `just test-setup` |
+| Compatibility facade, legacy CLI helpers, discovery, readers, or adapters | `just test-legacy` |
+
+Resource markers describe ownership; `slow` describes execution cost. Prefer a
+module-level resource marker for a coherent file and a function-level `slow`
+marker for mounted apps, fresh MCP clients, subprocesses, Sphinx builds, races,
+or exhaustive matrices. New unmarked tests run by default. Do not add new tests
+to `tests/test_agentgrep.py`; move them to a focused module instead.
+
+Before reporting a branch complete, run `just test-all` through the required
+completion gate below. CI clears the default marker expression and runs the
+exhaustive suite.
 
 ### Linting and Type Checking
 
@@ -151,10 +189,10 @@ just watch-ty
 Follow this workflow for code changes:
 
 1. **Format First**: `uv run ruff format .`
-2. **Run Tests**: `uv run pytest`
+2. **Run Default Tests**: `uv run py.test`
 3. **Run Linting**: `uv run ruff check . --fix --show-fixes`
 4. **Check Types**: `uv run ty check`
-5. **Verify Tests Again**: `uv run pytest`
+5. **Verify All Tests**: `just test-all`
 
 ### Documentation
 
@@ -176,7 +214,8 @@ the branch done.
 
 Recommended focused checks:
 
-- Docs-only AGENTS/ADR edits: `git diff --check` and `just build-docs`.
+- Docs-only AGENTS/ADR edits: `git diff --check`, `just test-docs`, and
+  `just build-docs`.
 - Python implementation edits: `uv run ruff check .`, `uv run ty check`, and
   the touched pytest files or node ids.
 - CLI/MCP/query surface edits: add the relevant CLI, MCP, query, event-stream,
@@ -192,7 +231,7 @@ Before describing code as complete, working, PR-ready, merge-ready, or
 release-ready, run the full repository gate:
 
 ```console
-$ rm -rf docs/_build; uv run ruff check . --fix --show-fixes; uv run ruff format .; uv run ty check; uv run py.test --reruns 0 -vvv; just build-docs;
+$ rm -rf docs/_build; uv run ruff check . --fix --show-fixes; uv run ruff format .; uv run ty check; uv run py.test -m "" --reruns 0 -vvv; just build-docs;
 ```
 
 Do not claim completion until that command exits successfully. If it fails, fix
