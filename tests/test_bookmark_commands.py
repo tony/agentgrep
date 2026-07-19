@@ -37,9 +37,7 @@ def test_bookmark_commands_are_hud_extensions() -> None:
     assert by_name["bookmark"].argument_hint == "[record|thread|content]"
     assert by_name["bookmark"].accepts_args is True
     assert by_name["bookmarks"].argument_hint == ""
-    assert commands.command_menu_label(by_name["bookmark"]) == (
-        "bookmark [record|thread|content]"
-    )
+    assert commands.command_menu_label(by_name["bookmark"]) == ("bookmark [record|thread|content]")
     assert commands.command_menu_label(by_name["bookmarks"]) == "bookmarks"
 
 

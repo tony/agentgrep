@@ -219,8 +219,7 @@ def test_bookmark_cli_human_list_output(
     assert agentgrep.main(["bookmark", "list"]) == 0
 
     assert capsys.readouterr().out == (
-        f"thread\t{THREAD_ID}\t-\t{CREATED_AT}\n"
-        f"record\t{RECORD_ID}\t{CONTENT_ID}\t{CREATED_AT}\n"
+        f"thread\t{THREAD_ID}\t-\t{CREATED_AT}\nrecord\t{RECORD_ID}\t{CONTENT_ID}\t{CREATED_AT}\n"
     )
 
 

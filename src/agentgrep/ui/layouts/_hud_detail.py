@@ -328,9 +328,7 @@ class _HudDetailBase(LayoutScreen):
         record_id = None if identity is None else identity.record_id
         bookmarked_ids = t.cast("set[str]", getattr(self, "_bookmarked_ids", set()))
         record_value = (
-            f"★ {record_id}"
-            if record_id is not None and record_id in bookmarked_ids
-            else record_id
+            f"★ {record_id}" if record_id is not None and record_id in bookmarked_ids else record_id
         )
         identity_rows = (
             ("Record:", record_value),

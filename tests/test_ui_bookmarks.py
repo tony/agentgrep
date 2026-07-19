@@ -477,12 +477,7 @@ async def test_loaded_snapshot_refreshes_star_from_cached_identity(
             hud._LoadedBookmarks(entries=(entry,), error=None),
         )
 
-        live_header = next(
-            renderable
-            for renderable in app.screen._detail.content.renderables
-            if hasattr(renderable, "plain") and "Agent:" in renderable.plain
-        )
-        assert f"Record: ★ {prepared.record_id}" in live_header.plain
+        assert f"Record: ★ {prepared.record_id}" in app.screen._detail_header_text.plain
 
 
 async def test_rapid_double_b_accepts_one_mutation(
@@ -1052,12 +1047,7 @@ async def test_large_body_toggle_keeps_identity_marker_single_line(
         app.screen.toggle_bookmark("record")
         await _settle_workers(app, pilot)
 
-        live_header = next(
-            renderable
-            for renderable in app.screen._detail.content.renderables
-            if hasattr(renderable, "plain") and "Agent:" in renderable.plain
-        )
-        assert f"Record: ★ {prepared.record_id}" in live_header.plain
+        assert f"Record: ★ {prepared.record_id}" in app.screen._detail_header_text.plain
         header = app.screen._build_detail_header(record, prepared, width=40)
         lines = [line.plain for line in header.wrap(Console(), 38)]
         record_lines = [line for line in lines if line.startswith("R:")]
