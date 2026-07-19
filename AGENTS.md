@@ -98,7 +98,7 @@ uv pip install --editable . -G dev
 
 ### Running Tests
 
-The literal pytest loop selects tests that are neither `slow` nor `legacy`:
+The literal pytest loop selects tests that are not marked `slow`:
 
 ```console
 $ uv run py.test
@@ -110,7 +110,7 @@ The equivalent recipe is:
 $ just test
 ```
 
-Run the exhaustive suite, including slow and consolidated legacy coverage:
+Run the exhaustive suite, including slow coverage:
 
 ```console
 $ just test-all
@@ -119,13 +119,15 @@ $ just test-all
 Run one default-lane test file:
 
 ```console
-$ uv run pytest tests/test_query_parser.py
+$ uv run pytest tests/test_pydantic_boundary.py
 ```
 
 Run a slow node by clearing the default selector:
 
 ```console
-$ uv run pytest -m "" tests/test_agentgrep_tui.py::test_streaming_ui_app_mounts_cleanly
+$ uv run pytest \
+    -m "" \
+    tests/test_mcp_response_limiting.py::test_client_accepts_truncated_structured_tool_as_error
 ```
 
 Run tests continuously with the default selector:
@@ -139,19 +141,20 @@ $ just start
 Run the default loop first. Add every resource cluster that owns a changed
 surface:
 
-| Changed files | Additional cluster |
+| Changed files | Required lane |
 | --- | --- |
+| Compatibility facade, CLI helpers, discovery, readers, adapters, or query/engine code | `just test` |
 | `src/agentgrep/ui/**` or TUI tests | `just test-tui` |
 | `src/agentgrep/mcp/**`, `fastmcp.json`, or MCP schemas | `just test-mcp` |
 | `README.md`, `docs/**`, or `src/pytest_documentation/**` | `just test-docs` |
-| Packaging, lockfiles, client configuration, skills, or module boundaries | `just test-setup` |
-| Compatibility facade, legacy CLI helpers, discovery, readers, or adapters | `just test-legacy` |
+| `fastmcp.json` or retained setup configuration | `just test-setup` |
+| Packaging, lockfiles, client configuration, skills, or module boundaries | `just test-all` |
 
 Resource markers describe ownership; `slow` describes execution cost. Prefer a
 module-level resource marker for a coherent file and a function-level `slow`
 marker for mounted apps, fresh MCP clients, subprocesses, Sphinx builds, races,
 or exhaustive matrices. New unmarked tests run by default. Do not add new tests
-to `tests/test_agentgrep.py`; move them to a focused module instead.
+to a catch-all module; give each critical contract a focused module instead.
 
 Before reporting a branch complete, run `just test-all` through the required
 completion gate below. CI clears the default marker expression and runs the
@@ -476,10 +479,10 @@ search behavior. Keep genuinely optional accelerators behind guarded imports.
 
 agentgrep uses pytest with `--doctest-modules` enabled by default. Collection
 spans `src/agentgrep`, `src/pytest_documentation`, `docs`, `fastmcp.json`, and
-`tests`. Focused modules own CLI, engine, query, MCP, docs, setup, and TUI
-contracts; `test_agentgrep.py` retains the consolidated legacy compatibility
-cluster, and the extracted `test_agentgrep_tui*.py` modules own its Textual
-matrix.
+`tests`. Source doctests and executable documentation examples provide the
+baseline. Focused modules under `tests/` retain only critical engine
+cancellation, MCP response-limiting, Pydantic-boundary, and TUI watchdog
+contracts plus shared fixture infrastructure.
 
 ### Testing Guidelines
 
@@ -572,8 +575,8 @@ actually work offline.
 - Any function that reads the user's home directory, opens a Codex /
   Claude / Cursor store, spawns `ripgrep`, opens a SQLite database, or
   starts the Textual TUI. Use a unit test with fixtures instead.
-- MCP tool implementations — they require a FastMCP context. Test via
-  `tests/test_agentgrep_mcp.py`.
+- MCP tool implementations — they require a FastMCP context. Add a focused MCP
+  contract and run `just test-mcp`.
 
 **CRITICAL RULES for doctests that exist:**
 - They MUST actually execute — never comment out function calls or

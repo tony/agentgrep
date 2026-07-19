@@ -12,12 +12,12 @@ all_files := "find . -type f -not -path '*/\\.*' | grep -i '.*[.]py$\\|.*[.]rst$
 default:
     @just --list
 
-# Run the default non-slow, non-legacy pytest lane.
+# Run the default non-slow pytest lane.
 [group: 'test']
 test *args:
     uv run py.test {{ args }}
 
-# Run every configured test, including slow and legacy coverage.
+# Run every configured test, including slow coverage.
 [group: 'test']
 test-all *args:
     uv run py.test {{ args }} -m ""
@@ -32,7 +32,7 @@ test-docs *args:
 test-mcp *args:
     uv run py.test {{ args }} -m mcp
 
-# Run packaging, configuration, and repository infrastructure.
+# Run retained setup and repository-configuration coverage.
 [group: 'test']
 test-setup *args:
     uv run py.test {{ args }} -m setup
@@ -41,11 +41,6 @@ test-setup *args:
 [group: 'test']
 test-tui *args:
     uv run py.test {{ args }} -m tui
-
-# Run the consolidated compatibility cluster.
-[group: 'test']
-test-legacy *args:
-    uv run py.test {{ args }} -m legacy
 
 # Run every test excluded only for execution cost.
 [group: 'test']

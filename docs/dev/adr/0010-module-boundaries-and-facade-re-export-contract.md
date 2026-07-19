@@ -101,8 +101,8 @@ TypedDict serializers rather than revalidating their payloads through
 `TypeAdapter`. Heavy required frontend dependencies stay behind lazy, call-site
 imports, while optional accelerators use guarded imports. The `agentgrep --help`
 cold-start budget is preserved by keeping the query registry, the events module,
-and the per-agent parsers off the eager `import agentgrep` path;
-`tests/test_import_time.py` pins it.
+and the per-agent parsers off the eager `import agentgrep` path. Changes to that
+import boundary require a focused cold-start contract before they land.
 
 ### No native rewrite is implied
 

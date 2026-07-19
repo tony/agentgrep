@@ -44,8 +44,9 @@ Include one focused invalidation test for every cross-run cache.
 - MCP schema/annotation contracts plus one tool round trip.
 - Engine cancellation, ordering, and result-shape invariants at the lowest
   layer that proves them.
-- Static Textual message-pump safety contracts, with a minimal mounted smoke
-  test kept `slow` when mounting cannot meet the default budget.
+- The deterministic Textual watchdog oracle. Use the repo-local pump skill for
+  manual static review; add a `slow` mounted smoke only for a unique terminal
+  bootstrap regression that Pilot cannot prove.
 - Packaging, entry-point, and documentation examples that protect installation
   and setup behavior.
 
