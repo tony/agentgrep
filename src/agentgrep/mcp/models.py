@@ -228,6 +228,7 @@ class SearchRequestModel(AgentGrepModel):
     cwd: str | None = None
     repo: str | None = None
     branch: str | None = None
+    human: t.Literal["true", "false"] | None = None
 
 
 class SearchToolResponse(AgentGrepModel):

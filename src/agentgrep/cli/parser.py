@@ -769,6 +769,7 @@ _QUERY_FIELD_NAMES: frozenset[str] = frozenset(
         "project",
         "cwd_hash",
         "text",
+        "human",
     },
 )
 

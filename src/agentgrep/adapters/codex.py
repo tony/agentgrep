@@ -123,6 +123,31 @@ def _codex_turn_context_model(path: pathlib.Path) -> str | None:
     return as_optional_str(t.cast("dict[str, object]", payload).get("model"))
 
 
+def codex_event_is_human_authored(payload: object) -> bool:
+    """Return whether a Codex ``response_item`` payload is a user-typed prompt.
+
+    Codex records tool invocations and their results as ``response_item``
+    payloads alongside chat messages. ``function_call`` / ``function_call_output``
+    (and ``reasoning``) are machine-authored; only a ``role=user`` message is
+    the user's ask.
+
+    Examples
+    --------
+    >>> codex_event_is_human_authored({"role": "user", "content": "hi"})
+    True
+    >>> codex_event_is_human_authored({"type": "function_call_output", "output": "..."})
+    False
+    >>> codex_event_is_human_authored({"type": "message", "role": "assistant"})
+    False
+    """
+    if not isinstance(payload, dict):
+        return True
+    mapping = t.cast("dict[str, object]", payload)
+    if mapping.get("type") in ("function_call", "function_call_output", "reasoning"):
+        return False
+    return mapping.get("role") == "user"
+
+
 def parse_codex_session_file(
     source: SourceHandle,
     *,
@@ -223,7 +248,11 @@ def parse_codex_session_file(
         )
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source,
+            candidate,
+            human_typed=codex_event_is_human_authored(payload),
+        )
 
 
 def parse_codex_legacy_session_file(
@@ -259,7 +288,11 @@ def parse_codex_legacy_session_file(
         )
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source,
+            candidate,
+            human_typed=codex_event_is_human_authored(item),
+        )
 
 
 def parse_codex_history_file(
