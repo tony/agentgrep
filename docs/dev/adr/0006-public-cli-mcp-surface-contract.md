@@ -51,6 +51,8 @@ The public surface owns:
   dedupe, and case handling;
 - result payloads, pagination, diagnostics, run status, and drilldown handles
   as defined by ADR 0004;
+- public identity and reference field names defined by focused identity and
+  export decisions;
 - source catalog vocabulary and coverage states;
 - MCP loop shape and next-action guidance.
 
@@ -141,6 +143,12 @@ Display paths may be rendered for humans, but MCP clients should use stable
 identifiers, result cursors, and `RecordRef` handles rather than local paths
 as primary inputs.
 
+`RecordRef` is the public physical drilldown handle defined by ADR 0004. It is
+not interchangeable with canonical content, record, or thread identity, and a
+private corpus occurrence, conversation, locator, row, or generation key must
+not be exposed as one of those public identities. A public thread identifier is
+an equality and grouping field; it does not create a conversation resolver.
+
 ### MCP loop
 
 MCP tools should support this loop:
@@ -160,6 +168,13 @@ grounded in result state, such as "request next page", "narrow by agent",
 "inspect this record", or "enable non-default source coverage". Next actions
 must not include prompt text, secret values, raw argv, or local absolute paths.
 
+Next-action kinds form an additive public vocabulary. Each kind owns its own
+typed patch; fields required by one kind are not required by unrelated actions.
+Progressive search therefore may define effort-escalation and scope-broadening
+actions without forcing pagination, inspection, query-refinement, export, or
+insights actions to carry a target search effort. Consumers ignore unknown
+action kinds while continuing to honor result status and coverage.
+
 ### Result payloads
 
 ADR 0004 owns the event streams and result type vocabulary. This ADR makes that
@@ -171,6 +186,13 @@ vocabulary public-surface policy:
   records, and `RecordRef` handles by default.
 - Pydantic models and FastMCP schemas adapt those fields for MCP clients but do
   not own the semantics.
+
+Storage decisions may supply evidence to these surfaces, but they do not create
+new commands, portable formats, import contracts, or public resolver handles.
+A portable export command remains owned by its focused export decision. A
+future conversation drilldown token or corpus import requires a separate
+public-surface and privacy contract rather than an internal storage key exposed
+through convenience.
 
 ## Consequences
 
@@ -212,7 +234,11 @@ ADR 0001 owns storage-version evidence and source compatibility. ADR 0004 owns
 planning, execution, events, result payloads, run status, pagination,
 diagnostics, and record references. ADR 0005 owns local insights reports and
 model-backed enrichment. This ADR owns how those names appear in public CLI and
-MCP surfaces.
+MCP surfaces. {ref}`adr-durable-prompt-corpus-derived-search-indexes` owns
+private prompt-corpus storage, not public identity or export vocabulary.
+{ref}`adr-progressive-deep-search` owns search-effort semantics and its two
+deep-search action kinds. {ref}`adr-prompt-guided-conversation-routing` owns
+targeted routing policy, not new public identity fields.
 
 ## Final position
 

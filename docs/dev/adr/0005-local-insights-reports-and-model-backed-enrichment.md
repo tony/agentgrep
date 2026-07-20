@@ -88,9 +88,9 @@ The pipeline has these pieces:
 3. **Builtin analysis**: deterministic counters, timelines, term summaries,
    repeated phrases, ADR 0006 source coverage, empty/error states, and
    representative `RecordRef` handles.
-4. **Optional enrichers**: installed backends may add classical ML clusters,
-   embeddings, persistent indexes, or local-model summaries to the report
-   model.
+4. **Optional enrichers**: explicitly selected backends may add classical ML
+   clusters, embeddings, report-specific indexes, or local-model summaries to
+   the report model.
 5. **Evidence policy**: the report distinguishes aggregate facts,
    `RecordRef` evidence, sampled snippets, generated summaries, and
    diagnostics.
@@ -137,8 +137,9 @@ $ agentgrep insights report --level llm --backend litert-lm --model gemma-3n
 $ agentgrep insights report --level best-installed
 ```
 
-`builtin` is the default. `best-installed` may select the highest usable
-installed backend, but it must not install packages or download models.
+`builtin` is the default. An explicit `best-installed` insights request may
+select the highest usable installed insights backend, but it must not install
+packages, download models, or change search or routing policy.
 
 ## Dependency Levels
 
@@ -151,7 +152,7 @@ clear capability message instead of a traceback.
 | 1 | `agentgrep[insights-html]` | `jinja2`, `platformdirs` if not promoted to core | report templates, report profiles, platform cache/report directories | no models |
 | 2 | `agentgrep[insights-ml]` | `scikit-learn` | TF-IDF terms, classical clustering, topic candidates, outlier sessions | no model downloads |
 | 3 | `agentgrep[insights-embeddings]` | `sentence-transformers` | dense or sparse embeddings, semantic clusters, semantic dedupe, nearest-session examples | installed or explicitly provisioned embedding models |
-| 4 | `agentgrep[insights-index]` | SQLite registry tables, `sqlite-vec`, `tantivy-py`; Chroma remains experimental | persistent local indexes, incremental refreshes, nearest-neighbor or full-text report reuse | reuses installed embedding models |
+| 4 | `agentgrep[insights-index]` | SQLite registry tables, `sqlite-vec`, `tantivy-py`; Chroma remains experimental | persistent enrichment indexes, incremental refreshes, nearest-neighbor or full-text report reuse | reuses installed embedding models |
 | 5 | `agentgrep[insights-llm]` | Ollama over local HTTP, LiteRT-LM, later `llama-cpp-python` if wheels and install UX are acceptable | local narrative synthesis, cluster naming, unanswered-thread extraction, report refinement from evidence | installed or explicitly provisioned local LLMs |
 
 The base import path must stay lazy:
@@ -168,6 +169,28 @@ The base import path must stay lazy:
 `agentgrep[insights-all]` may install levels 1 through 4 once those levels are
 stable. Level 5 remains separate until its platform and wheel story is good
 enough for normal users.
+
+## Enrichment and search boundaries
+
+This ADR owns insights reports, optional dependency levels, model provisioning,
+embedding and model provenance, and enrichment-cache lifecycle. Enrichment
+artifacts are independently versioned and removable. They live outside the
+durable prompt corpus and outside exact prompt-search index generations.
+Deleting, rebuilding, or changing an enrichment must not migrate prompt
+evidence, alter exact-search coverage, or change canonical public identities.
+
+An enrichment may reference a record, content, or thread identity owned by the
+public identity contract, but its own cache key is not a new public identity.
+Its derivation key includes the complete selected backend, model, policy, and
+input-contract versions. An enrichment never becomes authority for whether an
+exact query matched.
+
+Search effort is not an insights quality level. If an insights operation calls
+query-to-record search internally, it selects an explicit search effort and
+reports that nested search's coverage. An insights level, installed optional
+dependency, or available model never authorizes deeper source reads, index
+construction, model loading, or a different routing policy on behalf of a
+search request.
 
 ## Model Provisioning
 
@@ -231,7 +254,7 @@ passes an unresolved model name into the executor.
 Cache directories follow explicit precedence:
 
 1. `AGENTGREP_MODEL_DIR` for model artifacts.
-2. `AGENTGREP_CACHE_DIR` for indexes and report caches.
+2. `AGENTGREP_CACHE_DIR` for enrichment indexes and report caches.
 3. Platform cache directories.
 4. `XDG_CACHE_HOME` on Unix-like systems.
 5. `LOCALAPPDATA` on Windows when native Windows support exists.
@@ -356,7 +379,7 @@ The docs should treat examples as executable behavior. Console examples for setu
 doctor, model install, and report generation need either executable fixtures or
 explicit non-executed annotations with a reason.
 
-## Relationship to ADR 0004 and ADR 0006
+## Relationship to other ADRs
 
 ADR 0004 owns event streams, result payloads, run status, pagination,
 diagnostics, and `RecordRef`. Insights is a specialized producer of report
@@ -367,14 +390,21 @@ and the MCP loop shape. Insights report commands, MCP tools, source coverage,
 and next actions must use those public names so agents can move between search
 and insights without learning a second vocabulary.
 
+{ref}`adr-durable-prompt-corpus-derived-search-indexes` may supply
+canonical prompt evidence and exact-search read models, but this ADR does not
+write either one. {ref}`adr-progressive-deep-search` owns search effort, and
+{ref}`adr-prompt-guided-conversation-routing` owns targeted conversation
+selection. Model or embedding support installed for insights does not activate
+either search behavior.
+
 ## Consequences
 
 The builtin report stays fast, portable, and useful. Users can get immediate
 activity summaries without learning about embeddings or local model runtimes.
 
 Power users get a clear upgrade path. They can add one level at a time, inspect
-what changed, cache expensive work, and remove model artifacts or indexes when
-needed.
+what changed, cache expensive work, and remove model artifacts or enrichment
+indexes when needed.
 
 The cost is a larger compatibility matrix. Optional extras, model registries,
 daemon reachability, platform caches, and integration tests all need careful

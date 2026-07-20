@@ -80,14 +80,16 @@ The architecture has six layers:
 1. **Query request**: immutable user intent, including terms, field predicates,
    scope, agents, limits, dedupe, ranking, and cancellation policy.
 2. **Logical plan**: a normalized, frontend-neutral plan describing source
-   roles, source predicates, record predicates, ordering, limits, dedupe, and
-   required capabilities.
+   roles, source predicates, record predicates, ordering, limits, dedupe,
+   required capabilities, and whether source selection claims complete or
+   approximate coverage.
 3. **Planner/optimizer**: rewrites the logical plan into cheaper equivalent
    work, pushes source predicates into discovery, chooses direct lookup paths,
    and avoids version metadata or source construction that is not needed for
    the query.
 4. **Physical plan**: an ordered set of source tasks with adapter strategies,
-   cost hints, concurrency limits, output ordering rules, and fallback rules.
+   cost hints, concurrency limits, output ordering rules, fallback rules, and
+   the declared source-selection basis.
 5. **Execution driver**: runs the physical plan using inline, threaded, async,
    or future worker-backed execution while preserving the same events and
    result semantics.
@@ -106,13 +108,16 @@ all public APIs until implemented and documented.
 
 `QueryRequest`
 : Frozen user intent. It includes query text or a compiled query, target
-  scope, selected agents, record limit, dedupe, ranking mode, and a
-  cancellation token. It does not include output formatting.
+  scope, selected agents, declared order, record limit, dedupe, ranking mode,
+  search effort for query-to-record search, and a cancellation token.
+  Frontends normalize these compatibility-sensitive values before planning.
+  The request does not include output formatting.
 
 `LogicalSearchPlan`
 : Frontend-neutral work description. It contains source-role requirements,
   field predicates, text predicates, source predicates, record predicates,
-  ordering, dedupe, and limit semantics.
+  search effort, ordering, dedupe, limit semantics, and the complete-versus-
+  approximate source-selection claim.
 
 `AdapterCapability`
 : Per-adapter declarations for cheap operations: metadata-only discovery,
@@ -123,9 +128,13 @@ all public APIs until implemented and documented.
 `PhysicalSearchPlan`
 : Executable plan made of `SourceTask` items. Each task chooses one adapter
   strategy, declares whether it can stream records, records whether it emits
-  newest-first records, records whether it may stop after satisfying the query
-  limit, records scheduler-facing cost and source-group hints, and records how
-  output order will be restored when work runs concurrently.
+  newest-first records, records what source-order evidence can prove a safe
+  frontier stop under the query limit, records scheduler-facing cost and
+  source-group hints, and records how output order will be restored when work
+  runs concurrently. The plan also
+  records whether its task set is the complete eligible source universe, a
+  provably equivalent pruned universe, or an explicitly approximate selected
+  universe.
 
 `ExecutionDriver`
 : The scheduling boundary. The first required drivers are an inline
@@ -136,9 +145,10 @@ all public APIs until implemented and documented.
 
 `SourceScanResult`
 : The source-local execution boundary. A worker scans one `SourceTask` and
-  returns candidates, counters, and timing. Global dedupe, top-K ordering,
-  frontier pruning, and record emission stay with the driver so worker
-  completion order cannot change search semantics.
+  returns locally sorted candidates, counters, and timing. The single-owner
+  collector, coordinated by the driver, exclusively owns global dedupe,
+  ordering, frontier proof, limit, and record emission so worker completion
+  order cannot change search semantics.
 
 `SourceScanBatch`
 : The incremental source-local execution boundary. A source scan may yield
@@ -148,11 +158,12 @@ all public APIs until implemented and documented.
   scheduling is an execution-driver choice, not a parser behavior change.
 
 `LimitPolicy`
-: The scheduler-local rule for deciding whether queued lower-priority sources
-  can be skipped once enough candidates have reached the owner-thread
-  frontier. The default policy preserves the current source-order frontier
-  behavior; stricter global-newest policies can be added behind the same typed
-  boundary when source metadata can prove them.
+: The collector-owned proof for deciding whether an admitted, queued source can
+  be skipped after enough candidates reach the owner-thread frontier. It may
+  skip only when verified source metadata proves no unexamined record can
+  outrank the current k-th record under the declared order. Approximate routing
+  selects its work universe before this stage and never authorizes a frontier
+  skip inside that universe.
 
 `SearchEvent` / `FindEvent`
 : The stream types. Existing events remain the baseline. Future events may
@@ -187,8 +198,10 @@ then expose that state through the frontend result payload.
   responses, and TUI completion chrome.
 
   `complete`
-  : Every planned source and batch that could affect the requested result set
-    was examined.
+  : Every eligible source and batch that could affect the requested result set
+    was examined, or the planner proved that each omitted source could not
+    affect it. Finishing every source in a heuristically selected subset is not
+    `complete`.
 
   `bounded`
   : The run intentionally stopped at a documented semantic bound, such as a
@@ -209,8 +222,8 @@ then expose that state through the frontend result payload.
 
   `approximate`
   : The run used an accepted approximation whose assumptions can affect
-    completeness, such as mtime-as-recency or bounded newest-first scanning
-    across stores with shared dedupe keys.
+    completeness, such as heuristic source selection, mtime-as-recency, or
+    bounded newest-first scanning across stores with shared dedupe keys.
 
   `failed`
   : The run stopped because of an unrecovered error. Partial results may be
@@ -234,7 +247,7 @@ one below names the layer that owes it.
 | `bounded` | the same helpers, with `reason="page_limit"`, when a page has a `next_cursor` | — |
 | `truncated` | none | the sinks that own an output budget: MCP response limits, and the JSON/NDJSON writers |
 | `cancelled` | none | the execution driver's cancellation path (`SearchControl`), surfaced through the collectors |
-| `approximate` | none | the planner, wherever mtime-as-recency or a bounded newest-first scan is used (see {ref}`adr-result-order-limit-and-streaming-merge`, OL-1) |
+| `approximate` | none | the planner, wherever heuristic source selection, mtime-as-recency, or a bounded newest-first scan can omit a result that would otherwise qualify (see {ref}`adr-result-order-limit-and-streaming-merge`) |
 | `failed` | none | the collectors, on an unrecovered source or run error |
 
 The CLI JSON and NDJSON payloads carry no run status at all yet; only the MCP
@@ -268,7 +281,12 @@ Minimum result payload fields:
 : The pagination type. `next_cursor` is opaque, stable only for the
   documented cursor lifetime, and must carry enough planner/execution state to
   resume without callers reconstructing source paths. Absence of `next_cursor`
-  means there is no supported next-page request for that result payload.
+  means there is no supported next-page request for that result payload. Every
+  cursor binds the normalized request, validated source snapshot and a
+  collision-free last-emitted key under its owning order contract; record-result
+  cursors follow ADR 0014. A cursor over an approximate selected universe must
+  additionally preserve or validate that exact selection; it may not silently
+  choose a new universe for the next page.
 
 `Diagnostic`
 : A privacy-safe warning or error record with a stable code, severity, message,
@@ -276,13 +294,17 @@ Minimum result payload fields:
   not include prompt text, raw argv, secret values, or local absolute paths.
 
 `RecordRef`
-: An opaque handle for result drilldown. It identifies the emitted record or
-  source-scoped record position through a stable, private representation chosen
-  by agentgrep. Callers use the handle with an inspect/drilldown operation
+: An opaque physical handle for result drilldown. It resolves an emitted record
+  or source-scoped record position through a private representation chosen by
+  agentgrep. It is not a canonical equality, grouping, bookmark, or export
+  identity, and private repository keys do not become canonical public identity
+  merely because the handle resolves through them. Callers use the handle with
+  an inspect/drilldown operation
   instead of building tool calls from local file paths, adapter ids, or record
-  offsets. Source path, adapter id, and line/offset metadata may be included as
-  display or debug metadata, but they are not the primary public drilldown
-  input.
+  offsets. A public conversation resolver requires a separate public-surface
+  decision; a public thread identifier alone does not imply resolution. Source
+  path, adapter id, and line or offset metadata may still appear as display or
+  local debug metadata, but they are not the primary public drilldown input.
 
 MCP, JSON, and NDJSON collectors must preserve these result fields by default.
 Collecting only `RecordEmitted` events and discarding started, progress,
@@ -291,10 +313,22 @@ warning, cancellation, and finished events is not compliant with this ADR.
 ## Execution rules
 
 Discovery must be planned. A query that can be answered from source metadata
-must not construct record parsers. A prompt-only query must not discover
-conversation-only stores unless the requested scope requires them. A field
-predicate such as `agent:grok` or `path:*session*` must prune before record
-parsing whenever the adapter can prove the predicate from source metadata.
+must not construct record parsers. A request whose normalized scope and search
+effort require only prompt evidence must not discover conversation-only stores.
+A progressive deep-search request may use prompt evidence to select
+conversation work according to its declared effort. A field predicate such as
+`agent:grok` or `path:*session*` must prune before record parsing whenever the
+adapter can prove the predicate from source metadata.
+
+The planner must distinguish exact pruning from approximate selection. An exact
+or exhaustive plan may omit a source only when source metadata or a verified
+exact read-model generation proves predicate-complete coverage for that source
+observation and proves the source cannot affect the result. Enrichment indexes,
+semantic-routing evidence and heuristic scores never supply that proof. A
+targeted plan may deliberately choose a smaller source universe, but it must
+declare that selection as approximate and keep its routing budget separate from
+the result limit. The collector then applies one order, dedupe, and limit
+contract to every source the planner admitted.
 
 Planning must choose the cheapest correct adapter strategy. `find` remains a
 first-class fd/find-shaped source and storage discovery command; it may share
@@ -344,17 +378,18 @@ is accepted alongside the bounded-scan approximations below.
 
 Execution must be cancellable and bounded. Drivers poll cancellation between
 source tasks and record batches. A task that declares bounded source behavior
-can stop before older records are parsed once the source-local candidate limit
-is satisfied. The stop condition counts source-locally deduplicated
-candidates; the frontier's global cross-source dedup may later drop some of
-them, so when stores share dedupe keys a bounded search can return fewer than
-``limit`` records even though deeper records exist — an accepted bounded-scan
-approximation. Source scans compile query matchers once per task so record
-loops do not rebuild term, regex, surface, or predicate state for each
+can stop before older records are parsed only when its source-order metadata
+proves that no unseen record can outrank the collector frontier under the
+declared order. A source-local candidate count alone is not that proof.
+Cross-source dedupe that removes frontier records requires deeper admissible
+work unless the result separately reports the approximation or stopping
+condition that prevents it. Source scans compile query matchers once per task so
+record loops do not rebuild term, regex, surface, or predicate state for each
 candidate record. The frontier driver can run eligible source tasks
-concurrently, merges candidates on the owner thread, and stops submitting
-lower-priority bounded sources once the global result limit is filled. The
-default frontier driver consumes whole-source results because profiling showed
+concurrently and the owner-thread collector merges their output. It stops
+submitting a lower-priority admitted source only when `LimitPolicy` proves that
+source cannot improve the global ordered frontier. The default frontier driver
+consumes whole-source results because profiling showed
 single-worker batch queueing was slower than the skip opportunity on local
 Claude/Codex JSONL stores. Incremental `SourceScanBatch` scheduling remains
 available behind driver configuration for experiments and future worker-count
@@ -397,7 +432,8 @@ The planner and executor must be easy to profile. Each run can emit:
 
 - query shape: scope, agent count, terms/predicate count, limit presence;
 - discovery counts by agent, store, adapter, and path kind;
-- planner decisions: predicates pushed down, sources pruned, direct paths
+- planner decisions: predicates pushed down, exact or approximate source
+  selection, sources eligible, admitted, pruned, or omitted, direct paths
   chosen, root prefilters skipped, fallback reasons;
 - execution counts: sources started, submitted, completed, skipped, cancelled,
   batches yielded, records seen, matches seen, emitted records, dedupe drops,
@@ -414,6 +450,19 @@ CI or issue artifacts can be distinguished from local evidence.
 
 Deterministic counters belong in CI tests. Wall-clock profiling remains local
 evidence unless a fixture-only benchmark is explicitly designed for CI.
+
+## Relationship to progressive search decisions
+
+This ADR owns the shared request-plan-driver-event-result architecture. It does
+not choose a storage backend, a default search effort, or a conversation-routing
+heuristic. {ref}`ADR 0014 <adr-result-order-limit-and-streaming-merge>` owns the
+collector's order, dedupe, and limit contract after the planner declares its
+source universe. {ref}`adr-durable-prompt-corpus-derived-search-indexes` owns
+durable prompt evidence and derived exact read models.
+{ref}`adr-progressive-deep-search` owns
+search-effort semantics and fixed-snapshot targeted pagination.
+{ref}`adr-prompt-guided-conversation-routing` owns the explicitly approximate
+selection of a conversation universe.
 
 ## Native boundary
 

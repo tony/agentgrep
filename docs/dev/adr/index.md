@@ -5,6 +5,11 @@
 Architecture decision records document compatibility policies that affect
 multiple adapters or public payloads.
 
+ADR numbers are assigned against the target branch when a decision lands.
+Numbers used by parallel proposal branches are provisional; reviews and
+cross-references should use the stable Sphinx label and decision title until
+integration resolves any collision.
+
 ```{toctree}
 :maxdepth: 1
 

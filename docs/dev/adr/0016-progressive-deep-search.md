@@ -15,9 +15,9 @@ JSONL files, mutable snapshots, SQLite rows and related sidecars. Treating both
 as one default operation makes an ordinary lookup inherit the worst latency,
 I/O and cancellation behavior of the deepest source.
 
-{ref}`ADR 0015 <adr-durable-prompt-corpus-derived-search-indexes>` makes the
-distinction durable: agentgrep retains complete prompt text and prompt-to-
-conversation references without retaining every assistant response, reasoning
+{ref}`adr-durable-prompt-corpus-derived-search-indexes` makes the
+distinction durable: agentgrep retains complete prompt text plus private prompt
+and conversation locators without retaining every assistant response, reasoning
 block, tool result or attachment. That prompt corpus can answer the common
 question directly and can also supply clues for a deeper search. It cannot, by
 itself, prove that a term absent from the prompts is absent from conversation
@@ -47,7 +47,7 @@ The normalized request gains one compatibility-sensitive `SearchEffort` enum:
 | `effort` | Surfaces examined | Completeness contract |
 | --- | --- | --- |
 | `prompt` | Durable prompt corpus plus any correctness-preserving prompt fallback | Exact for the declared query over covered prompts |
-| `targeted` | Prompt corpus plus conversation bodies selected by {ref}`ADR 0017 <adr-prompt-guided-conversation-routing>` | Approximate globally; exact matching within selected conversations |
+| `targeted` | Prompt corpus plus conversation bodies selected by {ref}`adr-prompt-guided-conversation-routing` | Approximate globally; exact matching within selected conversations |
 | `exhaustive` | Prompt corpus plus every eligible readable conversation body | Exact over the reported readable source coverage |
 
 `prompt` is the default. Here, *exact* describes coverage and query semantics;
@@ -57,22 +57,32 @@ adapter admits it to the normalized transcript projection. Native content that
 is unreadable, unsupported or deliberately excluded remains outside the
 reported coverage at every effort level.
 
+`SearchEffort` applies only to query-to-record search performed by `search` and
+`grep`. It is not a general quality, cost or capability level. Similarity
+retrieval, export, bookmarks, insights and enrichment, storage synchronization,
+index management and model provisioning own separate controls and lifecycles.
+If one of those features invokes search internally, it names the search effort
+explicitly and reports that nested search's coverage; it does not derive effort
+from its own format, tier or quality setting.
+
+Increasing search effort authorizes additional reads from eligible search
+sources only. It never authorizes a durable write, synchronization, index build,
+model load or download, embedding generation, enrichment or expanded retention.
+
 The engine, library and MCP use the enum. Both `search` and `grep` expose the
 same progressive CLI shorthand:
 
 | CLI request | Normalized effort |
 | --- | --- |
-| no breadth option and no legacy `conversations`/`all` scope | `prompt` |
-| no breadth option with legacy `conversations`/`all` scope | `exhaustive` during the DS-2 compatibility window |
+| no breadth option and no separate or inline scope that can admit conversations | `prompt` |
+| no breadth option with separate or inline scope that can admit conversations | `exhaustive` under the current request schema |
 | `--deep` | `targeted` |
 | `--deep --exhaustive` | `exhaustive` |
 
 `--exhaustive` requires `--deep`. Boolean flags are a CLI convenience, not
 parallel engine semantics. Structured JSON, NDJSON and MCP sinks always echo
 `requested_effort`; a completed result also records the highest
-`completed_effort` stage. Quiet human output omits the routine
-`requested_effort=prompt` label and discloses non-default effort or an abnormal
-effort/status combination instead.
+`completed_effort` stage. DS-7 governs the concise human disclosure.
 
 ### DS-2 — Scope filters results; effort controls work
 
@@ -88,10 +98,10 @@ adapters retain whether scope was omitted or explicit until normalization and
 next-action construction have finished; the core plan still receives one
 concrete scope.
 
-Existing callers require a compatibility rule. Before this ADR, a scope of
-`conversations` or `all` requested direct conversation search. During the
-compatibility window, every public adapter—the CLI, library, MCP and serialized
-request loader—preserves whether `effort` was omitted and normalizes as follows:
+The current request schema preserves existing callers permanently. Before this
+ADR, a scope of `conversations` or `all` requested direct conversation search.
+Every public adapter—the CLI, library, MCP and serialized request loader—keeps
+whether `effort` was omitted and normalizes as follows:
 
 | Supplied effort | Supplied scope | Normalized effort and scope |
 | --- | --- | --- |
@@ -100,12 +110,24 @@ request loader—preserves whether `effort` was omitted and normalizes as follow
 | omitted | `conversations` or `all` | `exhaustive`, preserving the explicit scope |
 | explicit | any compatible scope | the explicit effort and supplied or effort-dependent default scope |
 
+Inline query-language `scope:` is the same compatibility-sensitive provenance,
+not an ordinary record predicate for effort normalization. With omitted effort,
+an inline scope expression proven to admit only prompts maps to `prompt`; one
+that admits conversations maps to `exhaustive`. `scope:prompts`,
+`scope:conversations` and `scope:all` therefore map exactly like their separate
+scope-field forms. A compound or negated scope expression that cannot be proven
+prompt-only normalizes conservatively to `exhaustive`. The existing validation
+that rejects combining a separate scope field with inline `scope:` remains in
+force, so normalization has one source of scope intent.
+
 An explicit effort always wins, subject to combination validation. In
 particular, explicit `--deep` opts a legacy conversation or all scope into
-targeted behavior. Help and deprecation diagnostics may teach the new
-vocabulary, but omission must never weaken an existing request silently.
+targeted behavior. This omission rule is permanent for the current request
+schema. A future request schema may change it only through a separately
+versioned compatibility decision; omission must never weaken a current-schema
+request silently.
 
-This compatibility normalization belongs at every public-surface boundary in
+This normalization belongs at every public-surface boundary in
 {ref}`ADR 0006 <adr-public-cli-mcp-surface-contract>`. The core planner receives
 concrete values plus the inferred-versus-explicit scope provenance needed to
 construct a safe next action; it does not reinterpret omission.
@@ -117,22 +139,29 @@ The planner never changes `prompt` to `targeted`, or `targeted` to
 elapsed time. In particular, zero targeted candidates do not trigger a whole-
 corpus sweep.
 
-Instead, a completed result carries structured `next_actions`:
+Instead, deep-search completion uses two stable action kinds:
 
-- prompt effort can offer a request patch for `effort=targeted`;
-- targeted effort offers a request patch for `effort=exhaustive`; and
-- exhaustive effort offers no broader search action.
+- `search.escalate_effort` carries a target effort and normalized request patch
+  for prompt-to-targeted or targeted-to-exhaustive escalation; and
+- `search.broaden_scope` carries the normalized scope patch required when an
+  explicit prompt scope must become `all`, and requires user or caller
+  confirmation.
 
-Each action has a stable kind, target effort, privacy-safe reason and normalized
-request patch. Applying it preserves the query, agents, field filters, order,
-dedupe and compatible explicit output scope. When prompt scope was inferred,
-the prompt-to-targeted action patches both `scope=all` and `effort=targeted`.
-When the caller explicitly selected `scope=prompts`, agentgrep never broadens it
-silently: it offers a distinct scope-broadening action that names the
-`scope=all` patch and requires user or caller confirmation. Explicit
+Exhaustive effort offers no broader search action. Each deep-search action has a
+privacy-safe reason. Applying its patch preserves the query, agents, field
+filters, order, dedupe and compatible explicit output scope. When prompt scope
+was inferred, `search.escalate_effort` patches both `scope=all` and
+`effort=targeted`. When the caller explicitly selected `scope=prompts`,
+agentgrep never broadens it silently; a `search.broaden_scope` patch used to
+enter deep search names both `scope=all` and the requested effort. Explicit
 `conversations` and `all` scopes remain unchanged when compatible with the
-target effort. A caller should not have to reconstruct a command string or
-infer the next step from an empty result list.
+target effort.
+
+Pagination, inspection, query refinement and other grounded actions remain in
+ADR 0006's general next-action vocabulary and need not carry a target effort.
+Consumers ignore action kinds they do not implement while continuing to honor
+run status and coverage. A caller should not have to reconstruct a command
+string or infer the next step from an empty result list.
 
 ### DS-4 — Approximation and coverage are visible
 
@@ -151,6 +180,25 @@ effort so the omission risk is not lost. A successful targeted page remains
 `approximate`; page and candidate bounds are reported by their dedicated
 fields rather than disguising heuristic recall as ordinary pagination.
 
+Result pagination belongs to the final collector, not to conversation routing.
+A targeted cursor continues one fixed routing decision: requesting the next
+page does not rerun routing against a newer corpus, widen the candidate budget
+or select additional conversations. The candidate budget applies to the whole
+cursor chain rather than to each page.
+
+A targeted cursor is available only for `order="newest"`, as required by ADR
+0014, and only when the engine can retain or validate the routing snapshot for
+the cursor's documented lifetime. The opaque cursor carries or references the
+normalized request, routing-policy version, routing snapshot, selected
+conversation identities and the full collision-free last-emitted total-order
+key required by ADR 0014. It exposes no private locator or native identifier.
+
+If the routing snapshot can no longer be resumed, the engine rejects the cursor
+with a structured `cursor_stale` diagnostic. It never silently reroutes and
+presents a different candidate set as the next page. An implementation that
+cannot retain or validate the snapshot returns no cursor. Effort escalation is
+a new request and never inherits a targeted cursor.
+
 Effort and run status are orthogonal. `targeted` is at least approximate, but a
 `prompt` or `exhaustive` plan may also report `approximate` when ADR 0004 or ADR
 0014 assumptions, such as mtime-derived recency, can change completeness. A
@@ -158,9 +206,10 @@ result/page limit produces `bounded` only when no higher-precedence condition
 applies.
 
 Exhaustive describes the plan, not a guarantee that an unreadable or failed
-source became searchable. It reports `complete` only when every planned source
-that could affect the requested set was examined or was provably excluded from
-affecting the requested ordered and limited set under ADR 0014's stop rule.
+source became searchable. It reports `complete` only when every eligible
+readable source that could affect the requested set was examined or was
+provably excluded from affecting the requested ordered and limited set under
+ADR 0014's stop rule.
 Limits, output budgets, cancellation, source failures and catalog-only or
 unsupported stores retain the run-status and coverage meanings defined by
 {ref}`ADR 0004
@@ -170,9 +219,10 @@ The final result and streaming summary include at least:
 
 - `requested_effort` and nullable `completed_effort`;
 - prompt-corpus generation and covered-source counts;
-- eligible, candidate, resolved, searched, skipped, stale and failed
-  conversation counts;
-- the configured and reached candidate budget;
+- eligible, ranked, attempted, usable-resolved, scan-completed, skipped, stale
+  and failed conversation counts;
+- the routing decision's `completed_scan_target`, `candidate_attempt_cap`,
+  `fallback_min_resolved`, fallback activity and stop reason;
 - source coverage and unavailable-store classifications;
 - selection mode and heuristic contract version; and
 - status, diagnostics and structured `next_actions`.
@@ -194,7 +244,18 @@ frontend calls:
 1. search the prompt corpus;
 2. for targeted effort, plan and search selected conversations;
 3. for exhaustive effort, plan and search all eligible conversations; and
-4. perform the final dedupe, order and limit merge.
+4. merge dedupe, order and limit under the global total-order barrier.
+
+These are logical dependencies and reporting boundaries, not a requirement to
+finish every scan before merging. Targeted conversation planning waits for the
+prompt evidence needed to fix the prompt-guided routing work universe. Source
+scanning and the single-owner collector may then overlap. The collector may
+emit a result prefix only when the total-order barrier proves that no admitted,
+queued or deterministically reserved backfill input can produce a record ahead
+of that prefix. It never emits according to source arrival or worker completion
+order.
+*Final merge* names the component that owns order, dedupe and limit; it does not
+require collect-all execution when that proof is available.
 
 Stage-started, progress and stage-finished events carry the request generation
 and effort. Cancellation is polled between source tasks and record batches as
@@ -216,10 +277,11 @@ conversation budget is planner work control; it is not the user's result
 `limit`, and satisfying it cannot justify dropping a result that is already in
 the final merge.
 
-Human CLI output may show stage progress, but it does not irreversibly print
-result rows before the global order barrier. Its final rows therefore have the
-same order as JSON and MCP. NDJSON may expose stage events, but emitted result
-records remain subject to the declared streaming-order contract.
+Human CLI output may show stage progress, but it does not irreversibly print a
+result prefix until the total-order barrier proves that prefix final. Its final
+rows therefore have the same order as JSON and MCP. NDJSON may expose stage
+events, but emitted result records remain subject to the declared streaming-
+order contract.
 
 The TUI is different only because its list is mutable. It may display prompt
 hits and later conversation hits provisionally while deep work continues, but
@@ -227,14 +289,21 @@ the list must be visibly marked provisional and may reorder only until the
 final engine merge arrives. The settled list, selected record and result count
 must match the engine result.
 
-### DS-7 — Deep search is discoverable without making the default noisy
+### DS-7 — Deep search is consistently discoverable without contaminating output
 
 The `search` and `grep` help surfaces name both escalation steps and state that
-`--deep` is approximate. After a zero-result prompt search in an interactive
-terminal, a concise stderr hint offers `--deep`. A targeted completion always
-discloses approximation and offers exhaustive search; this is a correctness
-notice, not optional flavor text. Piped output and machine formats receive no
-unsolicited prose on stdout.
+`--deep` is approximate. Every prompt-effort completion in an interactive
+terminal emits exactly this line once on stderr, whether or not it emitted a
+match:
+
+```text
+Searched prompts only. Use --deep to search selected conversations, or --deep --exhaustive to search all readable conversations.
+```
+
+It never appears on stdout, in JSON, NDJSON or MCP results, or when the
+invocation is not interactive. A targeted completion always discloses
+approximation and offers exhaustive search; this is a correctness notice, not
+optional flavor text.
 
 Successful `complete`, `bounded` and `approximate` CLI runs use exit status `0`
 when they emitted a match and `1` when they did not. Status `1` after a targeted
@@ -297,14 +366,16 @@ semantics are stable; tuning values are planner configuration governed by ADR
 
 | Choice | UX | DX | Usefulness |
 | --- | --- | --- | --- |
-| Prompt default | Predictable and fast; may require a second action | Simplest common plan and smallest index contract | Strong for remembered requests and pasted commands |
-| Targeted `--deep` | Bounded latency with an explicit approximation notice | Requires routing stats, versioning and coverage tests | Finds conversation context near plausible prompt clues |
+| Prompt default | Predictable and fast; one interactive stderr line states its coverage and escalation paths | Simplest common plan and smallest index contract | Strong for remembered requests and pasted commands |
+| Targeted `--deep` | Bounded latency with an explicit approximation notice; pagination stays within one fixed routing decision | Requires routing stats, versioning, resumable snapshots and coverage tests | Finds conversation context near plausible prompt clues |
 | Exhaustive deep | Slow but unsurprising when explicitly requested | Maintains a reference plan and broader source fixtures | Finds content with no useful prompt clue |
 
 The staged design makes cost a user choice without making the user learn store
 formats. It also keeps a trustworthy escape hatch: targeted search is useful
 because it is cheap enough to invoke, while exhaustive search is useful because
-it can disprove omissions caused by the heuristic.
+it can disprove omissions caused by the heuristic. The one-line interactive
+prompt-search disclosure is a deliberate small cost: a result-bearing prompt
+search still does not establish anything about conversation-only content.
 
 ## Prior art
 
@@ -365,6 +436,21 @@ sources were chosen heuristically. Overloading it cannot represent targeted and
 exhaustive conversation search independently, and changing its current meaning
 would silently weaken existing commands.
 
+### Require effort for existing explicit conversation scopes
+
+Requiring existing `scope=conversations` or `scope=all` callers to add effort
+would turn omission into a breaking behavior change even though the current
+schema can preserve their exhaustive request unambiguously. That normalization
+therefore remains permanent for the current schema. A future schema may choose
+a different rule through an explicit versioned decision.
+
+### Treat deep search as permission for other expensive capabilities
+
+Using `--deep` to build an index, download or load a model, generate embeddings,
+write durable state or retain more content would turn one visible read-breadth
+choice into unrelated side effects. Those features keep their own explicit
+controls; search effort authorizes eligible reads only.
+
 ### Create separate deep-search APIs per frontend
 
 A CLI subcommand, TUI-only action and MCP-only tool would drift in defaults,
@@ -381,18 +467,32 @@ the first stage omitted. This confuses precision with recall and is rejected.
 Implementation is not complete until fixtures prove:
 
 - CLI, library, MCP and serialized requests preserve effort omission and
-  normalize the compatibility matrix identically;
+  normalize the permanent current-schema compatibility matrix identically;
 - `search` and `grep` expose the same `--deep` and
   `--deep --exhaustive` help, normalization and output semantics;
-- no-option prompt search excludes conversation-body work;
+- `SearchEffort` is confined to query-to-record search boundaries, and a
+  feature that invokes search internally names its nested effort explicitly;
+- no-option prompt search excludes conversation-body work, and increasing
+  effort does not write durable state, start synchronization, build an index,
+  load or download a model, generate embeddings, enrich or expand retention;
 - `--deep` never starts an exhaustive task, including after zero candidates;
-- legacy conversation and all scopes retain exhaustive semantics when no new
-  effort option is present;
-- inferred prompt scope broadens through an explicit next-action patch, while
-  explicit prompt scope requires confirmation and compatible explicit scopes
-  remain unchanged;
+- explicit current-schema conversation and all scopes retain exhaustive
+  semantics permanently when effort is omitted, including equivalent inline
+  query-language scopes;
+- `search` and `grep` normalize inline `scope:prompts`,
+  `scope:conversations` and `scope:all` identically to separate scope fields,
+  and a compound inline scope that is not provably prompt-only defaults to
+  exhaustive effort;
+- inferred prompt scope broadens through `search.escalate_effort`, while
+  explicit prompt scope requires a confirmed `search.broaden_scope` patch,
+  compatible explicit scopes remain unchanged and unrelated ADR 0006 actions
+  need no target effort;
 - targeted results report `approximate`, the heuristic reason, coverage counts
   and an exhaustive next action;
+- targeted pagination uses `order="newest"` and one fixed routing decision for
+  the whole cursor chain, never widens the candidate budget or reruns routing,
+  rejects an unresumable snapshot with `cursor_stale` and otherwise omits the
+  cursor when snapshot retention or validation is unavailable;
 - the primary status follows the declared precedence, secondary conditions are
   retained and orthogonal prompt/exhaustive approximations remain visible;
 - exhaustive results match a complete admitted readable-transcript fixture
@@ -400,14 +500,20 @@ Implementation is not complete until fixtures prove:
 - cancelled and failed runs preserve requested/completed effort and
   approximation coverage;
 - candidate budget, result limit and output budget remain distinct;
-- CLI text, JSON, NDJSON and MCP preserve the engine's final order;
+- overlapping scan and merge stages emit only prefixes proved final by the
+  total-order barrier, ignore worker arrival order and settle to the same list
+  as non-overlapped execution;
+- CLI text, JSON, NDJSON and MCP preserve the engine's proved prefixes and final
+  order;
 - `search` and `grep` map matches, misses, failures, truncation and interruption
   to the declared exit statuses in human and structured modes;
-- structured sinks always echo effort, while quiet human prompt output omits
-  the routine effort label;
-- human hints never contaminate machine-readable stdout;
+- every interactive prompt-effort completion emits the exact declared coverage
+  line once on stderr regardless of match count, while non-interactive, JSON,
+  NDJSON and MCP output omit it;
+- human disclosures never contaminate machine-readable stdout;
 - TUI provisional results are labeled, obsolete generations are ignored and
-  the final list matches the engine result; and
+  the persistent deep-search action remains available while the final list
+  matches the engine result; and
 - progress and completion remain responsive under ADR 0011's watchdog and
   large-store checks.
 
@@ -415,41 +521,55 @@ Implementation is not complete until fixtures prove:
 
 {ref}`ADR 0004 <adr-headless-query-planning-non-blocking-execution>` owns the
 request/plan/driver/event layers and the run-status, result, coverage and
-diagnostic vocabulary. This ADR adds search effort, stage lifecycle and status
-specialization for progressive search.
+diagnostic vocabulary, including opaque `PageInfo` cursors and their documented
+lifetime. This ADR adds search effort, stage lifecycle, targeted-cursor
+specialization and status specialization for progressive search.
 
 {ref}`ADR 0006 <adr-public-cli-mcp-surface-contract>` owns public flag, schema,
 help and next-action consistency. This ADR fixes the semantics that surface
 must expose. {ref}`ADR 0011 <adr-non-blocking-tui-invariants>` continues to own
 the Textual pump boundary. {ref}`ADR 0014
 <adr-result-order-limit-and-streaming-merge>` owns the final order, dedupe,
-limit and streaming barrier across all stages.
+limit, newest-only keyset pagination and streaming barrier across all stages.
 
-{ref}`ADR 0015 <adr-durable-prompt-corpus-derived-search-indexes>` owns the
-durable prompt corpus, prompt/conversation references and disposable derived
-indexes. {ref}`ADR 0017 <adr-prompt-guided-conversation-routing>` owns candidate
-generation, prompt-to-conversation routing, budgets, pointer resolution and the
+{ref}`adr-durable-prompt-corpus-derived-search-indexes` owns the
+durable prompt corpus, private occurrence/conversation keys and locators, and
+disposable exact read models. {ref}`adr-prompt-guided-conversation-routing` owns
+candidate generation,
+prompt-to-conversation routing, budgets, private locator resolution and the
 targeted planner's heuristic version. Neither storage nor routing may redefine
-the public effort levels in this ADR.
+the public effort levels in this ADR. Other features may invoke a nested search
+with an explicit effort, but they do not reuse search effort as their own
+capability control.
 
 ## Consequences
 
 Normal search becomes faster and easier to reason about because it has a small,
-explicit corpus. Deep search becomes discoverable without being automatic, and
-the user can choose bounded approximation or exhaustive coverage. CLI, TUI and
-MCP clients receive enough state to distinguish "no prompt", "no candidate",
-"no selected-conversation match" and "no exhaustive match".
+explicit corpus, and one interactive stderr line makes that prompt-only boundary
+visible even when the run found matches. Deep search becomes discoverable
+without being automatic, and the user can choose bounded approximation or
+exhaustive coverage. CLI, TUI and MCP clients receive enough state to
+distinguish "no prompt", "no candidate", "no selected-conversation match" and
+"no exhaustive match".
 
 The cost is a larger compatibility surface: every request adapter and result
-sink gains effort, coverage and next-action fields; legacy scopes need explicit
-normalization; and TUI staging needs cancellation-safe provisional state. The
-targeted path also requires continuing heuristic evaluation rather than a
-one-time correctness test.
+sink gains effort, coverage and next-action fields; current-schema legacy scopes
+need permanent omission-aware normalization; targeted cursors need resumable
+routing snapshots; and TUI staging needs cancellation-safe provisional state.
+The targeted path also requires continuing heuristic evaluation rather than a
+one-time correctness test. Search effort stays deliberately narrower than the
+controls for storage, similarity, export and enrichment.
 
 ## Final position
 
 Normal search searches prompts. `--deep` searches prompt-guided conversation
 candidates and says that it is approximate. `--deep --exhaustive` searches all
 eligible conversation bodies and reports the coverage it could actually read.
-Scope selects results, effort selects work, escalation is explicit, and every
-frontend exposes the same lifecycle and escape hatch.
+Interactive prompt search says once that it searched prompts only. Scope selects
+results, while effort authorizes only additional eligible search reads; it does
+not authorize writes, indexes, models, enrichment or retention. Current-schema
+conversation and all scopes with omitted effort remain exhaustive permanently.
+Stages may overlap, but only total-order-safe prefixes are emitted. A targeted
+cursor pages one fixed routing decision or fails stale without rerouting.
+Escalation is explicit, and every frontend exposes the same lifecycle and escape
+hatch.

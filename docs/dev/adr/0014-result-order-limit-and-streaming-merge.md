@@ -57,14 +57,20 @@ becomes concurrent."*
 Six invariants govern result order and bounding (OL for *order and limit*), in
 the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
 
-- **OL-1 — Order and limit are one indivisible core stage.** No layer may apply
-  a count cutoff in an order other than the order the caller declared. Every
-  stop rule — bounded source scan, frontier skip, source cap, page fill — must
-  be justifiable as *"no record we have not examined can outrank the k-th record
-  we already hold, under the declared order"*. A stop rule that cannot state
-  that invariant does not run. Where recency is inferred from file mtime rather
-  than record timestamps, the invariant holds only under that approximation, and
-  the run reports `approximate` (ADR 0004's run-status vocabulary).
+- **OL-1 — Source selection precedes the one order-and-limit stage.** The
+  planner first declares the source universe and whether it claims complete or
+  approximate coverage. An exact or exhaustive plan may omit a source only
+  when it can prove that source cannot affect the result. A targeted plan may
+  deliberately select an incomplete universe, but the run remains
+  `approximate`; a routing or candidate budget is not a result limit and never
+  justifies `complete` or `bounded`. Within the admitted universe, no layer may
+  apply a count cutoff in an order other than the order the caller declared.
+  Every bounded source scan, frontier skip, or page fill must be justifiable as
+  *"no unexamined record in the admitted universe can outrank the k-th record we
+  already hold, under the declared order"*. A stop rule that cannot state that
+  invariant does not run. Where recency is inferred from file mtime rather than
+  record timestamps, the invariant itself is approximate and the run reports
+  `approximate` (ADR 0004's run-status vocabulary).
 - **OL-2 — `order` is a request parameter, executed in the collector, and
   echoed on the result.** The vocabulary is fixed below. `limit` becomes a
   bounded top-k *under the declared order* — a k-sized frontier the collector
@@ -97,13 +103,20 @@ the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   779](https://peps.python.org/pep-0779/)) with no code change. Design for
   threads; let the build decide the throughput.
 - **OL-5 — Cursor pagination is defined only for `order="newest"`.** The cursor
-  is a keyset anchored on the `(timestamp, agent, path)` total order that
-  `search_record_sort_key` already computes: a page resumes *strictly below* the
-  last key it emitted, so it neither rescans from zero nor skips a record
-  written between pages. Keyset cursors and relevance ordering do not compose —
-  a relevance score is a function of the query and the corpus, not a position in
-  a total order, and a stable score has no successor to resume from. A
-  relevance-ordered request therefore returns **no cursor**: it reports
+  is a keyset anchored on `(timestamp, agent, stable_source_order_key,
+  stable_record_coordinate)`. The final two components are deterministic,
+  snapshot-stable and jointly injective for every record in the request's
+  source snapshot; the existing `(timestamp, agent, path)` prefix alone is not
+  a total record order. A page resumes *strictly below* the full last-emitted
+  key, so equal timestamps and records from one source do not disappear between
+  pages. Every cursor also binds the normalized query and a source snapshot that
+  can be preserved or validated for its documented lifetime. When an adapter
+  cannot provide a collision-free coordinate or the snapshot is stale, the
+  result returns no cursor or rejects continuation; it never substitutes a new
+  snapshot as the next page. Keyset cursors and relevance ordering do not
+  compose — a relevance score is a function of the query and the corpus, not a
+  position in a total order, and a stable score has no successor to resume from.
+  A relevance-ordered request therefore returns **no cursor**: it reports
   `bounded` with a diagnostic that names the order as the reason. Callers who
   want to page rank by recency; callers who want relevance ask for one bounded
   top-k.
@@ -113,15 +126,20 @@ the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   sorted inputs, one total-order key, one barrier — is settled by this ADR. What
   defines the live watermark (file mtime past the index build, an ingest
   opstamp, an explicit coverage flag) is **not** settled, and must not be, until
-  an index exists to have a watermark. With no index every source is live, the
-  barrier is trivially satisfied, and the design degrades cleanly to today's
-  behavior.
+  an index exists to have a watermark. With no index every admitted source is
+  live, the barrier is trivially satisfied, and the design degrades cleanly to
+  today's behavior.
+
+A cursor over a targeted source universe has one additional constraint: every
+page continues the same routing decision and snapshot. If that state cannot be
+preserved or validated, the result has no cursor; a continuation never reruns
+routing and presents a different source universe as the next page.
 
 ### Order vocabulary
 
 | `order` | Key | Limit means | Cursor |
 | --- | --- | --- | --- |
-| `newest` (default) | `(timestamp, agent, path)`, descending | the k newest matching records | keyset (OL-5) |
+| `newest` (default) | `(timestamp, agent, stable_source_order_key, stable_record_coordinate)`, descending | the k newest matching records | keyset over a validated snapshot (OL-5) |
 | `relevance` | score, then the `newest` key as tiebreak | the k best-scoring matching records | none |
 | `scan` | source order, then record order | the first k records the plan encountered | none |
 
@@ -139,9 +157,10 @@ pinned ref below.
 search. It runs its parallel search on OS threads —
 [`build_parallel`](https://github.com/BurntSushi/ripgrep/blob/15.1.0/crates/ignore/src/walk.rs)
 over the directory walk — with no async runtime anywhere. More to the point for
-OL-1: when the user asks for a *sorted* output, ripgrep disables parallelism
-outright rather than merging out-of-order results afterward. Ordering is a
-property of the execution stage, not a post-pass bolted onto it.
+the order-and-limit contract: when the user asks for a *sorted* output, ripgrep
+disables parallelism outright rather than merging out-of-order results
+afterward. Ordering is a property of the execution stage, not a post-pass
+bolted onto it.
 
 [aiosqlite](https://github.com/omnilib/aiosqlite/blob/v0.22.1/aiosqlite/core.py)
 (tag `v0.22.1`) is the canonical shape of OL-3: its `Connection` is a worker
@@ -162,7 +181,13 @@ OL-3 keeps the pump-facing async bridge exactly where it is. {ref}`ADR 0006
 applied order surface on the CLI and MCP payloads. {ref}`ADR 0003
 <adr-native-boundary-execution-architecture>` is not invoked: nothing here
 approves native code, and OL-4's throughput lever is an interpreter build, not a
-Rust engine.
+Rust engine. {ref}`adr-durable-prompt-corpus-derived-search-indexes` may
+contribute sorted exact-index and live-source streams.
+{ref}`adr-progressive-deep-search` owns targeted cursor policy.
+{ref}`adr-prompt-guided-conversation-routing` may select an explicitly
+approximate conversation universe before this ADR's single collector runs;
+routing scores and candidate budgets do not alter the collector's order or
+result limit.
 
 ## Consequences
 
