@@ -10,6 +10,15 @@ Numbers used by parallel proposal branches are provisional; reviews and
 cross-references should use the stable Sphinx label and decision title until
 integration resolves any collision.
 
+An adopted ADR's explicit ownership, compatibility and safety boundaries are
+normative. Conflicting unpublished implementation details, branch-local ADRs or
+older internal patterns must be migrated, reclassified or removed; they do not
+silently narrow the adopted decision. Released public behavior remains a
+compatibility fact and requires an explicit migration or superseding decision
+rather than being dismissed as an implementation detail. A later adopted ADR
+may supersede an earlier one only when it says so directly and names the
+affected contract.
+
 ```{toctree}
 :maxdepth: 1
 

@@ -123,6 +123,30 @@ request's agent, store, privacy and explicit source-scope constraints. It
 captures the discovery generation and the source observations represented by
 the prompt corpus. This forms the `RoutingSnapshot`.
 
+As part of that enumeration, the owning adapter produces an ephemeral private
+`corpus_source_instance_key`, a snapshot-bound live source observation or
+cutoff, an ephemeral private `corpus_conversation_key` and a conversation
+locator bound to that source key and observation for every eligible live
+conversation. This includes live-only conversations and conversations
+containing zero admitted prompts. The ephemeral and persisted forms share the
+adapter-owned, repository-global equality and collision-domain contracts from
+the prompt-corpus decision: for any two eligible source or conversation
+observations, ephemeral keys compare equal if and only if corpus ingestion
+under the same adapter and observation contracts would assign them the same
+private keys. Live routing may not introduce a second grouping rule based on
+path, title, timestamp, ordinal or prompt text. These keys, observations and
+locators live only for the routing snapshot unless an explicit corpus
+synchronization operation persists admitted prompt evidence; targeted search
+itself never writes them.
+
+An adapter cannot advertise targeted-routing support for a live source unless
+it can enumerate the source-instance key and observation plus the conversation
+key and bound locator for every eligible conversation in that source
+observation. A missing value, broken source binding, key collision or
+live/persisted equality mismatch is a structured adapter-contract and coverage
+failure; the planner never silently removes the affected conversation merely
+because it contains no admitted prompt.
+
 Only predicates proven to be conversation-invariant may remove a conversation
 from this universe. Agent and store selection are examples. A record-time,
 role, message-kind or other record-local predicate cannot be applied to prompt
@@ -140,16 +164,18 @@ indexed or live is provenance, never candidate or final-result rank. The live
 fallback extracts prompt records only; it does not materialize every transcript
 record or run the conversation-body matcher merely to construct a shortlist.
 
-A live prompt occurrence can route only when it supplies the private
-`corpus_conversation_key` and a snapshot-bound containing-conversation locator.
-When it cannot, the occurrence remains eligible as a normal prompt result but is
-reported as `live_prompt_unroutable`; the router does not fabricate a thread,
-guess a locator or infer a conversation from text, title, path or time. Stale,
-grace-period and retained-only prompt evidence is excluded by the durable
-prompt-corpus contract. A source not represented by either current partition is
-a coverage gap, not a negative result. Targeted routing does not scan every
-missing transcript to repair that gap, because that would be an undisclosed
-exhaustive search.
+A live prompt occurrence contributes prompt evidence only when the adapter
+binds it to the enumerated private `corpus_conversation_key` and snapshot-bound
+containing-conversation locator. When it cannot, the occurrence remains
+eligible as a normal prompt result but is reported as
+`live_prompt_unroutable`; the conversation may still contribute independently
+through explicit-metadata or fallback evidence. The router does not fabricate a
+thread, guess a locator or infer a conversation from text, title, path or time.
+Stale, grace-period and retained-only prompt evidence is excluded by the
+durable prompt-corpus contract. A source observation covered by neither the
+current indexed partition nor live enumeration is a coverage gap, not a
+negative result. Targeted routing does not scan every missing transcript to
+repair that gap, because that would be an undisclosed exhaustive search.
 
 ### CR-3 — Routing evidence is deterministic, ordered and explainable
 
@@ -243,21 +269,27 @@ sub-cap, ranked and attempted conversations, usable resolutions, completed
 scans, failures, contributions to the selected universe and whether its input
 metadata was unavailable.
 
-### CR-4 — Private corpus conversation keys are deduplicated before attempts
+### CR-4 — Private conversation keys are deduplicated before attempts
 
 Every evidence item carries a private `corpus_conversation_key` supplied by the
-durable prompt-corpus boundary. The planner groups all evidence by that key
-before ranking or applying an attempt or fallback sub-cap. Repeated prompts,
-many matching prompts in one conversation, indexed/live projections of one
-occurrence and overlapping metadata/fallback evidence therefore describe one
-candidate.
+owning adapter under the shared persisted-and-live equality contract. Persisted
+prompt evidence reads the key from the durable prompt-corpus boundary; live
+prompt, metadata and fallback evidence use the snapshot's ephemeral form. The
+planner groups all evidence by that key before ranking or applying an attempt
+or fallback sub-cap. Repeated prompts, many matching prompts in one
+conversation, indexed/live projections of one occurrence and overlapping
+metadata/fallback evidence therefore describe one candidate. A conversation
+does not need an admitted prompt to participate through metadata or fallback
+evidence.
 
-`corpus_conversation_key` is query-planning identity only. It never crosses a
-public result envelope and is not the bookmark, export, similarity or drilldown
-identity. If the focused identity contract later supplies a public grouping or
-thread field, routing preserves only values defensibly supplied by the
-normalized record and never fabricates one. Equality of two such non-null
-values may be evidence used by the corpus layer when it constructs its private
+`corpus_conversation_key` is query-planning identity only. Persisted and
+ephemeral evidence may share its equality contract without making the key a
+public identifier or authorizing search to persist the ephemeral form. It never
+crosses a public result envelope and is not the bookmark, export, similarity or
+drilldown identity. If the focused identity contract later supplies a public
+grouping or thread field, routing preserves only values defensibly supplied by
+the normalized record and never fabricates one. Equality of two such non-null
+values may be evidence used by the adapter when it constructs its private
 grouping key, but this ADR neither groups directly on a public identity field
 nor treats one as a resolver.
 
@@ -333,13 +365,16 @@ candidates. No candidate score survives as a final result score.
 
 ### CR-5 — Conversation locators are generation-aware resolution evidence
 
-A conversation candidate carries its private `corpus_conversation_key`, source
-identity, observed source generation, private observation-bound locator and
-locator stability from the durable prompt-corpus contract. Resolution succeeds
-directly only against the same current source observation. A public `RecordRef`
-is created only for an emitted record or supported drilldown projection; it is
-not resolution identity and does not participate in candidate grouping, ranking
-or backfill.
+A conversation candidate carries its private `corpus_conversation_key`, private
+`corpus_source_instance_key`, observed source generation, private
+observation-bound locator and locator stability from the shared
+persisted-and-live adapter contract.
+Persisted candidates use locator evidence from the durable prompt corpus;
+live-only and zero-prompt candidates use the ephemeral locator captured in the
+`RoutingSnapshot`. Resolution succeeds directly only against the same current
+source observation. A public `RecordRef` is created only for an emitted record
+or supported drilldown projection; it is not resolution identity and does not
+participate in candidate grouping, ranking or backfill.
 
 When a source changed after the evidence was recorded, an adapter may reconcile
 the locator only when native identity or an adapter-owned stable
@@ -407,8 +442,18 @@ Resolution, transcript scanning and collection may overlap after the work
 universe is fixed. Before emitting a prefix, the collector's total-order barrier
 accounts for every admitted, queued or reserved candidate that the fixed routing
 decision could still backfill. A proven prefix may stream without waiting for
-all scans; when no such proof exists, emission waits. Arrival or worker
-completion order never makes the decision.
+all scans only when no remaining record can outrank the prefix and no remaining
+physical view can replace a selected representative under the dedupe contract.
+When either proof is unavailable, emission waits. Arrival or worker completion
+order never makes the decision.
+
+Execution drivers may expose different candidate, progress and completion-event
+timing. Given the same normalized request, routing snapshot and readable source
+observations, they nevertheless select the same final representative for every
+dedupe class and produce the same final record order. Inline versus frontier
+collection, buffering strategy and first arrival are not representative
+selection policies. Final representative choice and order remain governed by
+{ref}`ADR 0014 <adr-result-order-limit-and-streaming-merge>`.
 
 The routing bounds are source-work controls, not result limits or proof that an
 omitted conversation could not contain a better record. They are the reason the
@@ -429,8 +474,8 @@ conversation provenance and match evidence. This dedupe applies only to human
 prompts. Assistant, reasoning and tool hits remain distinct normalized records
 under the exhaustive matcher; this ADR does not define a stable occurrence
 identity or cross-projection dedupe contract for them. A user prompt found only
-in a changed live transcript is emitted once with its normal live-record identity and
-coverage state.
+in a changed live transcript is emitted once with its live-record projection,
+provenance and coverage state.
 
 Targeted pagination is available only for ADR 0014's `order="newest"` and only
 when the page sequence reuses one fixed progressive-search request snapshot. The
@@ -474,8 +519,8 @@ conversation contains a match. Attempt-cap saturation, an unmet completed
 target, fallback use, live-unroutable prompts and omitted source partitions
 remain visible even when the selected universe produces zero exact hits.
 
-Status follows the progressive-search priority. A normally completed targeted
-run remains `approximate`. Exhausting a planned evidence-collection,
+Status follows ADR 0004's global precedence. A normally completed targeted run
+remains `approximate`. Exhausting a planned evidence-collection,
 `candidate_attempt_cap`, fallback sub-cap, routing-time or scan-time budget, or
 ending with an unmet `completed_scan_target`, is a secondary approximation
 detail with its cap, saturation and stopping stage; it does not replace the
@@ -503,7 +548,7 @@ The planner handles weak or unavailable routing evidence as follows:
 | No positive prompt-compatible text | Use explicit metadata/fallback tiers if available and report the missing lexical seed |
 | Unsupported routing predicate | Do not use it to exclude candidates; preserve it for the final matcher and report `unsupported_routing_predicate` |
 | Missing or stale prompt partition | Search current indexed and eligible live prompt partitions, record the uncovered source observation and recommend exhaustive escalation |
-| Live prompt lacks a routing key or locator | Keep it eligible as a prompt result, exclude it from conversation attempts and report `live_prompt_unroutable` |
+| Live prompt cannot be bound to its enumerated conversation key and locator | Keep it eligible as a prompt result, exclude that prompt evidence from conversation attempts, retain independently eligible metadata/fallback evidence and report `live_prompt_unroutable` |
 | Explicit optional routing policy or required provider unavailable | Fail planning with a structured capability diagnostic; do not silently substitute a policy or provision capability |
 | Pre-dedupe bound or `candidate_attempt_cap` reached | Stop only at the declared bound and report the affected tier, cap, saturation, completed count and stop reason |
 | Planned routing- or scan-time budget reached | Preserve results only from complete scans, keep primary status `approximate`, and report the stopping stage, completed target and unsearched counts when known |
@@ -574,8 +619,22 @@ The implementation requires focused contract tests for:
 - deterministic routing under shuffled source and worker completion order;
 - exact, conjunctive, disjunctive, explicit-metadata and current-project
   fallback tier precedence;
+- adapter enumeration of every eligible live conversation, including live-only
+  and zero-prompt conversations, with an equality-parity ephemeral private
+  source-instance key, snapshot-bound live source observation or cutoff,
+  conversation key and locator bound to both;
+- structured adapter-contract and coverage failure when any eligible live
+  conversation lacks any value or binding, without silently treating a
+  zero-prompt conversation as ineligible;
+- equality and collision-domain parity between ephemeral and persisted private
+  source-instance and conversation keys, including indexed/live dedupe for one
+  conversation, separation when the adapter cannot prove equality, and no
+  collision between identical native ids from different source domains;
+- snapshot-lifetime containment of ephemeral keys and locators, with no public
+  exposure or search-triggered persistence;
 - indexed and live prompt evidence parity, live-unroutable prompt-result
-  preservation and exclusion of retained-only evidence;
+  preservation, continued eligibility of independent metadata/fallback
+  evidence and exclusion of retained-only evidence;
 - prompt, explicit-metadata and current-project evidence construction and
   tier-local ordering;
 - fallback activation and stopping at `fallback_min_resolved`, based on usable
@@ -592,6 +651,11 @@ The implementation requires focused contract tests for:
 - proof that routing score, tier, index/live origin, arrival and freshness never
   change final matching, dedupe, score, order or limit inside the selected
   universe;
+- identical final dedupe representatives and final record order across inline,
+  frontier and overlapped execution drivers under the same request and
+  snapshot, plus an identical immutable `RecordEmitted` sequence when duplicate
+  physical-view arrival is reversed, while allowing candidate and progress-event
+  timing to differ;
 - negative-only, unsupported and zero-completed-scan status semantics;
 - incomplete prompt coverage, stale locators and source changes during scan;
 - deterministic backfill in candidate rank order, including proof that stale,
@@ -599,7 +663,7 @@ The implementation requires focused contract tests for:
   `candidate_attempt_cap` but not `completed_scan_target`;
 - pre-dedupe bounds, both routing caps, time budgets, exhausted evidence and
   source failures with the required stop reason;
-- the progressive-search status priority for planned bounds, external
+- ADR 0004's global status precedence for planned bounds, external
   cancellation, recovered source failures, all-candidate failure, planner
   failure and sink truncation;
 - prompt-only occurrence dedupe, distinct non-prompt normalized records and one
@@ -649,8 +713,10 @@ APIs until implemented and documented.
 
 `RoutingSnapshot`
 : Eligible conversation universe, run- or page-sequence-local non-linkable
-  identifier, discovery generation, current indexed and eligible live prompt
-  observations, and query-time source coverage. A targeted cursor privately
+  identifier, discovery generation, current indexed prompt observations,
+  ephemeral private source-instance and conversation keys, snapshot-bound live
+  source observations or cutoffs and bound locators for every eligible live
+  conversation, and query-time source coverage. A targeted cursor privately
   binds this snapshot to the fixed work and completed selected universes.
 
 `RoutingPlan`
@@ -678,10 +744,12 @@ APIs until implemented and documented.
 
 `ConversationCandidate`
 : Private `corpus_conversation_key`, aggregate routing evidence, deterministic
-  rank key, source observation and private snapshot-relative locator. Public
-  identity fields are absent until their focused contract exists and are
-  preserved only when supplied defensibly afterward; public result/drilldown
-  projections use the separately owned `RecordRef` contract.
+  rank key, source observation and private snapshot-relative locator. The key
+  and locator may be persisted corpus evidence or ephemeral live evidence under
+  the same adapter equality contract. Public identity fields are absent until
+  their focused contract exists and are preserved only when supplied
+  defensibly afterward; public result/drilldown projections use the separately
+  owned `RecordRef` contract.
 
 `CandidateAttempt`
 : Candidate rank and attempt ordinal, private corpus key, locator resolution
@@ -789,13 +857,17 @@ source-work controls, not a second result frontier or proof that omitted
 conversations cannot contain better-ranked results.
 
 {ref}`adr-durable-prompt-corpus-derived-search-indexes` owns complete
-prompt occurrences, the private `corpus_conversation_key`, defensible public
-identity preservation after the focused identity contract exists, private
-locator stability, source observations and current-indexed/live prompt
-coverage. This ADR consumes those contracts and does not expand durable
-retention to full transcripts or define public bookmark/export/similarity
-identity. The storage boundary must expose that private grouping key separately
-from public record metadata for this plan.
+prompt occurrences, private `corpus_source_instance_key` and
+`corpus_conversation_key` contracts, defensible public identity preservation
+after the focused identity contract exists, private locator stability, source
+observations and current-indexed/live prompt coverage. This ADR consumes those
+contracts and does not expand durable retention to full transcripts or define
+public bookmark/export/similarity identity. The storage boundary exposes
+persisted private grouping keys separately from public record metadata. Owning
+adapters produce equality-parity ephemeral source and conversation keys,
+snapshot-bound live observations or cutoffs and bound locators for every
+eligible live conversation, including live-only and zero-prompt conversations;
+routing does not persist or publish them.
 
 {ref}`ADR 0006 <adr-public-cli-mcp-surface-contract>` and ADR 0004 own the
 public `RecordRef` result/drilldown boundary. The private corpus key, any future
@@ -816,11 +888,13 @@ snapshot returns no targeted cursor rather than rerouting silently.
 
 Most deep searches can open a small, explainable set of conversations instead
 of sweeping the entire local history. Current indexed and live prompt
-occurrences become useful routing evidence as well as direct results, private
-corpus keys deduplicate the work, and observation-bound conversation locators
-become a real execution primitive rather than inert provenance. Failed attempts
-remain bounded without consuming the completed-scan target, so stale evidence
-degrades coverage visibly instead of silently wasting every useful slot.
+occurrences become useful routing evidence as well as direct results. Ephemeral
+private keys keep live-only and zero-prompt conversations eligible for metadata
+and fallback routing, private keys deduplicate the work across persisted and
+live evidence, and observation-bound conversation locators become a real
+execution primitive rather than inert provenance. Failed attempts remain
+bounded without consuming the completed-scan target, so stale evidence degrades
+coverage visibly instead of silently wasting every useful slot.
 
 The cost is an explicitly approximate middle tier with more planner state,
 statistics and failure modes. Attempt and backfill policy need versioning.

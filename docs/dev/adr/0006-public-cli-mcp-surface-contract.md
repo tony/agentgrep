@@ -51,8 +51,8 @@ The public surface owns:
   dedupe, and case handling;
 - result payloads, pagination, diagnostics, run status, and drilldown handles
   as defined by ADR 0004;
-- public identity and reference field names defined by focused identity and
-  export decisions;
+- public identity and reference field names defined by focused identity
+  decisions and, when adopted, focused export decisions;
 - source catalog vocabulary and coverage states;
 - MCP loop shape and next-action guidance.
 
@@ -127,7 +127,7 @@ load and explain that registry.
 Source discovery must expose machine-readable coverage instead of free-form
 strings alone. A source or source-family response should include:
 
-- stable source or store identifier;
+- stable public store-family identifier;
 - agent identifier;
 - source role and record scopes;
 - source kind and path kind;
@@ -143,11 +143,21 @@ Display paths may be rendered for humans, but MCP clients should use stable
 identifiers, result cursors, and `RecordRef` handles rather than local paths
 as primary inputs.
 
+The public store-family identifier classifies an adapter/store contract and may
+group many discovered physical source instances. It is distinct from the
+private corpus source-instance key used for observation binding and locator
+resolution. This ADR defines no public physical source-instance identity; a
+future one requires a focused privacy and stability contract and must not expose
+the private corpus key under a public field name.
+
 `RecordRef` is the public physical drilldown handle defined by ADR 0004. It is
 not interchangeable with canonical content, record, or thread identity, and a
 private corpus occurrence, conversation, locator, row, or generation key must
 not be exposed as one of those public identities. A public thread identifier is
 an equality and grouping field; it does not create a conversation resolver.
+`RecordRef` may inspect an emitted or representative record, but it never opens
+a session, thread or conversation as an aggregate. That operation requires a
+separate focused public-surface and privacy decision.
 
 ### MCP loop
 
@@ -189,10 +199,12 @@ vocabulary public-surface policy:
 
 Storage decisions may supply evidence to these surfaces, but they do not create
 new commands, portable formats, import contracts, or public resolver handles.
-A portable export command remains owned by its focused export decision. A
-future conversation drilldown token or corpus import requires a separate
-public-surface and privacy contract rather than an internal storage key exposed
-through convenience.
+A portable export command requires, and is then owned by, a focused export
+decision such as the work tracked by
+[#81](https://github.com/tony/agentgrep/issues/81); this ADR does not assert
+that such a decision is adopted or implemented. A future conversation
+drilldown token or corpus import requires a separate public-surface and privacy
+contract rather than an internal storage key exposed through convenience.
 
 ## Consequences
 

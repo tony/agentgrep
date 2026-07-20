@@ -90,17 +90,18 @@ engine semantics. Structured JSON, NDJSON and MCP sinks always echo
 
 ### DS-2 — Scope filters results; effort controls work
 
-`scope` and `effort` are separate axes. Scope determines which record kinds may
-be emitted. Effort determines how broadly the planner may search to produce
-them. The normalized request carries both rather than deriving engine cost from
-a record-kind name.
+`scope` and `effort` are separate axes. Scope determines the record-scope
+classification that may be emitted. Effort determines how broadly the planner
+may search to produce it. The normalized request carries both rather than
+deriving engine cost from a record-scope classification.
 
 For new requests, omitting scope selects `prompts` at `prompt` effort and `all`
-at targeted or exhaustive effort. Explicit combinations that cannot produce a
-selected record kind are validation errors, not silent rewrites. Public
-adapters retain whether scope was omitted or explicit until normalization and
-next-action construction have finished; the core plan still receives one
-concrete scope.
+at targeted or exhaustive effort. The explicit compatibility matrix is closed:
+`prompt` accepts only `prompts`, while `targeted` and `exhaustive` accept only
+`conversations` or `all`. Every other explicit effort-and-scope combination is
+a validation error, not a silent rewrite. Public adapters retain whether scope
+was omitted or explicit until normalization and next-action construction have
+finished; the core plan still receives one concrete scope.
 
 The current request schema preserves existing callers permanently. Before this
 ADR, a scope of `conversations` or `all` requested direct conversation search.
@@ -112,7 +113,15 @@ whether `effort` was omitted and normalizes as follows:
 | omitted | omitted | `prompt`, `prompts` with inferred-scope provenance |
 | omitted | `prompts` | `prompt`, explicit `prompts` |
 | omitted | `conversations` or `all` | `exhaustive`, preserving the explicit scope |
-| explicit | any compatible scope | the explicit effort and supplied or effort-dependent default scope |
+| `prompt` | omitted | `prompt`, `prompts` with inferred-scope provenance |
+| `prompt` | `prompts` | `prompt`, explicit `prompts` |
+| `prompt` | `conversations` or `all` | validation error |
+| `targeted` | omitted | `targeted`, `all` with inferred-scope provenance |
+| `targeted` | `conversations` or `all` | `targeted`, preserving the explicit scope |
+| `targeted` | `prompts` | validation error |
+| `exhaustive` | omitted | `exhaustive`, `all` with inferred-scope provenance |
+| `exhaustive` | `conversations` or `all` | `exhaustive`, preserving the explicit scope |
+| `exhaustive` | `prompts` | validation error |
 
 Inline query-language `scope:` is the same compatibility-sensitive provenance,
 not an ordinary record predicate for effort normalization. With omitted effort,
@@ -122,7 +131,10 @@ that admits conversations maps to `exhaustive`. `scope:prompts`,
 scope-field forms. A compound or negated scope expression that cannot be proven
 prompt-only normalizes conservatively to `exhaustive`. The existing validation
 that rejects combining a separate scope field with inline `scope:` remains in
-force, so normalization has one source of scope intent.
+force, so normalization has one source of scope intent. When effort is
+explicit, the compiled inline expression receives the same record-scope
+classification and combination validation as the equivalent separate scope;
+it cannot bypass the closed matrix.
 
 An explicit effort always wins, subject to combination validation. In
 particular, explicit `--deep` opts a legacy conversation or all scope into
@@ -180,14 +192,14 @@ conversation even though matching inside every selected conversation uses the
 original query exactly. A candidate budget or a zero-candidate outcome never
 changes that status to `complete`.
 
-One primary `RunStatus` is selected with this fixed precedence:
-`failed` > `cancelled` > `truncated` > `approximate` > `bounded` > `complete`.
-Every lower-precedence condition remains in structured status details,
-diagnostics and coverage. A failed or cancelled targeted run therefore retains
+ADR 0004 selects the primary `RunStatus` under its repository-wide precedence;
+this ADR does not define a second precedence for progressive search. Every
+lower-precedence condition remains in structured status details, diagnostics
+and coverage. A failed or cancelled targeted run therefore retains
 `selection="heuristic"`, the approximation reason and the highest completed
 effort so the omission risk is not lost. A successful targeted page remains
-`approximate`; page and candidate bounds are reported by their dedicated
-fields rather than disguising heuristic recall as ordinary pagination.
+`approximate`; page and candidate bounds are reported by their dedicated fields
+rather than disguising heuristic recall as ordinary pagination.
 
 Result pagination belongs to the final collector, not to conversation routing.
 A targeted cursor continues one fixed routing decision: requesting the next
@@ -198,9 +210,17 @@ cursor chain rather than to each page.
 A targeted cursor is available only for `order="newest"`, as required by ADR
 0014, and only when the engine can retain or validate the routing snapshot for
 the cursor's documented lifetime. The opaque cursor carries or references the
-normalized request, routing-policy version, routing snapshot, selected
-conversation identities and the full collision-free last-emitted total-order
-key required by ADR 0014. It exposes no private locator or native identifier.
+normalized request, routing-policy version, a run- or page-sequence-local
+non-linkable routing-snapshot token and the full collision-free last-emitted
+total-order key required by ADR 0014. The selected private conversation universe
+remains in retained snapshot state. A self-contained cursor may embed that state
+only with confidentiality and integrity protection; a merely encoded or signed
+payload must not reveal private source/conversation keys, locators, native
+identifiers or paths. Snapshot state created by a search is bounded in-memory
+state that expires no later than the cursor lifetime; targeted search never
+writes it to the corpus, an index, an enrichment cache or a cursor database. A
+restart may therefore make the cursor stale. Durable server-side cursor state
+would require its own explicit storage and privacy decision.
 
 If the routing snapshot can no longer be resumed, the engine rejects the cursor
 with a structured `cursor_stale` diagnostic. It never silently reroutes and
@@ -376,8 +396,9 @@ searched source counts. Timing artifacts follow ADR 0004's privacy boundary.
 
 No fixed candidate cap, progress-delay threshold or claim that targeted search
 is faster is established without representative local measurements. UX
-semantics are stable; tuning values are planner configuration governed by ADR
-0017 and profiling evidence.
+semantics are stable; tuning values are planner configuration governed by
+{ref}`Prompt-guided conversation routing
+<adr-prompt-guided-conversation-routing>` and profiling evidence.
 
 ## Delivery sequence
 
@@ -406,8 +427,10 @@ not silently change the meaning of an already shipped flag.
    policies and alternate exact providers only after representative recall,
    latency and I/O measurements justify them.
 
-ADR numbering remains provisional until integration order is known. It is
-landing bookkeeping, not a runtime milestone.
+Displayed ADR numbers remain provisional while these proposals are reviewed.
+Cross-references use stable labels and titles; landing assigns each decision a
+unique final number and updates its filename, title and toctree entry together.
+That bookkeeping is not a runtime milestone.
 
 ## UX, DX and usefulness tradeoffs
 
@@ -537,10 +560,15 @@ Implementation is not complete until fixtures prove:
 - explicit current-schema conversation and all scopes retain exhaustive
   semantics permanently when effort is omitted, including equivalent inline
   query-language scopes;
+- explicit `prompt` accepts only prompt scope, explicit `targeted` and
+  `exhaustive` accept only conversation or all scope, omitted explicit scopes
+  receive their effort-dependent defaults, and every other explicit
+  effort-and-scope combination fails validation at every public boundary;
 - `search` and `grep` normalize inline `scope:prompts`,
   `scope:conversations` and `scope:all` identically to separate scope fields,
   and a compound inline scope that is not provably prompt-only defaults to
-  exhaustive effort;
+  exhaustive effort while explicit effort still applies the same record-scope
+  classification matrix;
 - inferred prompt scope broadens through `search.escalate_effort`, while
   explicit prompt scope requires a confirmed `search.broaden_scope` patch,
   compatible explicit scopes remain unchanged and unrelated ADR 0006 actions
@@ -550,9 +578,11 @@ Implementation is not complete until fixtures prove:
 - targeted pagination uses `order="newest"` and one fixed routing decision for
   the whole cursor chain, never widens the candidate budget or reruns routing,
   rejects an unresumable snapshot with `cursor_stale` and otherwise omits the
-  cursor when snapshot retention or validation is unavailable;
-- the primary status follows the declared precedence, secondary conditions are
-  retained and orthogonal prompt/exhaustive approximations remain visible;
+  cursor when snapshot retention or validation is unavailable, and never exposes
+  recoverable private routing state in a merely encoded or signed cursor or
+  writes cursor state durably as a search side effect;
+- the primary status follows ADR 0004's global precedence, secondary conditions
+  are retained and orthogonal prompt/exhaustive approximations remain visible;
 - exhaustive results match a complete admitted readable-transcript fixture
   sweep, including every source not provably excluded by ADR 0014;
 - cancelled and failed runs preserve requested/completed effort and

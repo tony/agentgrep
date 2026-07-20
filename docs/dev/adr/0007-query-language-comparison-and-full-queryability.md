@@ -18,8 +18,10 @@ and how it is completed.
 The language is frequently mistaken for a full-text engine. It is not.
 agentgrep matches by **substring containment** (casefolded), **regex**
 (the `grep` verb), and **rapidfuzz** relevance ranking (the `search` verb).
-There is no inverted index, no tokenizer, no postings list, and no BM25
-scoring. The semantic source of truth is the pure-Python compiler in
+At this ADR's adoption, the search path had no inverted index, tokenizer,
+postings list, or BM25 scoring. Later storage and read-model decisions may add
+derived exact indexes without changing the language's matching contract. The
+semantic source of truth remains the pure-Python compiler in
 `agentgrep.query.compile`.
 
 For comparison we studied Tantivy, a Rust full-text search engine, and its
@@ -34,9 +36,10 @@ Tantivy tokenizes text into an inverted index and scores matches with BM25.
 Its `QueryParser` accepts terms (default **OR**), phrases with slop and
 prefix, set membership, boost, configurable fuzzy fields, optional regex,
 field-exists, and typed ranges over dates and IP addresses — each lowering to
-an indexed `Query`. agentgrep cannot adopt those semantics without adopting an
-index, which ADR 0003 would classify as a native engine or worker decision,
-not a parser change.
+an indexed `Query`. Adopting those semantics through Tantivy or another native
+index would require an ADR 0003 engine or worker decision, not merely a parser
+change. A Python-orchestrated SQLite or FTS5 read model is a separate storage
+and planning decision and does not by itself adopt Tantivy's query semantics.
 
 Mapping the agentgrep query language against Tantivy's `QueryParser`:
 
@@ -182,12 +185,16 @@ behavior change rather than branch-internal narrative.
 
 ## Relationship to other ADRs
 
-ADR 0003 owns the native boundary: adopting an index or BM25 scoring would be
-an engine or worker decision under that policy, which this ADR explicitly
-declines. ADR 0004 owns planning, execution, and result payloads, which are
-unchanged. ADR 0006 owns the public CLI and MCP surface and calls for
-registry-backed query discovery; this ADR supplies the query-language content
-those surfaces expose.
+ADR 0003 owns agentgrep-added native boundaries. A Python-orchestrated read
+model using the standard-library `sqlite3` module and SQLite FTS5 adds no new
+agentgrep-owned native boundary; its storage, lifecycle, provider and planning
+contracts belong to their focused decisions. An alternate provider that adds
+an in-process native extension, native engine, long-lived native thread or
+worker process must be classified and governed by ADR 0003. This ADR declines
+BM25 and index-specific query semantics regardless of provider. ADR 0004 owns
+planning, execution, and result payloads, which are unchanged. ADR 0006 owns
+the public CLI and MCP surface and calls for registry-backed query discovery;
+this ADR supplies the query-language content those surfaces expose.
 
 ## Final position
 

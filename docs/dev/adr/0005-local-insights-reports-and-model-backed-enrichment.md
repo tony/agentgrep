@@ -251,15 +251,29 @@ revision or digest, file format, license or terms marker, and artifact size.
 The runtime receives a resolved local path or asset bundle; report code never
 passes an unresolved model name into the executor.
 
-Cache directories follow explicit precedence:
+Model and enrichment storage resolve independently. `model_root` is
+`AGENTGREP_MODEL_DIR` when that override is non-empty; otherwise it is
+`<platform_cache_base>/agentgrep/models`. `enrichment_root` is
+`AGENTGREP_CACHE_DIR` when that override is non-empty; otherwise it is
+`<platform_cache_base>/agentgrep/insights`. Setting either override never
+relocates the other root. Backend-owned storage such as Ollama's model cache is
+also unaffected.
 
-1. `AGENTGREP_MODEL_DIR` for model artifacts.
-2. `AGENTGREP_CACHE_DIR` for enrichment indexes and report caches.
-3. Platform cache directories.
-4. `XDG_CACHE_HOME` on Unix-like systems.
-5. `LOCALAPPDATA` on Windows when native Windows support exists.
-6. `~/Library/Caches` on macOS.
-7. `~/.cache/agentgrep` as the final fallback.
+`platform_cache_base` uses one deterministic platform branch:
+
+1. macOS uses `~/Library/Caches`;
+2. native Windows, if supported by a later decision, uses `LOCALAPPDATA` and
+   reports a configuration error when it is unavailable;
+3. other Unix-like systems use an absolute, non-empty `XDG_CACHE_HOME`, or
+   `~/.cache` when the variable is absent or invalid.
+
+The resolver expands the user home in an explicit override, then requires an
+absolute path; a relative explicit override is a configuration error rather
+than a path resolved against the process working directory. It normalizes the
+selected absolute path lexically without resolving symlinks. Diagnostics and
+`cache dir` report the effective model and enrichment roots separately.
+Installing or removing `platformdirs` never changes either effective root; an
+implementation may use it only when its result is constrained to this algorithm.
 
 Every cache has a diagnostic surface:
 
@@ -317,7 +331,9 @@ The JSON payload includes:
   enrichers attempted, enrichers skipped, elapsed time, and active limits
 - deterministic builtin facts
 - optional enrichment facts
-- evidence references back to records or sessions using `RecordRef` handles
+- evidence references back to representative records using `RecordRef`
+  handles; session and conversation groups require a separately defined public
+  resolver before they can be opened as aggregates
 - privacy settings
 - model provenance when a model runs
 - grounded next actions
@@ -334,9 +350,10 @@ enrichment with provenance, not as the source of truth.
 For MCP and agent use, the report should make the loop obvious:
 
 1. Inspect report summary.
-2. Read `completion`, `diagnostics`, source coverage, and grounded next actions.
+2. Read `status`, `diagnostics`, source coverage, and grounded next actions.
 3. Request the next page when `next_cursor` is present.
-4. Open referenced sessions or records through `RecordRef` handles.
+4. Inspect representative records through `RecordRef`; use a separately
+   defined public resolver to open a session or conversation when one exists.
 5. Rerun with a narrower query, time range, agent, project, or backend.
 6. Escalate to embeddings or local LLM only when the builtin result is too
    shallow for the question.

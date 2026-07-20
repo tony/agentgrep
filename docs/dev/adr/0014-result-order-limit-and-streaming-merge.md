@@ -67,10 +67,14 @@ the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   apply a count cutoff in an order other than the order the caller declared.
   Every bounded source scan, frontier skip, or page fill must be justifiable as
   *"no unexamined record in the admitted universe can outrank the k-th record we
-  already hold, under the declared order"*. A stop rule that cannot state that
-  invariant does not run. Where recency is inferred from file mtime rather than
-  record timestamps, the invariant itself is approximate and the run reports
-  `approximate` (ADR 0004's run-status vocabulary).
+  already hold, under the declared order, and no unexamined physical view can
+  change the selected representative of a retained or emitted dedupe class"*.
+  Rank stability without representative stability is not a proof: an immutable
+  prefix cannot later replace a record under the same logical key. A stop or
+  emission rule that cannot state both invariants does not run. Where recency is
+  inferred from file mtime rather than record timestamps, the invariant itself
+  is approximate and the run reports `approximate` (ADR 0004's run-status
+  vocabulary).
 - **OL-2 — `order` is a request parameter, executed in the collector, and
   echoed on the result.** The vocabulary is fixed below. `limit` becomes a
   bounded top-k *under the declared order* — a k-sized frontier the collector
@@ -79,6 +83,15 @@ the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   a caller that cannot name the order it received cannot page it, diff it, or
   cache it. A frontend may still *present* records differently (grouping,
   highlighting, truncation), but it may not reorder or re-truncate the set.
+  Cross-source deduplication also chooses its representative through one
+  deterministic collector-owned function of the candidate views and request
+  snapshot. An inline driver may not keep the first view it happens to encounter
+  while a frontier driver keeps a newer one. Candidate and progress-event timing
+  may vary by driver; final `RecordEmitted` membership, representative records,
+  order, status, coverage and result counts do not. Timing and explicitly
+  driver-scoped performance diagnostics may vary. Any public `RecordRef`
+  attached to a chosen representative follows that same decision rather than
+  worker arrival.
 - **OL-3 — asyncio is a boundary protocol, never the engine's concurrency
   model.** The engine's inner loop is CPU-bound under the GIL: `json.loads` →
   field extraction → casefold → substring test. An event loop cannot make that
@@ -103,23 +116,34 @@ the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   779](https://peps.python.org/pep-0779/)) with no code change. Design for
   threads; let the build decide the throughput.
 - **OL-5 — Cursor pagination is defined only for `order="newest"`.** The cursor
-  is a keyset anchored on `(timestamp, agent, stable_source_order_key,
-  stable_record_coordinate)`. The final two components are deterministic,
-  snapshot-stable and jointly injective for every record in the request's
-  source snapshot; the existing `(timestamp, agent, path)` prefix alone is not
-  a total record order. A page resumes *strictly below* the full last-emitted
-  key, so equal timestamps and records from one source do not disappear between
-  pages. Every cursor also binds the normalized query and a source snapshot that
-  can be preserved or validated for its documented lifetime. When an adapter
-  cannot provide a collision-free coordinate or the snapshot is stale, the
-  result returns no cursor or rejects continuation; it never substitutes a new
-  snapshot as the next page. Keyset cursors and relevance ordering do not
-  compose — a relevance score is a function of the query and the corpus, not a
-  position in a total order, and a stable score has no successor to resume from.
-  A relevance-ordered request therefore returns **no cursor**: it reports
-  `bounded` with a diagnostic that names the order as the reason. Callers who
-  want to page rank by recency; callers who want relevance ask for one bounded
-  top-k.
+  is a keyset anchored on `(timestamp_sort_key, agent,
+  stable_source_order_key, stable_record_coordinate)`, compared
+  lexicographically in descending order. `timestamp_sort_key` is
+  `(1, normalized_utc_instant)` for a valid timestamp and `(0, 0)` for an absent
+  or invalid timestamp, so valid instants sort newest-first and absent or
+  invalid values sort last. Timestamp normalization preserves the source
+  instant's ordering precision under a versioned encoding. The remaining
+  components use versioned canonical byte encodings compared unsigned and
+  bytewise; the final two are deterministic, snapshot-stable and jointly
+  injective for every record in the request's source snapshot. The existing
+  `(timestamp, agent, path)` prefix alone is not a total record order. A page
+  resumes *strictly below* the full last-emitted key, so equal or absent
+  timestamps and records from one source do not disappear between pages. Every
+  cursor binds the key-encoding version, normalized query and a source snapshot
+  that can be preserved or validated for its documented lifetime. When an
+  adapter cannot provide a collision-free coordinate or the snapshot is stale,
+  the result returns no cursor or rejects continuation; it never substitutes a
+  new snapshot as the next page.
+
+  Keyset cursors and relevance ordering do not compose — a relevance score is a
+  function of the query and corpus, not a position in the `newest` total order.
+  A relevance-ordered request therefore returns **no cursor**, but cursor
+  absence does not select its `RunStatus`. It reports `bounded` only when an
+  applied top-k or another documented semantic bound leaves additional possible
+  matches outside the returned set. An unlimited, under-limit or otherwise
+  fully drained relevance request reports `complete` when no higher-precedence
+  condition applies. Callers who want to page rank by recency; callers who want
+  relevance request one result set under an explicit or unbounded limit.
 - **OL-6 — The tier interface is decided now; the tier policy is deferred.**
   The collector merges *sorted source streams*; whether a stream is a live file
   scan or an index cursor is invisible to it. That interface — one merge, N
@@ -135,11 +159,19 @@ page continues the same routing decision and snapshot. If that state cannot be
 preserved or validated, the result has no cursor; a continuation never reruns
 routing and presents a different source universe as the next page.
 
+These rules supersede driver-local representative policies, including
+"first encountered" for one driver and "newest physical view" for another, and
+any older allowance for final records or final record-event order to vary by
+execution driver. A focused identity decision, including the work tracked by
+[#80](https://github.com/tony/agentgrep/issues/80), may define equality and
+candidate coordinates, but it may not weaken the collector-owned deterministic
+representative, order or limit contract.
+
 ### Order vocabulary
 
 | `order` | Key | Limit means | Cursor |
 | --- | --- | --- | --- |
-| `newest` (default) | `(timestamp, agent, stable_source_order_key, stable_record_coordinate)`, descending | the k newest matching records | keyset over a validated snapshot (OL-5) |
+| `newest` (default) | `(timestamp_sort_key, agent, stable_source_order_key, stable_record_coordinate)`, descending | the k newest matching records | keyset over a validated snapshot (OL-5) |
 | `relevance` | score, then the `newest` key as tiebreak | the k best-scoring matching records | none |
 | `scan` | source order, then record order | the first k records the plan encountered | none |
 
@@ -204,6 +236,18 @@ frontier is more state than a counter. Relevance requests lose pagination
 outright — a deliberate loss, since the alternative is a cursor that silently
 returns a different list each page. The tier barrier adds a wait that, with no
 index, never triggers; it must not be allowed to rot untested in the meantime.
+
+Focused contract tests cover duplicate physical views arriving in opposite
+orders under inline and threaded drivers; equal, absent and invalid timestamps
+across a page boundary; cursor key-encoding version mismatch; an under-limit
+fully drained relevance request reporting `complete`; and a top-k relevance
+request that stops with possible lower-ranked matches reporting `bounded`.
+Those cases assert byte-identical final records and identical deterministic
+status, coverage, order and count fields across drivers; they do not assert
+identical progress-event timing or performance measurements. A streaming case
+reverses duplicate-view arrival and asserts the same immutable
+`RecordEmitted` sequence, proving that the barrier seals both rank and
+representative choice before emission.
 
 Before the default newest-order path changes, benchmarks compare the current
 source-local accepted-count stop, a full drain and the proposed source-order

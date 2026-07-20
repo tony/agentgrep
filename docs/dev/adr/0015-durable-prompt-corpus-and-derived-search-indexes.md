@@ -66,6 +66,16 @@ deep search.
 Ten invariants govern the corpus and indexing boundary (PC for *prompt
 corpus*).
 
+On adoption, this decision supersedes the storage assumptions in
+[#47](https://github.com/tony/agentgrep/pull/47),
+[#48](https://github.com/tony/agentgrep/pull/48) and any earlier or
+branch-local design in which one agentgrep-managed derived database ingests
+normalized origin records or complete conversation content and then acts as
+prompt corpus, transcript cache, search index and insights store at once.
+Conflicting schemas, configuration names and implementation details migrate to
+this decision; they are not compatibility requirements. Reusable extraction,
+query and FTS code may be retained only behind the boundaries below.
+
 ### PC-1 — Origin stores remain the complete-conversation authority
 
 The data path has three layers:
@@ -86,6 +96,11 @@ needs assistant, reasoning, tool, attachment or mutation data must read the
 origin store or obtain its own storage decision. The current
 {class}`~agentgrep.SearchRecord` remains a projection rather than becoming the
 durable schema.
+
+This boundary does not prohibit a future durable transcript store. Such a store
+requires a separate decision covering its authority, admission, retention,
+privacy, migration and public surfaces. It remains distinct from the prompt
+corpus and cannot present itself as an exact prompt-index generation.
 
 ### PC-2 — The retention boundary is complete human prompt semantics
 
@@ -144,16 +159,30 @@ The repository keeps these private keys:
 | Private key | Meaning |
 | --- | --- |
 | `prompt_blob_digest` | Full SHA-256 digest of the versioned media type, encoding and exact extracted prompt bytes |
+| `corpus_source_instance_key` | One repository-globally collision-free privately tracked origin-source instance and its observation history |
 | `corpus_occurrence_key` | One admitted prompt occurrence under an adapter-owned source observation and coordinate contract |
-| `corpus_conversation_key` | Private anchor for the containing origin conversation and its current locator evidence |
+| `corpus_conversation_key` | Repository-globally collision-free private anchor for the containing origin conversation and its current locator evidence |
 | revision, projection and observation keys | Private versions of admitted evidence and its normalized read-model projection |
 | locator keys | Private prompt and conversation coordinates bound to one source observation |
 
 `prompt_blob_digest` may content-address and physically share identical prompt
 bytes, but every occurrence keeps its own timestamp, provenance and locators.
-The repository also keeps private source identity and identity-quality evidence.
-SQLite rowids, local paths, working directories, mtimes and branches never
-become public logical identity.
+The source-instance and conversation key contracts include the adapter/store
+namespace and enough private source-instance domain to make comparison of the
+complete key safe across the repository. Two physical source instances or
+conversation observations compare equal only when the owning adapter proves
+that they represent the same source or conversation under the versioned key
+contract; coincident native ids, paths, titles or ordinals never collapse key
+domains. Routing may therefore group on the complete
+`corpus_conversation_key` without a separate path-derived collision domain.
+
+The runtime catalogue's public store-family identifier describes an adapter or
+store family and its capabilities; multiple discovered source instances may
+share it. It is not an occurrence identity or locator. The corpus instead uses
+`corpus_source_instance_key` for one physical/logical source instance and keeps
+that key, its discovery evidence and identity-quality evidence private. SQLite
+rowids, local paths, working directories, mtimes and branches never become
+public logical identity.
 
 This ADR does not define public identity fields. Their names, semantics,
 stability and rollout belong to the focused deterministic-identity decision
@@ -183,6 +212,15 @@ path, timestamp, `session_id` or `conversation_id` alone never proves occurrence
 identity. Dedupe changes result presentation, not the retained occurrence
 inventory.
 
+Execution strategy never supplies identity or representative-selection policy.
+For the same normalized request and validated source/corpus snapshot, inline,
+frontier, threaded, live-only, indexed-only and hybrid drivers select the same
+logical representative and emit the same byte-identical public final-record
+sequence under {ref}`ADR 0014 <adr-result-order-limit-and-streaming-merge>`.
+Arrival order and first-seen state may affect candidate and progress-event
+timing only; they never choose the public identity values, `RecordRef`, dedupe
+winner, final order or global limit.
+
 ### PC-4 — Prompt and conversation locators are distinct, private evidence
 
 Each prompt occurrence records both:
@@ -201,12 +239,13 @@ ADR 0006-governed human display or debug paths may be rendered separately, but
 they are never accepted as resolution identity and never substituted for a
 `RecordRef`, public canonical ID or private locator.
 
-Every locator is bound to the `source_id`, source observation, adapter contract
-and discovery generation that produced it. Resolution first verifies that
-binding. If the source changed, the adapter may rediscover the same native
-identity and publish a new locator; it may not silently apply the old coordinate
-to different content. An unresolved or ambiguous locator is `stale`, contributes
-to coverage diagnostics and never opens a guessed conversation.
+Every locator is bound to the private `corpus_source_instance_key`, source
+observation, adapter contract and discovery generation that produced it.
+Resolution first verifies that binding. If the source changed, the adapter may
+rediscover the same native identity and publish a new locator; it may not
+silently apply the old coordinate to different content. An unresolved or
+ambiguous locator is `stale`, contributes to coverage diagnostics and never
+opens a guessed conversation.
 
 Stale and grace-period prompt bytes remain retained but do not participate in
 ordinary prompt or deep search. They are available only through an explicit
@@ -225,7 +264,7 @@ an implementation detail; the information is not.
 | Group | Required evidence |
 | --- | --- |
 | Contract | corpus schema, adapter contract, extraction contract and observed data version |
-| Source | agent, store, format, coverage, privacy class and stable source id |
+| Source | agent, public catalogue/store-family identifier, format, coverage, privacy class, private `corpus_source_instance_key` and its discovery evidence |
 | Observation | scheduling fingerprint, consistent snapshot or cutoff evidence, dependency manifest and discovery generation |
 | Prompt | `prompt_blob_digest`, `corpus_occurrence_key`, private revision key, private identity-quality evidence and any public identity values supplied by their owning contract |
 | Query semantics | canonical values, explicit absent states and field-level native/extracted/synthetic provenance |
@@ -265,6 +304,17 @@ provider stores normalized search rows, details, facets, coverage and
 [FTS5](https://www.sqlite.org/fts5.html) data in `index-vN.sqlite3`. An alternate
 provider is permitted only through an explicit configuration and capability
 selection; installing a dependency never activates or replaces a provider.
+This provider role is the `ExactIndexProvider`: reusable query, normalization
+and FTS implementation from an earlier derived-cache branch may implement that
+role only after its input is restricted to a committed prompt-corpus generation
+and its output obeys the matcher and merge contracts below.
+
+The default backend is Python-orchestrated `sqlite3` with SQLite FTS5. Calling
+that dependency does not add agentgrep-owned native code or create an
+agentgrep-native accelerator, engine or worker boundary. Any alternate exact
+provider that introduces a native component must be justified, classified and
+tested under {ref}`ADR 0003 <adr-native-boundary-execution-architecture>`; an
+installed native dependency still never selects or activates that provider.
 
 Every immutable provider generation publishes a manifest containing its
 provider identifier and version; corpus generation; source-observation
@@ -298,7 +348,7 @@ The initial logical corpus has these responsibilities:
 | Corpus table | Responsibility |
 | --- | --- |
 | `schema_migrations` | Ordered, checksummed durable-schema history |
-| `sources` | Agent/store/adapter identity, privacy, private locator token and lifecycle state |
+| `sources` | Public agent/store-family classification, private `corpus_source_instance_key`, privacy, private locator token and lifecycle state |
 | `source_observations` | Scheduling fingerprints, snapshots/cutoffs, dependencies, generations and ingest outcomes |
 | `prompt_contents` | Complete extracted prompt bytes keyed by `prompt_blob_digest` |
 | `conversations` | Private `corpus_conversation_key` anchors and current locators |
@@ -317,11 +367,18 @@ other enrichments live outside both `prompts.sqlite3` and exact prompt-index
 generations. They are independently versioned, removable and rebuildable under
 their owning derivation contract; deleting or rebuilding them never migrates,
 deletes or changes canonical prompt evidence or exact-index coverage.
+An insights database or full-record cache from a superseded branch is therefore
+not an `ExactIndexProvider` and cannot claim prompt-corpus authority or exact
+coverage. Its insight algorithms may move under ADR 0005; its reusable lexical
+query and FTS mechanisms may move behind `ExactIndexProvider` only under PC-6.
 
-This ADR authorizes no corpus import and no second portable export contract.
-Portable record export belongs to its existing public-surface owner. Retained
-corpus evidence is reachable only through the explicit read-only storage
-inspection in PC-4; NDJSON never populates or restores `prompts.sqlite3`.
+This ADR authorizes no corpus import and no portable export contract.
+Portable record export requires a separate focused public-surface decision,
+tracked independently in
+[#81](https://github.com/tony/agentgrep/issues/81); this ADR neither chooses an
+existing branch-local exporter nor makes one authoritative. Retained corpus
+evidence is reachable only through the explicit read-only storage inspection
+in PC-4; NDJSON never populates or restores `prompts.sqlite3`.
 
 ### PC-7 — Indexed, stale and live partitions preserve prompt-search semantics
 
@@ -546,16 +603,21 @@ The corpus boundary is not complete until tests prove:
   defensible adapter values exactly, unavailable values remain absent or null
   as that contract defines, and private corpus keys never cross a public
   envelope;
+- a public catalogue/store-family identifier may group multiple physical source
+  instances, never resolves a locator and never substitutes for the private
+  `corpus_source_instance_key`;
 - `RecordRef` remains the only public physical prompt drilldown; prompt and
-  conversation locators resolve only against their bound source observation,
-  never appear as a second public locator field and never open different content
-  when stale or ambiguous;
+  conversation locators resolve only against their bound
+  `corpus_source_instance_key` and source observation, never appear as a second
+  public locator field and never open different content when stale or
+  ambiguous;
 - cross-stage prompt dedupe uses a canonical occurrence identifier when the
   focused identity contract supplies one, or `corpus_occurrence_key` only with
   adapter proof; identical text, content digest, title, path and timestamp never
   suffice;
-- live-only, indexed-only and hybrid prompt plans produce the same semantic
-  result set, order, dedupe and global limit for every exact provider;
+- inline, frontier, threaded, live-only, indexed-only and hybrid prompt plans
+  choose the same representative and produce the same byte-identical public
+  final-record sequence, dedupe and global limit for every exact provider;
 - provider selection is explicit, installing an optional dependency never
   activates it, and each active immutable generation has a verified manifest
   bound to the corpus generation and exact contracts it consumed;
@@ -659,6 +721,11 @@ The adopted patterns are deliberately narrower than their source systems:
 - **Make FTS rows canonical:** tokenizers, projections and query contracts
   change independently of extracted prompt evidence; placing both in one
   rebuild domain turns an optimization migration into evidence loss.
+- **Use one derived database for canonical prompts, full normalized transcripts,
+  exact search and insights:** it gives one cache several incompatible
+  authority, retention, migration and privacy roles. Reusable lexical machinery
+  belongs behind `ExactIndexProvider`; transcript durability and ADR 0005
+  enrichments require their separately governed stores.
 - **Treat an indexed observation as permanently current:** it admits stale
   positives and missed prompts after origin, WAL or sibling-dependency changes.
 - **Require a complete index before prompt search:** first use, changed sources
@@ -696,7 +763,9 @@ partitioning and sync phases without creating another public resolver.
 insights, optional dependencies, model provisioning and enrichment lifecycle.
 Those artifacts remain outside `prompts.sqlite3` and exact prompt-index
 generations and are independently removable; this ADR neither selects their
-backends nor authorizes model downloads.
+backends nor authorizes model downloads. Where an earlier or branch-local
+full-record database combined insights with prompt indexing, this narrower
+corpus and exact-provider boundary takes precedence.
 
 {ref}`ADR 0006 <adr-public-cli-mcp-surface-contract>` owns public envelopes,
 diagnostics, cursors and identity/reference presentation. This ADR preserves
@@ -754,15 +823,16 @@ stale/grace states, and the separate prompt-guided routing approximation.
 ## Final position
 
 agentgrep durably stores complete extracted human prompts, not everything an
-agent wrote. Private `prompt_blob_digest`, `corpus_occurrence_key`,
-`corpus_conversation_key`, revision, projection, observation and locator keys
-retain prompt evidence without redefining public identity. Before the focused
-identity contract lands, no canonical public identity is synthesized. After it
-lands, defensible values supplied under that contract are preserved exactly.
-`RecordRef` remains the public physical prompt handle. Exact-provider read
-models remain disposable; indexed and live partitions preserve current
-prompt-search semantics; and per-source occurrence reconciliation plus a visible
-grace period prevents the corpus from quietly becoming an archive.
+agent wrote. Private `prompt_blob_digest`, `corpus_source_instance_key`,
+`corpus_occurrence_key`, `corpus_conversation_key`, revision, projection,
+observation and locator keys retain prompt evidence without redefining public
+identity. Before the focused identity contract lands, no canonical public
+identity is synthesized. After it lands, defensible values supplied under that
+contract are preserved exactly. `RecordRef` remains the public physical prompt
+handle. Exact-provider read models remain disposable; indexed and live
+partitions preserve driver-independent prompt-search representatives and final
+output; and per-source occurrence reconciliation plus a visible grace period
+prevents the corpus from quietly becoming an archive.
 Ordinary search remains read-only, inspectable-store persistence remains opt-in,
 complete conversations remain where their agents wrote them, and deep search
 resolves them deliberately under the progressive-search and prompt-guided

@@ -232,25 +232,39 @@ then expose that state through the frontend result payload.
 `RunStatus` values are compatibility-sensitive. Additive values require tests
 for every sink that renders or serializes run status.
 
+A run may satisfy more than one condition. Every producer and collector chooses
+one primary `RunStatus` with this global precedence:
+`failed` > `cancelled` > `truncated` > `approximate` > `bounded` > `complete`.
+Lower-precedence conditions are not discarded: they remain in structured
+status details, diagnostics, page metadata and coverage. For example, a failed
+targeted run remains `failed` while retaining its approximation reason and
+examined bound; a successfully delivered targeted page remains `approximate`
+while reporting its page and candidate bounds separately. Focused decisions
+may define additional structured details, but they must not redefine this
+precedence.
+
 ### Reachability today
 
-Only `complete` and `bounded` have a producer. The rest are declared in the MCP
-`RunStatusModel` literal but no code path constructs them, so a caller cannot
-learn from the payload that a run was cut short, cancelled, approximated, or
-failed. A state with no producer is a promise the payload cannot keep, so each
-one below names the layer that owes it.
+Only `complete` and `bounded` have a legacy producer, and it infers status from
+cursor presence rather than completion or bound evidence. That mapping is
+insufficient: an unpageable relevance result may be complete or bounded, and a
+missing cursor may mean only that continuation is unsupported. The other states
+are declared in the MCP `RunStatusModel` literal but no code path constructs
+them. A status without an evidence-bearing producer is a promise the payload
+cannot keep, so each row below names the layer that owes it.
 
 | State | Producer today | Owed by |
 | --- | --- | --- |
-| `complete` | `_page_status`, in the MCP search and discovery tool modules, when a page has no `next_cursor` | — |
-| `bounded` | the same helpers, with `reason="page_limit"`, when a page has a `next_cursor` | — |
+| `complete` | `_page_status`, in the MCP search and discovery tool modules, maps missing `next_cursor` to this state without completion proof | the planner and final collector, after every affecting source was examined or provably excluded |
+| `bounded` | the same helpers map a present `next_cursor` to `reason="page_limit"` without proving which semantic bound stopped work | the planner and final collector, when an applied result/page limit, proof-bearing source bound or answer-now request actually leaves possible work outside the result |
 | `truncated` | none | the sinks that own an output budget: MCP response limits, and the JSON/NDJSON writers |
 | `cancelled` | none | the execution driver's cancellation path (`SearchControl`), surfaced through the collectors |
 | `approximate` | none | the planner, wherever heuristic source selection or mtime-as-recency can affect completeness; a legacy bounded scan without frontier proof must instead be replaced or drained before exact/exhaustive effort ships (see {ref}`adr-result-order-limit-and-streaming-merge`) |
 | `failed` | none | the collectors, on an unrecovered source or run error |
 
 The CLI JSON and NDJSON payloads carry no run status at all yet; only the MCP
-tool responses do.
+tool responses do. Cursor availability is page metadata and never selects
+`RunStatus` by itself.
 
 ### Result payload fields
 
@@ -293,17 +307,19 @@ Minimum result payload fields:
   not include prompt text, raw argv, secret values, or local absolute paths.
 
 `RecordRef`
-: An opaque physical handle for result drilldown. It resolves an emitted record
-  or source-scoped record position through a private representation chosen by
-  agentgrep. It is not a canonical equality, grouping, bookmark, or export
-  identity, and private repository keys do not become canonical public identity
-  merely because the handle resolves through them. Callers use the handle with
-  an inspect/drilldown operation
-  instead of building tool calls from local file paths, adapter ids, or record
-  offsets. A public conversation resolver requires a separate public-surface
-  decision; a public thread identifier alone does not imply resolution. Source
-  path, adapter id, and line or offset metadata may still appear as display or
-  local debug metadata, but they are not the primary public drilldown input.
+: An opaque physical handle for record drilldown. It resolves an emitted record,
+  a representative record selected for an aggregate, or a source-scoped record
+  position through a private representation chosen by agentgrep. It never
+  resolves a session, thread or conversation as an aggregate. It is not a
+  canonical equality, grouping, bookmark, export or conversation identity, and
+  private repository keys do not become canonical public identity merely
+  because the handle resolves through them. Callers use the handle with an
+  inspect/drilldown operation instead of building tool calls from local file
+  paths, adapter ids, or record offsets. A public session or conversation
+  resolver requires a separate focused public-surface and privacy decision; a
+  public thread identifier alone does not imply resolution. Source path,
+  adapter id, and line or offset metadata may still appear as display or local
+  debug metadata, but they are not the primary public drilldown input.
 
 MCP, JSON, and NDJSON collectors must preserve these result fields by default.
 Collecting only `RecordEmitted` events and discarding started, progress,
