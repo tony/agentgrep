@@ -153,7 +153,7 @@ exhaustive search.
 
 ### CR-3 — Routing evidence is deterministic, ordered and explainable
 
-The initial routing policy uses these evidence tiers, strongest first:
+The minimum routing policy uses these evidence tiers, strongest first:
 
 1. **Exact prompt expression**: the prompt-applicable positive text expression
    matches a complete stored prompt under the normal prompt-query contract.
@@ -162,33 +162,35 @@ The initial routing policy uses these evidence tiers, strongest first:
    expression required a structure the prompt index cannot represent.
 3. **Disjunctive text clues**: at least one positive literal or term occurs in
    a prompt.
-4. **Optional semantic prompt clues**: an explicitly selected named and
-   versioned routing policy uses a declared provider to retrieve related current
-   prompts.
-5. **Explicit metadata clues**: request metadata identifies or ranks an
+4. **Explicit metadata clues**: request metadata identifies or ranks an
    eligible conversation but is not safe as a record-level exclusion.
-6. **Current-project fallback**: recently active eligible conversations in the
+5. **Current-project fallback**: recently active eligible conversations in the
    explicit or deterministically resolved current project.
-7. **Global-recency fallback**: recently active conversations from the eligible
-   universe when that separately configured fallback is enabled.
 
 Negative clauses never become positive clues. Phrase decomposition,
 conjunction-to-disjunction relaxation and the documented query normalizations
 are allowed because they broaden routing only.
 
-The baseline policy is deterministic and uses no embedding or LLM evidence.
-Semantic prompt clues activate only when the request explicitly selects both a
-named, versioned routing policy and its provider. Installing a capability,
-selecting `--deep`, finding weak lexical evidence or finding no candidates does
-not activate it. Selection authorizes use of already provisioned local
-capability only: routing never implicitly downloads a model, builds a semantic
-index, starts provisioning or sends prompt/query content to a remote service.
-Provider, model, index generation, score contract, threshold and semantic
-sub-cap are compatibility-sensitive inputs to the routing-policy version and
-appear in privacy-safe coverage. An explicitly selected unavailable provider is
-a structured planning failure, not a silent change to the deterministic policy.
-Semantic evidence selects candidates only; every result still requires CR-6's
-exact matcher and receives no final-rank contribution from semantic score.
+Two extension positions are reserved but absent from the minimum implementation:
+semantic prompt evidence after disjunctive clues and before explicit metadata,
+and global-recency evidence after current-project fallback. A future named,
+versioned and explicitly selected policy may declare either. The baseline
+exposes no routing-policy selector; a future extension first defines that public
+selection contract under ADR 0006 and binds it into the normalized request,
+cursor and coverage report. Selecting `--deep`, finding weak or no lexical
+evidence, or installing a dependency never activates an extension.
+
+If an implemented extension policy provides semantic prompt clues, selection
+authorizes only already provisioned local capability. Routing never implicitly
+downloads a model, builds a semantic index, starts provisioning or sends
+prompt/query content to a remote service. Provider, model, index generation,
+score contract, threshold and semantic sub-cap are compatibility-sensitive
+inputs to that policy version and appear in privacy-safe coverage. An explicitly
+selected unavailable policy or provider is a structured planning failure, not a
+silent substitution. Semantic evidence selects candidates only; every result
+still requires CR-6's exact matcher and receives no final-rank contribution from
+semantic score. The minimum implementation need not expose or accept a semantic
+policy.
 
 The plan declares three distinct bounds:
 
@@ -203,8 +205,9 @@ The plan declares three distinct bounds:
 
 `fallback_min_resolved`
 : The minimum number of distinct, usable resolved conversations sought from
-  prompt, optional semantic and explicit-metadata evidence before fallback
-  stops contributing candidates.
+  all non-fallback evidence enabled by the selected policy before fallback stops
+  contributing candidates. In the baseline, that means prompt and explicit
+  metadata evidence.
 
 The plan requires `0 <= completed_scan_target <= candidate_attempt_cap` and
 `0 <= fallback_min_resolved <= candidate_attempt_cap`. The resolved floor may
@@ -216,12 +219,13 @@ Fallback activation is deterministic and depends on usable resolutions, not raw
 evidence rows or distinct ranked keys. The planner resolves higher-tier
 candidates in canonical order. If fewer than `fallback_min_resolved` are usable,
 the current-project tier contributes attempts toward the floor up to its
-sub-cap; if the usable count remains below the floor and global recency is
-enabled, that tier contributes attempts up to its separate sub-cap. Stale,
-ambiguous, unavailable and failed resolutions do not satisfy the floor. Fallback
-does not depend on final result count, a confidence adjective, elapsed worker
-order or final-match score. Evaluation occurs at deterministic tier barriers so
-parallel completion cannot change whether a fallback tier ran.
+sub-cap. Stale, ambiguous, unavailable and failed resolutions do not satisfy the
+floor. Fallback does not depend on final result count, a confidence adjective,
+elapsed worker order or final-match score. Evaluation occurs at deterministic
+tier barriers so parallel completion cannot change whether a fallback tier ran.
+The baseline never expands from current-project to global recency. A future
+named and versioned fallback extension must define its own sub-cap, evidence
+variant, deterministic tier barrier and coverage fields.
 
 Before transcript scans and collection overlap, the router freezes the ranked
 work universe, including deterministic reserves and sub-caps for every eligible
@@ -250,28 +254,28 @@ candidate.
 
 `corpus_conversation_key` is query-planning identity only. It never crosses a
 public result envelope and is not the bookmark, export, similarity or drilldown
-identity. A public nullable `thread_id` is preserved exactly when the normalized
-record and its separately owned identity contract can defend it; routing never
-fabricates one. Equality of two non-null public thread IDs may be evidence used
-by the corpus layer when it constructs its private grouping key, but this ADR
-neither groups directly on `thread_id` nor treats it as a resolver.
+identity. If the focused identity contract later supplies a public grouping or
+thread field, routing preserves only values defensibly supplied by the
+normalized record and never fabricates one. Equality of two such non-null
+values may be evidence used by the corpus layer when it constructs its private
+grouping key, but this ADR neither groups directly on a public identity field
+nor treats one as a resolver.
 
-`RoutingEvidence` has five evidence shapes:
+`RoutingEvidence` has three baseline shapes:
 
 - **Prompt evidence** carries the private `corpus_occurrence_key`, prompt tier,
   supported positive-clause set, prompt-match score, supporting occurrence
   time and source observation.
-- **Semantic prompt evidence** carries the current private
-  `corpus_occurrence_key`,
-  explicitly selected policy/provider contract, semantic score, supporting
-  occurrence time and source observation.
 - **Explicit metadata evidence** carries the set of explicit request
   constraints matched by the conversation, snapshot-bound activity time and
   source observation.
 - **Current-project fallback evidence** carries the exact current-project
   identity, snapshot-bound activity time and source observation.
-- **Global-recency fallback evidence** carries snapshot-bound activity time and
-  source observation.
+
+An implemented semantic extension adds evidence carrying the private
+`corpus_occurrence_key`, selected policy/provider contract, semantic score,
+supporting occurrence time and source observation. A future global-recency
+extension defines its own versioned evidence shape. Neither is a minimum type.
 
 Evidence aggregation uses only commutative reductions, so shuffled rows and
 worker completion cannot change a candidate. The aggregate retains all
@@ -279,11 +283,13 @@ contributing evidence and ranks under its strongest tier; weaker tiers remain
 explanation and coverage data. Within one prompt tier it unions supported
 positive-clause sets, takes the maximum prompt-match score, takes the newest
 supporting occurrence time with missing last, and retains the bytewise-smallest
-`corpus_occurrence_key` as the evidence tie-break. Within the semantic tier it
-takes the maximum semantic score, then the newest supporting occurrence time
-with missing last, then the bytewise-smallest `corpus_occurrence_key`. Explicit
-metadata evidence unions canonical constraint keys and takes the newest activity
-time. Each fallback tier takes the newest activity time.
+`corpus_occurrence_key` as the evidence tie-break. Explicit metadata evidence
+unions canonical constraint keys and takes the newest activity time. The
+current-project fallback takes the newest activity time. An implemented semantic
+extension takes the maximum semantic score, then the newest supporting
+occurrence time with missing last, then the bytewise-smallest
+`corpus_occurrence_key`. Any other extension defines an equally commutative
+reduction in its policy version.
 
 The deterministic candidate order is tier first, followed by a tier-local key:
 
@@ -291,22 +297,27 @@ The deterministic candidate order is tier first, followed by a tier-local key:
   prompt-match score, greatest first; then supporting occurrence time, newest
   first with missing last; then the retained `corpus_occurrence_key`, bytewise
   ascending;
-- the optional semantic prompt tier orders by its declared score, greatest
-  first; supporting occurrence time, newest first with missing last; then the
-  retained `corpus_occurrence_key`, bytewise ascending;
 - explicit metadata orders by number of distinct matched request constraints,
   greatest first; the canonical sorted constraint-key set, bytewise ascending;
   then activity time, newest first with missing last;
-- current-project and global-recency fallbacks order by activity time, newest
-  first with missing last; and
+- current-project fallback orders by activity time, newest first with missing
+  last; and
 - every tier ends with the private `corpus_conversation_key`, bytewise
   ascending.
 
+An implemented semantic extension occupies its reserved position and orders by
+declared score, greatest first; supporting occurrence time, newest first with
+missing last; then retained `corpus_occurrence_key`, bytewise ascending. A
+future global-recency extension occupies its reserved position after
+current-project and defines its deterministic tier-local order in the policy
+version.
+
 The canonical constraint key is a request-local identifier over one canonical
 compiled predicate. Neither that private key nor its raw constraint value
-enters diagnostics or profiles. `RecordRef` encoding, public `thread_id`,
-private locator bytes, index/live provenance, arrival order, worker completion
-order and SQLite rowid never participate in grouping or candidate ordering.
+enters diagnostics or profiles. `RecordRef` encoding, any future public identity
+field, private locator bytes, index/live provenance, arrival order, worker
+completion order and SQLite rowid never participate in grouping or candidate
+ordering.
 
 `candidate_attempt_cap` and each fallback sub-cap count distinct private corpus
 conversation keys after dedupe. `completed_scan_target` counts only complete
@@ -410,15 +421,15 @@ so.
 
 When a transcript hit identifies the same human prompt occurrence already
 returned from the prompt corpus, the storage decision's cross-stage contract
-collapses it by canonical public `record_id`, or by private
-`corpus_occurrence_key` only with adapter proof. Equal text alone never
-collapses occurrences. The durable prompt projection remains the canonical
-prompt result, while the deep scan may contribute verified conversation
-provenance and match evidence. This dedupe applies only to human prompts.
-Assistant, reasoning and tool hits remain distinct normalized records under the
-exhaustive matcher; this ADR does not define a stable occurrence identity or
-cross-projection dedupe contract for them. A user prompt found only in a changed
-live transcript is emitted once with its normal live-record identity and
+uses a canonical occurrence identifier when the focused identity contract
+supplies one, or private `corpus_occurrence_key` only with adapter proof. Equal
+text alone never collapses occurrences. The durable prompt projection remains
+the canonical prompt result, while the deep scan may contribute verified
+conversation provenance and match evidence. This dedupe applies only to human
+prompts. Assistant, reasoning and tool hits remain distinct normalized records
+under the exhaustive matcher; this ADR does not define a stable occurrence
+identity or cross-projection dedupe contract for them. A user prompt found only
+in a changed live transcript is emitted once with its normal live-record identity and
 coverage state.
 
 Targeted pagination is available only for ADR 0014's `order="newest"` and only
@@ -493,7 +504,7 @@ The planner handles weak or unavailable routing evidence as follows:
 | Unsupported routing predicate | Do not use it to exclude candidates; preserve it for the final matcher and report `unsupported_routing_predicate` |
 | Missing or stale prompt partition | Search current indexed and eligible live prompt partitions, record the uncovered source observation and recommend exhaustive escalation |
 | Live prompt lacks a routing key or locator | Keep it eligible as a prompt result, exclude it from conversation attempts and report `live_prompt_unroutable` |
-| Explicit semantic provider unavailable | Fail planning with a structured capability diagnostic; do not silently use another routing policy or provision capability |
+| Explicit optional routing policy or required provider unavailable | Fail planning with a structured capability diagnostic; do not silently substitute a policy or provision capability |
 | Pre-dedupe bound or `candidate_attempt_cap` reached | Stop only at the declared bound and report the affected tier, cap, saturation, completed count and stop reason |
 | Planned routing- or scan-time budget reached | Preserve results only from complete scans, keep primary status `approximate`, and report the stopping stage, completed target and unsearched counts when known |
 | External timeout or user/client cancellation | Stop through the shared cancellation path, report `cancelled`, and retain approximation details |
@@ -550,36 +561,32 @@ fingerprint of a private store.
 
 Profiles and diagnostics never contain a private `corpus_conversation_key`,
 prompt text, transcript text, raw query expansions, local absolute paths,
-native locator values, public `thread_id` values or `RecordRef` values. The
-private grouping key and locators are sensitive routing evidence and may become
-stale; `RecordRef` remains the public result/drilldown contract elsewhere.
-Agent/store classifications, counts, durations, policy/provider versions and
-coarse byte totals are sufficient for planner and benchmark analysis.
+native locator values, public identity values or `RecordRef` values. The private
+grouping key and locators are sensitive routing evidence and may become stale;
+`RecordRef` remains the public result/drilldown contract elsewhere. Agent/store
+classifications, counts, durations, policy/provider versions and coarse byte
+totals are sufficient for planner and benchmark analysis.
 
 ### CR-12 — Exactness, recall and cost are tested separately
 
 The implementation requires focused contract tests for:
 
 - deterministic routing under shuffled source and worker completion order;
-- exact, conjunctive, disjunctive, explicitly selected semantic, metadata and
+- exact, conjunctive, disjunctive, explicit-metadata and current-project
   fallback tier precedence;
 - indexed and live prompt evidence parity, live-unroutable prompt-result
   preservation and exclusion of retained-only evidence;
-- prompt, semantic, explicit-metadata, current-project and global-recency
-  evidence construction and tier-local ordering;
-- proof that installed semantic capability and `--deep` alone never activate a
-  provider, unavailable explicit providers fail visibly, and routing performs no
-  implicit model download, index build or remote call;
+- prompt, explicit-metadata and current-project evidence construction and
+  tier-local ordering;
 - fallback activation and stopping at `fallback_min_resolved`, based on usable
   resolutions rather than evidence count and independent of result count,
   confidence, timing and arrival order;
 - commutative same-tier evidence reduction under shuffled evidence rows;
-- semantic duplicate reduction keeps the maximum score, newest support time and
-  bytewise-smallest occurrence key under shuffled evidence rows;
 - private corpus-conversation-key dedupe before every attempt bound and stable
   private-key tie-breaks;
-- preservation but non-fabrication of nullable public `thread_id`, plus its
-  exclusion and `RecordRef`'s exclusion from grouping and ordering;
+- absence before the focused public identity contract, preservation without
+  fabrication after it and exclusion of public identity fields and `RecordRef`
+  from grouping and ordering;
 - proof that relaxed routing evidence never emits a non-matching result;
 - parity between targeted and exhaustive matching inside the same candidate;
 - proof that routing score, tier, index/live origin, arrival and freshness never
@@ -603,6 +610,15 @@ The implementation requires focused contract tests for:
 - run-local or page-sequence non-linkable snapshot identifiers;
 - the absence of an automatic exhaustive sweep; and
 - equivalent routing summaries across CLI JSON/NDJSON, TUI and MCP sinks.
+
+An implementation that adds semantic or global-recency evidence also proves
+explicit activation only; unavailable policy/provider failure; absence of
+implicit provisioning, index construction and remote calls; evidence
+construction and reserved tier precedence; commutative reduction under shuffled
+rows; sub-cap and coverage reporting; and that baseline `--deep` never activates
+the extension. A semantic implementation specifically retains the maximum
+score, newest support time and bytewise-smallest occurrence key under shuffled
+evidence rows.
 
 An exhaustive fixture sweep is the correctness oracle for final transcript
 matches. Targeted tests measure selection recall separately: for each attempt
@@ -639,7 +655,7 @@ APIs until implemented and documented.
 
 `RoutingPlan`
 : Original query digest, routing-policy version, safe universe predicates,
-  ordered evidence tiers, optional explicitly selected provider contract,
+  ordered evidence tiers, optional explicitly selected extension contract,
   `completed_scan_target`, `candidate_attempt_cap`, `fallback_min_resolved`,
   per-fallback sub-caps, time budgets and required locator stability.
 
@@ -651,21 +667,21 @@ APIs until implemented and documented.
 
 `RoutingEvidence`
 : A tagged union whose common fields are the private
-  `corpus_conversation_key` and source observation. Its variants are
+  `corpus_conversation_key` and source observation. Its baseline variants are
   `PromptEvidence` (prompt occurrence, prompt tier, supported clauses, prompt
-  score and support time), `SemanticPromptEvidence` (prompt occurrence,
-  policy/provider contract, semantic score and support time),
-  `ExplicitMetadataEvidence` (matched request constraints and activity time),
-  `CurrentProjectFallbackEvidence` (exact project identity and activity time)
-  and `GlobalRecencyFallbackEvidence` (activity time). It does not carry prompt
-  text or raw metadata values into planner diagnostics.
+  score and support time), `ExplicitMetadataEvidence` (matched request
+  constraints and activity time) and `CurrentProjectFallbackEvidence` (exact
+  project identity and activity time). An implemented extension may add a
+  versioned `SemanticPromptEvidence`, `GlobalRecencyFallbackEvidence` or
+  successor variant; those are not minimum types. Routing evidence does not
+  carry prompt text or raw metadata values into planner diagnostics.
 
 `ConversationCandidate`
 : Private `corpus_conversation_key`, aggregate routing evidence, deterministic
   rank key, source observation and private snapshot-relative locator. Public
-  nullable `thread_id` is preserved only when supplied defensibly by the
-  normalized record; public result/drilldown projections use the separately
-  owned `RecordRef` contract.
+  identity fields are absent until their focused contract exists and are
+  preserved only when supplied defensibly afterward; public result/drilldown
+  projections use the separately owned `RecordRef` contract.
 
 `CandidateAttempt`
 : Candidate rank and attempt ordinal, private corpus key, locator resolution
@@ -745,7 +761,17 @@ conceal a heuristic completeness loss.
 Either may be an additive candidate tier only under an explicitly selected
 named/versioned policy and provider with already provisioned local capability.
 Installed capability and `--deep` alone do not activate it. Neither changes the
-need for exact confirmation and an exhaustive escape hatch.
+need for exact confirmation and an exhaustive escape hatch. The minimum
+implementation defers this tier until the lexical baseline has measured recall
+and cost.
+
+### Make global recency a baseline fallback
+
+The exact matcher prevents unrelated records from being emitted, but global
+recency still spends transcript reads without query evidence and biases recall
+toward recent conversations. The baseline stops after current-project fallback.
+A future named and versioned policy may add global recency only through explicit
+selection and its own measured sub-cap and coverage contract.
 
 ## Relationship to other ADRs
 
@@ -764,18 +790,19 @@ conversations cannot contain better-ranked results.
 
 {ref}`adr-durable-prompt-corpus-derived-search-indexes` owns complete
 prompt occurrences, the private `corpus_conversation_key`, defensible public
-nullable `thread_id` preservation, private locator stability, source
-observations and current-indexed/live prompt coverage. This ADR consumes those
-contracts and does not expand durable retention to full transcripts or define
-public bookmark/export/similarity identity. The storage boundary must expose
-that private grouping key separately from public record metadata for this plan.
+identity preservation after the focused identity contract exists, private
+locator stability, source observations and current-indexed/live prompt
+coverage. This ADR consumes those contracts and does not expand durable
+retention to full transcripts or define public bookmark/export/similarity
+identity. The storage boundary must expose that private grouping key separately
+from public record metadata for this plan.
 
 {ref}`ADR 0006 <adr-public-cli-mcp-surface-contract>` and ADR 0004 own the
-public `RecordRef` result/drilldown boundary. The private corpus key, public
-`thread_id`, routing snapshot and locator never substitute for it. Public stable
-identity for bookmarks, exports and similarity remains a separate dependency,
-including [#80](https://github.com/tony/agentgrep/issues/80); this routing
-decision does not mint it.
+public `RecordRef` result/drilldown boundary. The private corpus key, any future
+public identity field, routing snapshot and locator never substitute for it.
+Public stable identity for bookmarks, exports and similarity remains a separate
+dependency, including [#80](https://github.com/tony/agentgrep/issues/80); this
+routing decision does not mint it.
 
 {ref}`adr-progressive-deep-search` owns public search-effort
 semantics, CLI/TUI/MCP discoverability, explicit exhaustive escalation and
@@ -796,31 +823,35 @@ remain bounded without consuming the completed-scan target, so stale evidence
 degrades coverage visibly instead of silently wasting every useful slot.
 
 The cost is an explicitly approximate middle tier with more planner state,
-statistics and failure modes. Attempt, backfill and optional semantic-provider
-policy need versioning. Prompt coverage and locator freshness directly affect
-usefulness. Fixed-snapshot pagination needs private continuation state and must
-fail stale instead of rerouting. Users and callers must understand that an
-exactly matched and ordered hit list from the selected universe is not a
-complete hit list across all conversations.
+statistics and failure modes. Attempt and backfill policy need versioning.
+Prompt coverage and locator freshness directly affect usefulness.
+Fixed-snapshot pagination needs private continuation state and must fail stale
+instead of rerouting. Users and callers must understand that an exactly matched
+and ordered hit list from the selected universe is not a complete hit list
+across all conversations. Later semantic or global-recency policies add provider,
+model, threshold, timestamp, sub-cap, privacy and failure contracts; they are
+not baseline costs.
 
 That honesty improves both UX and DX. Normal search remains fast. Targeted deep
-search is predictable and inspectable. Semantic capability stays explicitly
-selected and never provisions itself. Exhaustive search remains the explicit
-correctness oracle. Implementers can tune routing recall and cost without
-changing final query semantics or hiding a transcript sweep behind a friendly
-flag.
+search is predictable and inspectable. Optional routing capability remains
+deferred, explicitly selected and unable to provision itself. Exhaustive search
+remains the explicit correctness oracle. Implementers can tune routing recall
+and cost without changing final query semantics or hiding a transcript sweep
+behind a friendly flag.
 
 ## Final position
 
 Prompts are clues to conversations, not a complete index of them. agentgrep
 will use current indexed and eligible live prompt evidence, explicit metadata,
-private corpus grouping keys and observation-bound locators to make bounded,
-deterministic attempts with backfill toward a completed-scan target. Optional
-embedding or LLM evidence runs only under an explicitly selected policy and
-provider. One fixed routing work universe bounds attempts and backfill; complete
-scans define the final selected conversation-source universe. Within it the
-original matcher and one collector exclusively own matching, dedupe, final
-rank, order and result limit. Targeted search remains globally approximate,
-reuses one fixed snapshot when it can page, and leaves exhaustive search as an
-explicit escape hatch. A future complete routed strategy requires its own
+current-project fallback, private corpus grouping keys and observation-bound
+locators to make bounded, deterministic attempts with backfill toward a
+completed-scan target. That lexical and explicit-metadata policy is the minimum
+implementation. Semantic and global-recency evidence are deferred named,
+versioned opt-ins, not baseline tiers. One fixed routing work universe bounds
+attempts and backfill; complete scans define the final selected
+conversation-source universe. Within it the original matcher and one collector
+exclusively own matching, dedupe, final rank, order and result limit. Targeted
+search remains globally approximate, reuses one fixed snapshot when it can page,
+and leaves exhaustive search as an explicit escape hatch. A future complete
+routed strategy requires its own
 contract instead of silently upgrading `targeted`.

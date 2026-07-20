@@ -74,13 +74,17 @@ same progressive CLI shorthand:
 
 | CLI request | Normalized effort |
 | --- | --- |
-| no breadth option and no separate or inline scope that can admit conversations | `prompt` |
-| no breadth option with separate or inline scope that can admit conversations | `exhaustive` under the current request schema |
+| neither effort flag and no separate or inline scope that can admit conversations | `prompt` |
+| neither effort flag with separate or inline scope that can admit conversations | `exhaustive` under the current request schema |
 | `--deep` | `targeted` |
-| `--deep --exhaustive` | `exhaustive` |
+| `--exhaustive` | `exhaustive` |
 
-`--exhaustive` requires `--deep`. Boolean flags are a CLI convenience, not
-parallel engine semantics. Structured JSON, NDJSON and MCP sinks always echo
+`--deep` and `--exhaustive` are standalone, mutually exclusive effort
+selectors. `--exhaustive` neither requires nor implies `--deep`; supplying both
+is a usage error. With omitted scope, either flag receives its effort-dependent
+`all` default. With explicit scope, the flag changes effort only and preserves
+every compatible scope. Boolean flags are a CLI convenience, not parallel
+engine semantics. Structured JSON, NDJSON and MCP sinks always echo
 `requested_effort`; a completed result also records the highest
 `completed_effort` stage. DS-7 governs the concise human disclosure.
 
@@ -134,15 +138,16 @@ construct a safe next action; it does not reinterpret omission.
 
 ### DS-3 — Escalation is always explicit
 
-The planner never changes `prompt` to `targeted`, or `targeted` to
-`exhaustive`, based on result count, candidate quality, stale references or
-elapsed time. In particular, zero targeted candidates do not trigger a whole-
-corpus sweep.
+The planner never changes `prompt` to `targeted`, `prompt` to `exhaustive` or
+`targeted` to `exhaustive` based on result count, candidate quality, stale
+references or elapsed time. In particular, zero targeted candidates do not
+trigger a whole-corpus sweep.
 
 Instead, deep-search completion uses two stable action kinds:
 
 - `search.escalate_effort` carries a target effort and normalized request patch
-  for prompt-to-targeted or targeted-to-exhaustive escalation; and
+  for prompt-to-targeted, prompt-to-exhaustive or targeted-to-exhaustive
+  escalation; and
 - `search.broaden_scope` carries the normalized scope patch required when an
   explicit prompt scope must become `all`, and requires user or caller
   confirmation.
@@ -151,11 +156,15 @@ Exhaustive effort offers no broader search action. Each deep-search action has a
 privacy-safe reason. Applying its patch preserves the query, agents, field
 filters, order, dedupe and compatible explicit output scope. When prompt scope
 was inferred, `search.escalate_effort` patches both `scope=all` and
-`effort=targeted`. When the caller explicitly selected `scope=prompts`,
+the target effort. When the caller explicitly selected `scope=prompts`,
 agentgrep never broadens it silently; a `search.broaden_scope` patch used to
 enter deep search names both `scope=all` and the requested effort. Explicit
 `conversations` and `all` scopes remain unchanged when compatible with the
 target effort.
+
+Prompt completion offers targeted effort as the primary escalation and
+exhaustive effort as the direct completeness escape hatch. Both are typed
+request patches; neither requires a caller to perform the other first.
 
 Pagination, inspection, query refinement and other grounded actions remain in
 ADR 0006's general next-action vocabulary and need not carry a target effort.
@@ -218,7 +227,8 @@ unsupported stores retain the run-status and coverage meanings defined by
 The final result and streaming summary include at least:
 
 - `requested_effort` and nullable `completed_effort`;
-- prompt-corpus generation and covered-source counts;
+- nullable prompt-corpus generation, which is null when no corpus participated,
+  and covered-source counts;
 - eligible, ranked, attempted, usable-resolved, scan-completed, skipped, stale
   and failed conversation counts;
 - the routing decision's `completed_scan_target`, `candidate_attempt_cap`,
@@ -297,7 +307,7 @@ terminal emits exactly this line once on stderr, whether or not it emitted a
 match:
 
 ```text
-Searched prompts only. Use --deep to search selected conversations, or --deep --exhaustive to search all readable conversations.
+Searched prompts only. Use --deep to search selected conversations, or --exhaustive to search all readable conversations.
 ```
 
 It never appears on stdout, in JSON, NDJSON or MCP results, or when the
@@ -314,15 +324,22 @@ always include the structured run status and secondary conditions regardless of
 the process exit status. These rules apply equally to `search` and `grep` and
 preserve grep-shaped match/no-match automation without hiding coverage.
 
-The TUI keeps a panel-visible **Deep search** action available during prompt
-results. During targeted work it shows the active effort, a cancellable stage
-label and delayed progress; after completion it exposes **Search all
-conversations**. Empty states distinguish:
+The TUI keeps a panel-visible **Deep search** action and a secondary **Search
+all conversations** action available during prompt results. During targeted
+work it shows the active effort, a cancellable stage label and delayed progress;
+after completion it retains **Search all conversations**. Human CLI and TUI
+output distinguish these terminal empty outcomes when the corresponding effort
+is implemented:
 
 - no prompt matched;
 - no candidate conversation was selected;
 - selected conversations contained no match; and
 - an exhaustive search found no match over its reported coverage.
+
+The prompt-plus-exhaustive slice implements the first and fourth outcomes. The
+targeted slice implements the middle two before `--deep` is exposed. Once
+effort and routing outcome are known, human output does not fall back to generic
+"No matches found." or "No results."
 
 MCP schemas expose `effort` directly. MCP responses include the same requested
 and completed effort, status, coverage, diagnostics and request-patch actions
@@ -362,13 +379,43 @@ is faster is established without representative local measurements. UX
 semantics are stable; tuning values are planner configuration governed by ADR
 0017 and profiling evidence.
 
+## Delivery sequence
+
+These decisions land as thin, independently testable slices. A later slice must
+not silently change the meaning of an already shipped flag.
+
+1. **Correctness and status foundation.** Implement engine-owned status,
+   coverage, diagnostics and next actions from ADRs 0004 and 0006, plus ADR
+   0014's correct ordered-limit stopping. Measure the current accepted-count
+   cutoff as a migration baseline, then choose full drain or a proof-bearing
+   frontier as the default implementation.
+2. **Prompt and exhaustive efforts.** Add `SearchEffort`, preserve prompt search
+   as the default and expose standalone `--exhaustive` over the existing live
+   conversation readers. Ship the prompt and exhaustive empty outcomes and
+   record a baseline before exposing targeted search.
+3. **Durable prompt read path.** Add the durable prompt corpus and default exact
+   provider from {ref}`adr-durable-prompt-corpus-derived-search-indexes` while
+   retaining correctness-preserving live fallback. Public identity may land in
+   parallel; private occurrence and conversation keys cover its absence.
+4. **Minimum targeted routing.** Implement the deterministic lexical,
+   explicit-metadata and current-project policy from
+   {ref}`adr-prompt-guided-conversation-routing`, then expose `--deep` with
+   `approximate` status and its two targeted empty outcomes. Return no targeted
+   cursor when the routing snapshot cannot be preserved or validated.
+5. **Measured extensions.** Add stable targeted cursors, optional routing
+   policies and alternate exact providers only after representative recall,
+   latency and I/O measurements justify them.
+
+ADR numbering remains provisional until integration order is known. It is
+landing bookkeeping, not a runtime milestone.
+
 ## UX, DX and usefulness tradeoffs
 
 | Choice | UX | DX | Usefulness |
 | --- | --- | --- | --- |
 | Prompt default | Predictable and fast; one interactive stderr line states its coverage and escalation paths | Simplest common plan and smallest index contract | Strong for remembered requests and pasted commands |
 | Targeted `--deep` | Bounded latency with an explicit approximation notice; pagination stays within one fixed routing decision | Requires routing stats, versioning, resumable snapshots and coverage tests | Finds conversation context near plausible prompt clues |
-| Exhaustive deep | Slow but unsurprising when explicitly requested | Maintains a reference plan and broader source fixtures | Finds content with no useful prompt clue |
+| Standalone `--exhaustive` | Slow but unsurprising when explicitly requested | Maintains a reference plan and broader source fixtures | Finds content with no useful prompt clue |
 
 The staged design makes cost a user choice without making the user learn store
 formats. It also keeps a trustworthy escape hatch: targeted search is useful
@@ -444,6 +491,14 @@ schema can preserve their exhaustive request unambiguously. That normalization
 therefore remains permanent for the current schema. A future schema may choose
 a different rule through an explicit versioned decision.
 
+### Make exhaustive a modifier of deep
+
+Requiring `--deep --exhaustive` makes `--deep` stop naming one stable effort and
+adds redundant syntax to the completeness escape hatch. It also invites a
+temporary exhaustive implementation of `--deep` that would later become
+targeted and silently weaken saved commands. Standalone, mutually exclusive
+selectors keep each command's completeness contract stable.
+
 ### Treat deep search as permission for other expensive capabilities
 
 Using `--deep` to build an index, download or load a model, generate embeddings,
@@ -469,13 +524,16 @@ Implementation is not complete until fixtures prove:
 - CLI, library, MCP and serialized requests preserve effort omission and
   normalize the permanent current-schema compatibility matrix identically;
 - `search` and `grep` expose the same `--deep` and
-  `--deep --exhaustive` help, normalization and output semantics;
+  `--exhaustive` help, normalization and output semantics, permit
+  `--exhaustive` without `--deep` and reject combining the flags;
 - `SearchEffort` is confined to query-to-record search boundaries, and a
   feature that invokes search internally names its nested effort explicitly;
 - no-option prompt search excludes conversation-body work, and increasing
   effort does not write durable state, start synchronization, build an index,
   load or download a model, generate embeddings, enrich or expand retention;
 - `--deep` never starts an exhaustive task, including after zero candidates;
+- standalone `--exhaustive` never invokes targeted routing, and prompt
+  completion can patch directly to exhaustive effort;
 - explicit current-schema conversation and all scopes retain exhaustive
   semantics permanently when effort is omitted, including equivalent inline
   query-language scopes;
@@ -510,6 +568,9 @@ Implementation is not complete until fixtures prove:
 - every interactive prompt-effort completion emits the exact declared coverage
   line once on stderr regardless of match count, while non-interactive, JSON,
   NDJSON and MCP output omit it;
+- each effort exposes its applicable terminal empty states before its public
+  selector ships, without falling back to a generic empty message once status
+  is known;
 - human disclosures never contaminate machine-readable stdout;
 - TUI provisional results are labeled, obsolete generations are ignored and
   the persistent deep-search action remains available while the final list
@@ -563,7 +624,7 @@ controls for storage, similarity, export and enrichment.
 ## Final position
 
 Normal search searches prompts. `--deep` searches prompt-guided conversation
-candidates and says that it is approximate. `--deep --exhaustive` searches all
+candidates and says that it is approximate. `--exhaustive` searches all
 eligible conversation bodies and reports the coverage it could actually read.
 Interactive prompt search says once that it searched prompts only. Scope selects
 results, while effort authorizes only additional eligible search reads; it does

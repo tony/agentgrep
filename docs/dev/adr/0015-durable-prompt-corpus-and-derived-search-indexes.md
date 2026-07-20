@@ -100,13 +100,13 @@ byte length and full SHA-256 digest.
 The corpus also retains the canonical value, explicit absent state and
 provenance for every field that the versioned public prompt-query contract
 treats as semantic. For the initial contract, that set includes prompt text,
-kind, title, role, timestamp, model and session/conversation identity; the
-source-derived agent, store, adapter, scope, path and mtime values; and cwd,
-repository, worktree, branch, project and cwd-hash origin fields. Private path
-values remain inside the corpus boundary; ADR 0006 governs whether a redacted
-display path is rendered publicly. This semantic-field set is versioned with
-the extraction contract so an index generation can prove which corpus values
-it consumed.
+kind, title, role, timestamp, model, and `session_id` and `conversation_id`
+provenance; the source-derived agent, store, adapter, scope, path and mtime
+values; and cwd, repository, worktree, branch, project and cwd-hash origin
+fields. Private path values remain inside the corpus boundary; ADR 0006 governs
+whether a redacted display path is rendered publicly. This semantic-field set
+is versioned with the extraction contract so an index generation can prove
+which corpus values it consumed.
 
 Optional summaries, inferred topics, embeddings, ranks and other enrichments
 stay derived under {ref}`ADR 0005
@@ -155,24 +155,31 @@ The repository also keeps private source identity and identity-quality evidence.
 SQLite rowids, local paths, working directories, mtimes and branches never
 become public logical identity.
 
-This ADR does not redefine public identity. The existing `content_id`, nullable
-`record_id`, nullable `thread_id` and `record_id_stability` values are preserved
-exactly when the normalized adapter record can defend them. Missing public
-`record_id` and `thread_id` values remain null; the corpus never fabricates a
-public identity from a private key, path, rowid, mtime, locator or repository
-state. `RecordRef` remains the only public physical prompt-drilldown handle
-governed by {ref}`ADR 0004
-<adr-headless-query-planning-non-blocking-execution>` and {ref}`ADR 0006
-<adr-public-cli-mcp-surface-contract>`. This ADR introduces no public prompt or
-conversation reference, and `thread_id` remains a comparison/grouping handle
-rather than a resolver.
+This ADR does not define public identity fields. Their names, semantics,
+stability and rollout belong to the focused deterministic-identity decision
+tracked by [#80](https://github.com/tony/agentgrep/issues/80). If that decision
+introduces `content_id`, nullable `record_id`, nullable `thread_id`,
+`record_id_stability` or successor fields, the corpus preserves only values
+supplied by the normalized adapter record under that contract. Until then,
+current `session_id` and `conversation_id` values remain source provenance, not
+canonical public identity. Absence remains absence: the corpus never fabricates
+identity from a private key, path, rowid, mtime, locator, repository state or
+existing provenance field.
 
-Cross-stage deduplication of the same human prompt occurrence uses canonical
-`record_id` when it is available. When it is null, a live and corpus projection
-may deduplicate through `corpus_occurrence_key` only when the owning adapter can
-prove that both projections identify the same occurrence under the bound source
-observation and coordinate contract. Equal text, `content_id`,
-`prompt_blob_digest`, title, path or timestamp alone never proves occurrence
+`RecordRef` remains the public physical prompt-drilldown handle governed by
+{ref}`ADR 0004 <adr-headless-query-planning-non-blocking-execution>` and
+{ref}`ADR 0006 <adr-public-cli-mcp-surface-contract>`. This ADR introduces no
+public prompt or conversation reference. A future public grouping or thread
+identifier does not become a resolver unless its owning public-surface decision
+says so.
+
+Until the focused identity contract supplies a canonical occurrence identifier,
+a live and corpus projection may deduplicate through `corpus_occurrence_key`
+only when the owning adapter proves that both identify the same occurrence
+under the bound source observation and coordinate contract. Without that proof,
+the collector preserves them as distinct. Once a canonical occurrence
+identifier exists, it takes precedence. Equal text, content digest, title,
+path, timestamp, `session_id` or `conversation_id` alone never proves occurrence
 identity. Dedupe changes result presentation, not the retained occurrence
 inventory.
 
@@ -220,7 +227,7 @@ an implementation detail; the information is not.
 | Contract | corpus schema, adapter contract, extraction contract and observed data version |
 | Source | agent, store, format, coverage, privacy class and stable source id |
 | Observation | scheduling fingerprint, consistent snapshot or cutoff evidence, dependency manifest and discovery generation |
-| Prompt | `prompt_blob_digest`, `corpus_occurrence_key`, private revision key, preserved public IDs and identity quality |
+| Prompt | `prompt_blob_digest`, `corpus_occurrence_key`, private revision key, private identity-quality evidence and any public identity values supplied by their owning contract |
 | Query semantics | canonical values, explicit absent states and field-level native/extracted/synthetic provenance |
 | Provenance | native prompt locator, conversation locator, native timestamp and minimal classification facts |
 | Derivation | decoder/projection versions and native, extracted or synthetic provenance |
@@ -263,12 +270,21 @@ Every immutable provider generation publishes a manifest containing its
 provider identifier and version; corpus generation; source-observation
 coverage; adapter, extraction, projection, identity and query contracts;
 tokenizer and normalization contracts; and integrity state. A provider consumes
-only committed corpus evidence, exposes locally sorted candidate streams to the
-ADR 0014 merge, and hydrates candidates through the same normalized-record
-matcher as live search. It never writes or migrates `prompts.sqlite3`, becomes
-result authority or claims coverage for a predicate it cannot prove
-candidate-complete. Missing, corrupt or unsupported provider state falls back
-to canonical-row scanning or live source execution.
+only committed corpus evidence from the generation named by that manifest. It
+has no authority to read origin stores or ingest or retain anything excluded by
+PC-2, including assistant responses, reasoning, tool traffic, attachments,
+mutation history or complete native records. It exposes locally sorted
+candidate streams to the ADR 0014 merge and hydrates them through the same
+normalized-record matcher as live search. It never writes or migrates
+`prompts.sqlite3`, becomes result authority or claims coverage for a predicate
+it cannot prove candidate-complete. Missing, corrupt or unsupported provider
+state falls back through the engine to canonical-row scanning or live source
+execution.
+
+Conversation search reads full transcripts from their origin stores. Durable
+transcript retention, archival, compliance or portable export requires a
+separate storage and public-surface decision; an exact-index provider is not
+that decision.
 
 This physical separation keeps provider, tokenizer, normalization and
 projection changes out of the durable corpus migration path. Active SQLite
@@ -286,7 +302,7 @@ The initial logical corpus has these responsibilities:
 | `source_observations` | Scheduling fingerprints, snapshots/cutoffs, dependencies, generations and ingest outcomes |
 | `prompt_contents` | Complete extracted prompt bytes keyed by `prompt_blob_digest` |
 | `conversations` | Private `corpus_conversation_key` anchors and current locators |
-| `prompt_occurrences` | `corpus_occurrence_key`, private revision key, preserved public IDs, prompt locator, semantic values and provenance |
+| `prompt_occurrences` | `corpus_occurrence_key`, private revision key, optional public identity values supplied by their owning contract, prompt locator, semantic values and provenance |
 | `sync_runs` | Scope, progress, cancellation and completion |
 | `health_findings` | Diagnosed source, schema, pointer and integrity conditions |
 | `index_generations` | Immutable provider manifests, active-generation publication state, coverage and verification |
@@ -506,10 +522,11 @@ physical handle remains owned by ADRs 0004 and 0006; this storage ADR neither
 defines its encoding nor exposes a second locator field. ADR 0006-governed
 display and debug paths are presentation only and never resolution inputs.
 
-Every machine result reports provenance, freshness, identity quality,
-conversation-pointer state, coverage, completion and fallback reason. A cache
-hit, live fallback, stale locator, extraction gap, approximation, omitted
-payload, prune or repair is never silent.
+Every machine result reports provenance, freshness, identity-contract
+availability, identity quality when present, conversation-pointer state,
+coverage, completion and fallback reason. A cache hit, live fallback, stale
+locator, extraction gap, approximation, omitted payload, prune or repair is
+never silent.
 
 The corpus boundary is not complete until tests prove:
 
@@ -522,21 +539,28 @@ The corpus boundary is not complete until tests prove:
   enrichment is excluded from exact coverage;
 - repeated identical bytes share content safely while retaining distinct
   occurrences, timestamps, locators and conversation membership;
-- public `content_id`, nullable `record_id`, nullable `thread_id` and
-  `record_id_stability` match the defensible adapter values exactly, null IDs
-  are never fabricated and private corpus keys never cross a public envelope;
+- before the focused identity contract is available, the corpus fabricates no
+  public identity values and cross-stage occurrence dedupe uses only proved
+  `corpus_occurrence_key` equality;
+- after that contract is available, its public identity values match the
+  defensible adapter values exactly, unavailable values remain absent or null
+  as that contract defines, and private corpus keys never cross a public
+  envelope;
 - `RecordRef` remains the only public physical prompt drilldown; prompt and
   conversation locators resolve only against their bound source observation,
   never appear as a second public locator field and never open different content
   when stale or ambiguous;
-- cross-stage prompt dedupe uses canonical `record_id`, or
-  `corpus_occurrence_key` only with adapter proof; identical text, content
-  digest, title, path and timestamp never suffice;
+- cross-stage prompt dedupe uses a canonical occurrence identifier when the
+  focused identity contract supplies one, or `corpus_occurrence_key` only with
+  adapter proof; identical text, content digest, title, path and timestamp never
+  suffice;
 - live-only, indexed-only and hybrid prompt plans produce the same semantic
   result set, order, dedupe and global limit for every exact provider;
 - provider selection is explicit, installing an optional dependency never
   activates it, and each active immutable generation has a verified manifest
   bound to the corpus generation and exact contracts it consumed;
+- exact providers build solely from committed corpus generations, never open an
+  origin store and retain none of PC-2's excluded payloads;
 - JSONL complete-prefix ingestion permits later append but retries after
   captured-prefix mutation; SQLite ingestion reads one transaction snapshot;
 - cancellation or source mutation during ingest publishes no partial
@@ -676,8 +700,8 @@ backends nor authorizes model downloads.
 
 {ref}`ADR 0006 <adr-public-cli-mcp-surface-contract>` owns public envelopes,
 diagnostics, cursors and identity/reference presentation. This ADR preserves
-the focused public identity contract and keeps corpus keys, database rowids and
-private locators outside that boundary.
+values supplied by the focused public identity contract when it exists and
+keeps corpus keys, database rowids and private locators outside that boundary.
 
 {ref}`ADR 0011 <adr-non-blocking-tui-invariants>` owns the Textual pump and
 worker discipline. This ADR requires database, extraction and hydration work to
@@ -732,12 +756,13 @@ stale/grace states, and the separate prompt-guided routing approximation.
 agentgrep durably stores complete extracted human prompts, not everything an
 agent wrote. Private `prompt_blob_digest`, `corpus_occurrence_key`,
 `corpus_conversation_key`, revision, projection, observation and locator keys
-retain prompt evidence without redefining public identity. Defensible
-`content_id`, nullable `record_id` and nullable `thread_id` values are preserved
-exactly, and `RecordRef` remains the only public physical prompt handle. Exact
-provider read models remain disposable; indexed and live partitions preserve
-current prompt-search semantics; and per-source occurrence reconciliation plus
-a visible grace period prevents the corpus from quietly becoming an archive.
+retain prompt evidence without redefining public identity. Before the focused
+identity contract lands, no canonical public identity is synthesized. After it
+lands, defensible values supplied under that contract are preserved exactly.
+`RecordRef` remains the public physical prompt handle. Exact-provider read
+models remain disposable; indexed and live partitions preserve current
+prompt-search semantics; and per-source occurrence reconciliation plus a visible
+grace period prevents the corpus from quietly becoming an archive.
 Ordinary search remains read-only, inspectable-store persistence remains opt-in,
 complete conversations remain where their agents wrote them, and deep search
 resolves them deliberately under the progressive-search and prompt-guided

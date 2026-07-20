@@ -205,10 +205,10 @@ then expose that state through the frontend result payload.
 
   `bounded`
   : The run intentionally stopped at a documented semantic bound, such as a
-    requested result/page limit, source-local bounded scan, answer-now request,
-    or configured result cap. A normal paginated response that emits a complete
-    page and a usable `next_cursor` is `bounded`, not `truncated`. More records
-    may exist outside the examined bound.
+    requested result/page limit, a proof-bearing source scan, answer-now
+    request, or configured result cap. A normal paginated response that emits a
+    complete page and a usable `next_cursor` is `bounded`, not `truncated`.
+    More records may exist outside the examined bound.
 
   `truncated`
   : The sink stopped emitting because of an output budget, byte budget, tool
@@ -222,8 +222,7 @@ then expose that state through the frontend result payload.
 
   `approximate`
   : The run used an accepted approximation whose assumptions can affect
-    completeness, such as heuristic source selection, mtime-as-recency, or
-    bounded newest-first scanning across stores with shared dedupe keys.
+    completeness, such as heuristic source selection or mtime-as-recency.
 
   `failed`
   : The run stopped because of an unrecovered error. Partial results may be
@@ -247,7 +246,7 @@ one below names the layer that owes it.
 | `bounded` | the same helpers, with `reason="page_limit"`, when a page has a `next_cursor` | — |
 | `truncated` | none | the sinks that own an output budget: MCP response limits, and the JSON/NDJSON writers |
 | `cancelled` | none | the execution driver's cancellation path (`SearchControl`), surfaced through the collectors |
-| `approximate` | none | the planner, wherever heuristic source selection, mtime-as-recency, or a bounded newest-first scan can omit a result that would otherwise qualify (see {ref}`adr-result-order-limit-and-streaming-merge`) |
+| `approximate` | none | the planner, wherever heuristic source selection or mtime-as-recency can affect completeness; a legacy bounded scan without frontier proof must instead be replaced or drained before exact/exhaustive effort ships (see {ref}`adr-result-order-limit-and-streaming-merge`) |
 | `failed` | none | the collectors, on an unrecovered source or run error |
 
 The CLI JSON and NDJSON payloads carry no run status at all yet; only the MCP
@@ -349,7 +348,8 @@ Planning strategies include:
   context; source-path matches are treated as static terms so path-only matches
   cannot be filtered before decoding.
 - Bounded newest-first JSONL scans for limited append-only sources when record
-  predicates do not require metadata that only appears earlier in the file.
+  predicates do not require metadata that only appears earlier in the file and
+  source-order metadata proves the requested ordered prefix.
 - Lazy source admission for bounded text-surface append-only JSONL root
   sources. These sources can skip eager whole-root text prefiltering because
   raw JSONL line checks and newest-first execution are cheaper than a separate
@@ -374,19 +374,20 @@ stores whose searchable text is not greppable in place. The
 `STATEFUL_HEADER_JSONL_ADAPTERS` set names the parsers that carry
 leading-header state. Source ordering also assumes file mtime tracks
 record recency; restored backups or clock skew can violate that, which
-is accepted alongside the bounded-scan approximations below.
+is reported as an ordering approximation.
 
 Execution must be cancellable and bounded. Drivers poll cancellation between
-source tasks and record batches. A task that declares bounded source behavior
-can stop before older records are parsed only when its source-order metadata
-proves that no unseen record can outrank the collector frontier under the
-declared order. A source-local candidate count alone is not that proof.
-Cross-source dedupe that removes frontier records requires deeper admissible
-work unless the result separately reports the approximation or stopping
-condition that prevents it. Source scans compile query matchers once per task so
-record loops do not rebuild term, regex, surface, or predicate state for each
-candidate record. The frontier driver can run eligible source tasks
-concurrently and the owner-thread collector merges their output. It stops
+source tasks and record batches. An exact or exhaustive plan drains every
+admitted task unless `LimitPolicy` proves that no unexamined record can alter
+the requested ordered prefix. Reaching the result limit, page size or a
+source-local candidate count is not that proof. An unproved performance stop
+does not run. Cancellation, truncation and failure report their own terminal
+states. Approximate source routing does not authorize another unproved stop
+inside its selected universe. Source scans compile query
+matchers once per task so record loops do not rebuild term, regex, surface or
+predicate state for each candidate record. The frontier driver can run eligible
+source tasks concurrently and the owner-thread collector merges their output.
+It stops
 submitting a lower-priority admitted source only when `LimitPolicy` proves that
 source cannot improve the global ordered frontier. The default frontier driver
 consumes whole-source results because profiling showed
@@ -402,6 +403,11 @@ hurts latency. Interactive CLI runs may map blank Enter to an answer-early
 request. The TUI maps Esc/Ctrl-C and replacement searches to the same
 cancellation path. MCP maps client cancellation or timeout to the same path
 when the framework exposes it.
+
+{ref}`ADR 0014 <adr-result-order-limit-and-streaming-merge>` owns the benchmark
+gate for choosing between full drain and proof-bearing early stop. The current
+accepted-count stop remains a measured migration baseline, not an admissible
+implementation when it cannot prove the requested ordered prefix.
 
 The TUI must remain non-blocking. It may receive events on the event loop, but
 broad discovery, subprocess work, SQLite reads, JSON/JSONL parsing, ranking,

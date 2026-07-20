@@ -205,6 +205,20 @@ outright — a deliberate loss, since the alternative is a cursor that silently
 returns a different list each page. The tier barrier adds a wait that, with no
 index, never triggers; it must not be allowed to rot untested in the meantime.
 
+Before the default newest-order path changes, benchmarks compare the current
+source-local accepted-count stop, a full drain and the proposed source-order
+frontier proof. They cover no-match, under-limit, exact-limit and heavy
+cross-source-deduplication queries across representative limits, source counts,
+selectivity and cold/warm runs. Results report latency, sources and records
+scanned, work after the k-th candidate, dedupe drops, proof-based skips, result
+parity and terminal status. A declared `scan` order may retain a count stop
+only when the collector proves that the global post-dedupe prefix is filled and
+all remaining encounters are later. For `newest` and `relevance`, the
+implementation either proves the prefix or drains the admitted work. The
+current unproved count stop is a comparison baseline, not a third shipping
+choice; reporting it as `approximate` would make prompt and exhaustive effort
+names lie about the work they perform.
+
 The chief risk is a frontend quietly re-truncating an ordered list — the very
 mistake this ADR exists to correct. The mitigation is OL-2's echoed order plus
 the required focused regression, which must fail loudly when the engine's order
