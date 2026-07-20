@@ -22,5 +22,7 @@ multiple adapters or public payloads.
 0012-reusable-tui-widget-architecture
 0013-pluggable-tui-layouts-and-workflows
 0014-result-order-limit-and-streaming-merge
-0015-universal-raw-storage-and-derived-search-indexes
+0015-durable-prompt-corpus-and-derived-search-indexes
+0016-progressive-deep-search
+0017-prompt-guided-conversation-routing
 ```
