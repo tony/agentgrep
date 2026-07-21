@@ -69,6 +69,11 @@ A full response, accepted-candidate count, source-local cap, or routing budget
 is not that proof. If proof is unavailable, the collector drains the admitted
 work or reports the approximation or truncation honestly.
 
+Filesystem modification time may guide scheduling, but it is not proof of
+record recency; restores and clock skew can invert it. If `newest` ordering or a
+frontier bound relies on mtime without adapter-owned proof, the run reports
+`approximate`, and mtime cannot justify an exact early stop.
+
 ### Transport does not own semantics
 
 Inline, thread, process, worker, native, asynchronous, and provider transports
