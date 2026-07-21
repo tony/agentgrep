@@ -72,11 +72,13 @@ to enumerate every eligible conversation before applying its bound. Requiring
 complete live enumeration, including zero-prompt conversations, would move
 exhaustive discovery cost in front of a supposedly targeted search.
 
-The snapshot reports which sources and evidence classes it covered. Live-only,
-zero-prompt, unsupported, unavailable, and otherwise unrepresented
-conversations remain possible omissions. They are coverage information, not
-negative evidence. Exhaustive effort owns complete eligible-conversation
-enumeration.
+The snapshot reports which sources and evidence classes it covered. A live-only
+or zero-prompt conversation represented in that snapshot remains eligible for
+routing through conversation-level metadata allowed by the selected policy;
+absence of prompt evidence alone cannot exclude it. Unsupported, unavailable,
+and otherwise unrepresented conversations remain possible omissions and
+coverage information, not negative evidence. Exhaustive effort owns complete
+eligible-conversation enumeration.
 
 Only conversation-invariant predicates may remove a conversation during
 routing. Record-local predicates such as message role, message timestamp, or
