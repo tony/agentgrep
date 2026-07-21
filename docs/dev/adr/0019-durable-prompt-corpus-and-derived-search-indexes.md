@@ -130,6 +130,13 @@ revision, the relevant source observations, and any participating provider
 generation. A continuation remains on the same validated snapshot or fails as
 stale; it does not silently move to newer evidence.
 
+An unmanaged corpus rollback cannot establish incarnation continuity from
+evidence within the rollback domain alone. Unless a witness outside that domain
+proves continuity, the restored corpus and its derived state are quarantined
+and treated as unavailable until an explicit rebuild or reset creates a new
+trusted incarnation. This ADR does not prescribe the witness or recovery
+protocol.
+
 An exact provider may produce candidates only when its contract is
 candidate-complete for the predicate it claims to represent. Candidate records
 still hydrate through the canonical prompt matcher. Provider choice, indexed
