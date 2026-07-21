@@ -72,6 +72,7 @@ instance/
 docs/_build/
 docs/_mermaid_cache/
 docs/node_modules/
+docs/superpowers/
 
 # PyBuilder
 .pybuilder/
