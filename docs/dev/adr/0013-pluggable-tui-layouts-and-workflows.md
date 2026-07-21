@@ -74,15 +74,15 @@ enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   history is likewise loaded at this pre-pump factory boundary. The CLI does not
   expose those names. A future `importlib.metadata` entry-point source can feed
   the same spec shape without changing internal consumers.
-- **PL-5 — Each layout carries its own transport over the shared primitives.**
-  A layout's streaming transport reuses `_runtime.make_gated_emitter` /
+- **PL-5 — Each layout carries its own delivery boundary over the shared primitives.**
+  A layout's streaming delivery reuses `_runtime.make_gated_emitter` /
   `@offload` / `@pump_only` / `stream_apply` (ADR 0011 NB-1..NB-10, unchanged)
-  with a layout-specific *present*. Every `run_worker` stays `thread=True,
-  exclusive=True` and grouped (the `history` append group excepted), and manual
-  pump-entrypoint review covers **every** `ui/layouts/*.py`, not just the HUD.
-  The transport is intentionally *not* hoisted into the base: a shared
-  `present_*` base waits for a third consumer, per the defer-until-consumer rule
-  of ADR 0012.
+  with a layout-specific *present*. Supersedable work remains cancellable and
+  grouped, high-frequency delivery remains bounded, and manual pump-entrypoint
+  review covers **every** `ui/layouts/*.py`, not just the HUD. The delivery
+  helper is intentionally *not* hoisted into the base: a shared `present_*`
+  base waits for a third consumer, per the defer-until-consumer rule of ADR
+  0012.
 - **PL-6 — Orthogonality is an internal contract and is proven.** Any workflow
   drives any layout.
   The behavior difference is the workflow's routing (`SearchWorkflow` →

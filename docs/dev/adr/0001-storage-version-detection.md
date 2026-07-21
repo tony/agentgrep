@@ -8,76 +8,57 @@ Accepted.
 
 ## Context
 
-agentgrep reads local stores written by several independently released
-AI coding assistants. Those tools can change file names, record keys,
-SQLite migration suffixes, and embedded metadata over time. Users can
-also keep old unmigrated data after upgrading an app, so a current
-client version is not enough to identify the data shape of every file
-on disk.
+agentgrep reads local stores written by independently released AI assistants.
+Applications can change filenames, record shapes, database migrations, and
+embedded metadata, while old and new data may coexist after an upgrade. The
+installed application version therefore does not reliably identify every
+source shape on disk.
 
-Codex is the concrete example that forced this decision:
-`history.jsonl` uses `session_id`, `ts`, and `text`, while older
-`history.json` files use `command` and `timestamp`. Both can exist in a
-modern config directory. The same applies to session transcripts:
-current installs write dated `sessions/**/*.jsonl` rollout streams,
-while older unmigrated data can remain as root-level
-`sessions/rollout-*.json` objects with `session` and `items` keys.
+Discovery must also avoid turning private or noisy storage into searchable
+content merely to determine its format.
 
 ## Decision
 
-agentgrep detects source versions from concrete data evidence first:
+Adapters detect source versions from concrete data evidence, in this order:
 
-1. Embedded metadata in the source, such as Codex
-   `session_meta.payload.cli_version` or Claude transcript `version`.
-2. Shape inference from file names, record keys, or SQLite suffixes.
-3. Local version-check files that do not require spawning the upstream
-   CLI, such as Codex `models_cache.json.client_version`.
-4. Catalog observation metadata as a low-confidence fallback.
+1. embedded version metadata in the source;
+2. narrow shape evidence such as known filenames, keys, tables, columns, or
+   migration suffixes;
+3. local version metadata that can be read without invoking the upstream
+   application; and
+4. catalog observation metadata as an explicitly lower-confidence fallback.
 
-For opt-in inventory stores that are useful for storage coverage but
-unsafe or noisy as raw text, shape inference may use structural
-summaries: top-level JSON/TOML keys, hook event names, plugin manifest
-keys, file suffixes, byte sizes, or line counts. These summaries prove
-which storage shape was observed without adding raw logs, shell
-snapshots, hook commands, config values, or cache payloads to the
-search corpus.
+When application metadata and source shape disagree, the source shape governs
+parsing. Normal discovery and search never execute an upstream agent CLI merely
+to learn a version.
 
-Normal discovery and search must not run `codex`, `claude`, or another
-agent CLI just to learn a version. CLI subprocess probes are slow,
-side-effect-prone, and can fail for reasons unrelated to local storage.
+For opt-in inventory sources that are unsafe or noisy as text, an adapter may
+use structural summaries such as known top-level keys, event names, manifest
+keys, suffixes, sizes, or counts. Such evidence establishes the observed shape
+without admitting raw logs, configuration values, commands, cache payloads, or
+secrets to search.
 
-The public discovery payload exposes a `version_detection` object with
-the detected app version, detected data version, strategy, confidence,
-and short evidence string. Search result records do not include this
-object; source metadata explains how a file was interpreted, while
-record payloads stay focused on prompt/history content.
+Version evidence is privacy-safe. It may identify known structural markers,
+but it must not contain prompt text, credentials, arbitrary configuration
+values, or unredacted local paths. Private stores remain catalog-only unless a
+separate decision establishes a safe runtime inventory contract.
+
+Version detection selects an adapter and interpretation contract; it does not
+prove that a prior corpus or index observation remains current. An adapter that
+supports durable prompt evidence owns its native consistent-observation proof.
+If adopted, {ref}`adr-durable-prompt-corpus-derived-search-indexes` owns how
+those proofs establish prompt-corpus and exact-index freshness, coverage, and
+fallback. Providers may encode the proof but may not redefine its meaning.
 
 ## Consequences
 
-Adapter authors should parse by concrete source shape. When app version
-and data shape disagree, the data shape wins. For example, a Codex
-config root with current model metadata can still contain legacy
-`history.json` or root-level rollout JSON, and agentgrep should parse
-each file by that legacy shape.
+Adapters require explicit shape detectors and confidence-aware fallbacks.
+Runtime discovery records the strategy actually used, while the store catalog
+describes supported strategies. Sources without a concrete detector may remain
+available under a lower-confidence catalog observation until their adapter is
+improved.
 
-Shape inference should stay narrow and explicit. It is appropriate for
-top-level JSON keys (`session` plus `items`, `id` plus `thread_name`),
-SQLite migration suffixes (`state_5.sqlite`, `logs_2.sqlite`), and
-known table/column surfaces used by a parser. It should not infer
-versions from prompt text, raw settings values, or arbitrary nested
-application state.
-
-Evidence strings must identify keys, table names, or filename suffixes
-only. They must not include prompt text, raw config values, tokens, or
-local absolute paths.
-
-Private stores, including auth files, credentials, security state,
-session environment, secrets, and `.env` files, remain catalog
-documentation only. Runtime discovery must not enumerate those paths
-from disk, so they expose no `version_detection` payload until a future
-explicitly safe private-store inventory policy exists.
-
-The store catalogue declares the strategies each descriptor supports,
-but runtime discovery records the strategy actually used for each
-source. Backends without concrete detectors can still expose the
-catalog observation fallback until they gain shape-specific support.
+The approach avoids subprocess side effects and keeps evidence auditable, but
+every newly supported format needs maintained structural knowledge. Narrow
+shape checks are preferred to broad inference from arbitrary application
+state.

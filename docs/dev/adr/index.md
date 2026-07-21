@@ -36,7 +36,7 @@ affected contract.
 0012-reusable-tui-widget-architecture
 0013-pluggable-tui-layouts-and-workflows
 0014-result-order-limit-and-streaming-merge
-0015-durable-prompt-corpus-and-derived-search-indexes
-0016-progressive-deep-search
-0017-prompt-guided-conversation-routing
+0019-durable-prompt-corpus-and-derived-search-indexes
+0020-progressive-deep-search
+0021-prompt-guided-conversation-routing
 ```

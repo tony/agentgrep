@@ -4,275 +4,142 @@
 
 ## Status
 
-Accepted as a contract; not yet implemented. The defect that forced it and the
-engine work remain tracked in [#113](https://github.com/tony/agentgrep/issues/113).
-A focused order/limit regression is required with that implementation.
+Accepted as a contract; not yet implemented. The defect and engine work remain
+tracked in [#113](https://github.com/tony/agentgrep/issues/113).
 
 ## Context
 
-`agentgrep search --limit N` describes itself as "Limit the number of results
-after ranking". It is not that. The driver stops collecting once the cap is
-reached while it walks sources in source-mtime order, and the newest-first sort
-is a post-hoc pass over whatever survived the cutoff. Two Codex sessions whose
-file mtime and record recency disagree are enough to expose it: with `--limit 1`
-the record from the newer-mtime source is returned even though the older-mtime
-source holds the newest prompt. The genuinely newest record is discarded before
-the ranker ever compares it.
+The existing engine can stop after accepting a requested count and only then
+sort the surviving records. A record discarded before global comparison can be
+newer or more relevant than every retained record. That is not a sorting bug:
+ordering and bounding were assigned to different layers.
 
-That is not a sorting bug. It is a layering error — **ordering was treated as a
-frontend post-pass over a set the engine had already truncated.** A limit is
-only meaningful relative to a declared order, so the two cannot live in
-different layers.
-
-Three further facts frame the fix.
-
-- The engine has no notion of order. `search` ranks by relevance in the
-  frontend after collection, `grep` and the TUI want recency, and the collector
-  itself yields in scan order. Nothing in the request names the desired list, so
-  nothing in the result can name the list the caller got.
-- MCP pagination is an offset over a re-run scan: each page re-executes the
-  search with an inflated limit and slices the sorted buffer. It inherits the
-  defect above and pays a full rescan per page.
-- The concurrency question is already answered by the shipped code rather than
-  by taste. `ExecutionDriverConfig.max_workers` defaults to `1`, and nothing
-  outside the tests raises it, so collection runs single-threaded today.
-
-[#100](https://github.com/tony/agentgrep/issues/100) surveyed twelve search and
-observability engines — Lucene, OpenSearch, tantivy, Meilisearch, fzf, Chroma,
-DataFusion, ClickHouse, Prometheus, Loki, Tempo, Pyroscope — and found one
-recipe under all of them: concurrent per-source fan-out that returns *locally
-sorted, bounded* output; a stable total-order key whose tiebreak is intrinsic
-and never arrival time; a completeness barrier before the global minimum is
-released; and a bounded top-k that lets a source stop early. This ADR adopts
-that recipe and settles the two decisions #100 deliberately left open — the
-ordering axis of the stream, and what defines the live watermark.
-
-It also closes the tradeoff {ref}`ADR 0004
-<adr-headless-query-planning-non-blocking-execution>` left standing:
-*"deterministic ordering and dedupe need explicit merge rules once execution
-becomes concurrent."*
+Concurrent or indexed source streams add another risk. Arrival order can choose
+which duplicate view survives or which record fills the final slot unless one
+collector owns the global semantics.
 
 ## Decision
 
-Six invariants govern result order and bounding (OL for *order and limit*), in
-the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
+Source selection precedes one collector-owned result stage. That stage owns
+canonical matching inputs, representative selection, cross-source
+deduplication, declared order, stable emission, and response bounding.
 
-- **OL-1 — Source selection precedes the one order-and-limit stage.** The
-  planner first declares the source universe and whether it claims complete or
-  approximate coverage. An exact or exhaustive plan may omit a source only
-  when it can prove that source cannot affect the result. A targeted plan may
-  deliberately select an incomplete universe, but the run remains
-  `approximate`; a routing or candidate budget is not a result limit and never
-  justifies `complete` or `bounded`. Within the admitted universe, no layer may
-  apply a count cutoff in an order other than the order the caller declared.
-  Every bounded source scan, frontier skip, or page fill must be justifiable as
-  *"no unexamined record in the admitted universe can outrank the k-th record we
-  already hold, under the declared order, and no unexamined physical view can
-  change the selected representative of a retained or emitted dedupe class"*.
-  Rank stability without representative stability is not a proof: an immutable
-  prefix cannot later replace a record under the same logical key. A stop or
-  emission rule that cannot state both invariants does not run. Where recency is
-  inferred from file mtime rather than record timestamps, the invariant itself
-  is approximate and the run reports `approximate` (ADR 0004's run-status
-  vocabulary).
-- **OL-2 — `order` is a request parameter, executed in the collector, and
-  echoed on the result.** The vocabulary is fixed below. `limit` becomes a
-  bounded top-k *under the declared order* — a k-sized frontier the collector
-  maintains while it merges sources — not a cutoff on collection. The applied
-  order travels back on the result payload and on the streaming summary, because
-  a caller that cannot name the order it received cannot page it, diff it, or
-  cache it. A frontend may still *present* records differently (grouping,
-  highlighting, truncation), but it may not reorder or re-truncate the set.
-  Cross-source deduplication also chooses its representative through one
-  deterministic collector-owned function of the candidate views and request
-  snapshot. An inline driver may not keep the first view it happens to encounter
-  while a frontier driver keeps a newer one. Candidate and progress-event timing
-  may vary by driver; final `RecordEmitted` membership, representative records,
-  order, status, coverage and result counts do not. Timing and explicitly
-  driver-scoped performance diagnostics may vary. Any public `RecordRef`
-  attached to a chosen representative follows that same decision rather than
-  worker arrival.
-- **OL-3 — asyncio is a boundary protocol, never the engine's concurrency
-  model.** The engine's inner loop is CPU-bound under the GIL: `json.loads` →
-  field extraction → casefold → substring test. An event loop cannot make that
-  work finish sooner; it can only interleave it. asyncio's job at the edges is
-  real and stays: `aiter_search_events` already offloads the synchronous engine
-  with `asyncio.to_thread` and pumps events through a bounded `asyncio.Queue`,
-  which is what keeps the MCP server and the Textual pump responsive
-  ({ref}`ADR 0011 <adr-non-blocking-tui-invariants>`). That is a *protocol* for
-  delivering results without blocking a loop, not a strategy for computing them
-  faster. The merge itself stays single-owner and synchronous, so the emitted
-  order is a function of the records, never of arrival time.
-- **OL-4 — Parallelism comes from OS threads, and its ceiling is the
-  interpreter build.** Source scans fan out over `concurrent.futures` threads;
-  the collector merges their locally sorted output on the owner thread. Under
-  the default build the GIL caps the win, and measurement bears that out — a
-  thread pool over local JSONL stores has measured *slower* than inline
-  collection, which is why the shipped worker count is `1` and why ADR 0004
-  already records batch queueing as a loss. The lever is therefore the
-  interpreter, not the architecture: the same thread fan-out that wins nothing
-  under the GIL scales on a free-threaded build ([PEP
-  703](https://peps.python.org/pep-0703/), supported since CPython 3.14 per [PEP
-  779](https://peps.python.org/pep-0779/)) with no code change. Design for
-  threads; let the build decide the throughput.
-- **OL-5 — Cursor pagination is defined only for `order="newest"`.** The cursor
-  is a keyset anchored on `(timestamp_sort_key, agent,
-  stable_source_order_key, stable_record_coordinate)`, compared
-  lexicographically in descending order. `timestamp_sort_key` is
-  `(1, normalized_utc_instant)` for a valid timestamp and `(0, 0)` for an absent
-  or invalid timestamp, so valid instants sort newest-first and absent or
-  invalid values sort last. Timestamp normalization preserves the source
-  instant's ordering precision under a versioned encoding. The remaining
-  components use versioned canonical byte encodings compared unsigned and
-  bytewise; the final two are deterministic, snapshot-stable and jointly
-  injective for every record in the request's source snapshot. The existing
-  `(timestamp, agent, path)` prefix alone is not a total record order. A page
-  resumes *strictly below* the full last-emitted key, so equal or absent
-  timestamps and records from one source do not disappear between pages. Every
-  cursor binds the key-encoding version, normalized query and a source snapshot
-  that can be preserved or validated for its documented lifetime. When an
-  adapter cannot provide a collision-free coordinate or the snapshot is stale,
-  the result returns no cursor or rejects continuation; it never substitutes a
-  new snapshot as the next page.
+### Coverage precedes ordering
 
-  Keyset cursors and relevance ordering do not compose — a relevance score is a
-  function of the query and corpus, not a position in the `newest` total order.
-  A relevance-ordered request therefore returns **no cursor**, but cursor
-  absence does not select its `RunStatus`. It reports `bounded` only when an
-  applied top-k or another documented semantic bound leaves additional possible
-  matches outside the returned set. An unlimited, under-limit or otherwise
-  fully drained relevance request reports `complete` when no higher-precedence
-  condition applies. Callers who want to page rank by recency; callers who want
-  relevance request one result set under an explicit or unbounded limit.
-- **OL-6 — The tier interface is decided now; the tier policy is deferred.**
-  The collector merges *sorted source streams*; whether a stream is a live file
-  scan or an index cursor is invisible to it. That interface — one merge, N
-  sorted inputs, one total-order key, one barrier — is settled by this ADR. What
-  defines the live watermark (file mtime past the index build, an ingest
-  opstamp, an explicit coverage flag) is **not** settled, and must not be, until
-  an index exists to have a watermark. With no index every admitted source is
-  live, the barrier is trivially satisfied, and the design degrades cleanly to
-  today's behavior.
+The planner declares the admitted source universe and whether its coverage is
+complete or approximate. An exact or exhaustive plan omits a source only with
+proof that it cannot affect the declared result. A targeted plan may select an
+incomplete universe, but routing or candidate bounds never justify a complete
+claim.
 
-A cursor over a targeted source universe has one additional constraint: every
-page continues the same routing decision and snapshot. If that state cannot be
-preserved or validated, the result has no cursor; a continuation never reruns
-routing and presents a different source universe as the next page.
+Within the admitted universe, no source or frontend may apply a count cutoff in
+an order different from the caller's declared order.
 
-These rules supersede driver-local representative policies, including
-"first encountered" for one driver and "newest physical view" for another, and
-any older allowance for final records or final record-event order to vary by
-execution driver. A focused identity decision, including the work tracked by
-[#80](https://github.com/tony/agentgrep/issues/80), may define equality and
-candidate coordinates, but it may not weaken the collector-owned deterministic
-representative, order or limit contract.
+### Order and representative choice are one stage
 
-### Order vocabulary
+`order` is a normalized request value and is echoed in structured results. The
+collector chooses each deduplication representative through one deterministic
+policy over the request snapshot. A driver cannot keep the first physical view
+it encounters while another driver selects a different view.
 
-| `order` | Key | Limit means | Cursor |
-| --- | --- | --- | --- |
-| `newest` (default) | `(timestamp_sort_key, agent, stable_source_order_key, stable_record_coordinate)`, descending | the k newest matching records | keyset over a validated snapshot (OL-5) |
-| `relevance` | score, then the `newest` key as tiebreak | the k best-scoring matching records | none |
-| `scan` | source order, then record order | the first k records the plan encountered | none |
+The core order vocabulary is:
 
-`scan` is the honest name for "whatever the plan happened to reach first". It is
-useful for `grep`-shaped streaming and for profiling, and it is the only order
-in which a caller may assume nothing about global rank. It is never a default.
+- `newest`: a stable newest-first total order;
+- `relevance`: a versioned score with a stable total-order tiebreak; and
+- `scan`: the explicit physical-plan encounter order, never the default.
 
-## Prior art
+Frontends may group, highlight, redact, or truncate display, but they do not
+reorder or re-bound the semantic response.
 
-Two upstream systems answer OL-3 and OL-4 directly, and both were read at the
-pinned ref below.
+A future scorer or origin-weight policy must be explicit and versioned.
+Provider choice, indexed-versus-live provenance, freshness, transport, and
+arrival time never become hidden score terms.
 
-[ripgrep](https://github.com/BurntSushi/ripgrep/blob/15.1.0/crates/core/main.rs)
-(tag `15.1.0`) is the closest analogue: a local, CPU-bound, filesystem-wide
-search. It runs its parallel search on OS threads —
-[`build_parallel`](https://github.com/BurntSushi/ripgrep/blob/15.1.0/crates/ignore/src/walk.rs)
-over the directory walk — with no async runtime anywhere. More to the point for
-the order-and-limit contract: when the user asks for a *sorted* output, ripgrep
-disables parallelism outright rather than merging out-of-order results
-afterward. Ordering is a property of the execution stage, not a post-pass
-bolted onto it.
+### Early emission and stopping require proof
 
-[aiosqlite](https://github.com/omnilib/aiosqlite/blob/v0.22.1/aiosqlite/core.py)
-(tag `v0.22.1`) is the canonical shape of OL-3: its `Connection` is a worker
-`Thread` fed by a `SimpleQueue`, and each coroutine awaits a future the thread
-resolves. The async surface is a delivery protocol over a threaded core — which
-is exactly what `aiter_search_events` already is, and exactly what it should
-remain.
+A collector may emit a stable prefix or stop work only when it can establish
+both of these facts:
 
-## Relationship to other ADRs
+1. no unseen admitted record can outrank the retained frontier under the
+   declared order; and
+2. no unseen physical view can replace the chosen representative of a retained
+   or emitted deduplication class.
 
-{ref}`ADR 0004 <adr-headless-query-planning-non-blocking-execution>` owns
-planning, execution, the event stream, and the run-status/result vocabulary.
-This ADR resolves the merge-rules tradeoff it left open and adds `order` to the
-request and the result; the layering, the driver protocol, and the sink boundary
-are unchanged. {ref}`ADR 0011 <adr-non-blocking-tui-invariants>` is untouched:
-OL-3 keeps the pump-facing async bridge exactly where it is. {ref}`ADR 0006
-<adr-public-cli-mcp-surface-contract>` governs how `order` and the echoed
-applied order surface on the CLI and MCP payloads. {ref}`ADR 0003
-<adr-native-boundary-execution-architecture>` is not invoked: nothing here
-approves native code, and OL-4's throughput lever is an interpreter build, not a
-Rust engine. {ref}`adr-durable-prompt-corpus-derived-search-indexes` may
-contribute sorted exact-index and live-source streams.
-{ref}`adr-progressive-deep-search` owns targeted cursor policy.
-{ref}`adr-prompt-guided-conversation-routing` may select an explicitly
-approximate conversation universe before this ADR's single collector runs;
-routing scores and candidate budgets do not alter the collector's order or
-result limit.
+A full response, accepted-candidate count, source-local cap, or routing budget
+is not that proof. If proof is unavailable, the collector drains the admitted
+work or reports the approximation or truncation honestly.
+
+### Transport does not own semantics
+
+Inline, thread, process, worker, native, asynchronous, and provider transports
+may all implement the execution-driver contract. They produce locally ordered
+typed batches or outcomes for one semantic collector. “Single owner” means one
+logical authority, not necessarily one synchronous thread or merge algorithm.
+
+For the same request, validated snapshot, and equivalent source outcomes,
+transport and scheduling do not change logical membership, representative
+selection, order, status, coverage, or deterministic work accounting. Progress
+timing, opaque tokens, and physical-performance diagnostics may differ.
+
+### Pagination follows one canonical sequence
+
+A core search cursor traverses the collector's canonical post-deduplication
+sequence. Its order key is stable, collision-free within the validated request
+snapshot, and independent of arrival order. Continuation resumes strictly after
+the prior page's last logical key and preserves enough deduplication and
+representative state to prevent gaps, duplicate classes, or representative
+drift.
+
+The cursor binds the normalized request, semantic contract versions, and a
+snapshot that can be preserved or revalidated for its lifetime. Stale or
+invalid state fails explicitly; continuation never substitutes a newly routed
+or newly indexed search.
+
+Core live-search keyset pagination is initially limited to `newest`. Relevance
+pagination requires a focused contract over an immutable or materialized ranked
+sequence. Similarity, export, and persisted reports may define their own
+versioned orders and cursors without changing core search.
+
+If {ref}`adr-progressive-deep-search` is adopted, public `limit` becomes the
+per-response cap and each cursor continues the same canonical sequence below
+the prior key. That ADR owns the target default and migration. Adoption
+explicitly amends the older interpretation of a result limit as a chain-wide
+top-k. A future total cap must use another name. Until that proposal is
+adopted, released surface behavior remains a compatibility fact.
+
+A full page alone does not prove another page exists. Status and cursor
+availability remain separate: an exactly exhausted boundary is complete, while
+a response with a proven continuation reports its page bound without hiding a
+higher-priority approximate, truncated, cancelled, or failed state.
+
+### Freshness is supplied, not inferred by the collector
+
+The collector merges sorted streams without treating their physical origin as
+rank. Adapters own native source-observation proof. If adopted, the durable
+prompt-corpus ADR owns exact-index freshness, current/live/gap partitioning,
+activation, coverage, and fallback; providers own only their evidence encoding.
+Without a current index, every admitted source can participate through the live
+path.
+
+## Relationships
+
+- If adopted, ADR 0003 owns native and worker boundary classification, ADR
+  0004 owns planning and lifecycle, and ADR 0006 owns public spelling and
+  schema adaptation. This Accepted collector contract does not depend on their
+  adoption.
+- ADR 0011 owns non-blocking TUI delivery.
+- Proposed corpus, progressive-search, and routing ADRs may supply freshness,
+  page, and approximate source-selection decisions without changing the one
+  collector.
 
 ## Consequences
 
-The engine gains a declared order it can be held to, and `--limit` starts
-meaning what its help text has always claimed. Ordering, dedupe, and bounding
-become one testable stage with one total-order key, so an inline driver and a
-threaded driver can be asserted to produce byte-identical lists. Pagination
-stops rescanning from zero. And the throughput story becomes a build choice
-rather than an async rewrite.
+Ordering, deduplication, representative selection, and response bounding become
+one testable semantic stage. Parallel or indexed execution can improve work
+without making results arrival-dependent, and pagination can continue a stable
+logical sequence instead of slicing a rerun.
 
-The costs are real. `order` is a new public request parameter, so CLI, MCP, and
-library surfaces each grow a field and each owe it a test. A bounded top-k
-frontier is more state than a counter. Relevance requests lose pagination
-outright — a deliberate loss, since the alternative is a cursor that silently
-returns a different list each page. The tier barrier adds a wait that, with no
-index, never triggers; it must not be allowed to rot untested in the meantime.
-
-Focused contract tests cover duplicate physical views arriving in opposite
-orders under inline and threaded drivers; equal, absent and invalid timestamps
-across a page boundary; cursor key-encoding version mismatch; an under-limit
-fully drained relevance request reporting `complete`; and a top-k relevance
-request that stops with possible lower-ranked matches reporting `bounded`.
-Those cases assert byte-identical final records and identical deterministic
-status, coverage, order and count fields across drivers; they do not assert
-identical progress-event timing or performance measurements. A streaming case
-reverses duplicate-view arrival and asserts the same immutable
-`RecordEmitted` sequence, proving that the barrier seals both rank and
-representative choice before emission.
-
-Before the default newest-order path changes, benchmarks compare the current
-source-local accepted-count stop, a full drain and the proposed source-order
-frontier proof. They cover no-match, under-limit, exact-limit and heavy
-cross-source-deduplication queries across representative limits, source counts,
-selectivity and cold/warm runs. Results report latency, sources and records
-scanned, work after the k-th candidate, dedupe drops, proof-based skips, result
-parity and terminal status. A declared `scan` order may retain a count stop
-only when the collector proves that the global post-dedupe prefix is filled and
-all remaining encounters are later. For `newest` and `relevance`, the
-implementation either proves the prefix or drains the admitted work. The
-current unproved count stop is a comparison baseline, not a third shipping
-choice; reporting it as `approximate` would make prompt and exhaustive effort
-names lie about the work they perform.
-
-The chief risk is a frontend quietly re-truncating an ordered list — the very
-mistake this ADR exists to correct. The mitigation is OL-2's echoed order plus
-the required focused regression, which must fail loudly when the engine's order
-and limit disagree.
-
-## Final position
-
-A limit without a declared order is a lie, and agentgrep has been telling it.
-Order and limit are one stage in the collector; asyncio delivers results without
-blocking a loop and computes nothing; threads carry the parallelism and the
-interpreter build sets its ceiling; cursors exist where a total order exists and
-nowhere else; and the live-versus-indexed split is one more sorted input into
-the same merge, whose policy waits for an index worth having.
+The collector may need more state and may have to inspect more work than the
+current accepted-count stop. Relevance pagination is deferred until it can be
+grounded in an immutable ranked sequence. These costs are preferable to
+returning the wrong top result or a cursor with gaps and duplicates.

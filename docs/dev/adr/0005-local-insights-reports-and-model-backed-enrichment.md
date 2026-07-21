@@ -8,443 +8,92 @@ Proposed.
 
 ## Context
 
-agentgrep reads assistant storage directly from local files and databases. The
-core search path already normalizes records without spawning Codex, Claude,
-Cursor, or another upstream assistant process. Insights should build on that
-same local record stream. Search answers "which records match this query?";
-insights answers "what happened across these local records, and what should a
-human or agent inspect next?"
+Users may want summaries, activity reports, topics, similarity, graphs, or
+model-backed interpretation over their local agent history. These operations
+have different cost, dependency, reproducibility, and privacy properties from
+ordinary exact search.
 
-The default user experience must stay small and predictable. A normal
-`agentgrep` install should not pull in PyTorch, vector databases, native LLM
-runtimes, model files, or daemon clients just because a report command exists.
-At the same time, higher-quality reports need a path to richer local analysis:
-classical text features, embeddings, persistent local indexes, and local model
-summaries. The architecture needs a clean ladder from vanilla deterministic
-Python to model-backed enrichment.
-
-The useful patterns from adjacent systems are about boundaries and ergonomics,
-not feature copying:
-
-- [uv 0.11.20](https://github.com/astral-sh/uv/tree/0.11.20) keeps command
-  dispatch, cache policy, and environment mutation explicit; its cache surface
-  has named user operations such as
-  [`cache clean`](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv/src/commands/cache_clean.rs),
-  [`cache prune`](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv/src/commands/cache_prune.rs),
-  and
-  [`cache dir`](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv/src/commands/cache_dir.rs).
-- [scikit-learn](https://github.com/scikit-learn/scikit-learn/tree/d564524)
-  shows the lightest useful ML layer for text features and clustering, such as
-  [text vectorizers](https://github.com/scikit-learn/scikit-learn/blob/d564524/sklearn/feature_extraction/text.py)
-  and
-  [KMeans](https://github.com/scikit-learn/scikit-learn/blob/d564524/sklearn/cluster/_kmeans.py).
-- [sentence-transformers](https://github.com/huggingface/sentence-transformers/tree/82ea2dc)
-  shows explicit model loading, revisions, local-only loading, and cache folder
-  control in its
-  [base model loader](https://github.com/huggingface/sentence-transformers/blob/82ea2dc/sentence_transformers/base/model.py).
-- [Tantivy 0.26.1](https://github.com/quickwit-oss/tantivy/tree/0.26.1)
-  separates query parsing from execution through `Query`, `Weight`, and
-  `Scorer` types; this is the right shape for optional full-text indexes that
-  should not leak into report semantics.
-- [SQLite](https://github.com/sqlite/sqlite/tree/002d33d) is the baseline for
-  local, inspectable, removable state. Schema and pragma surfaces are explicit
-  engine metadata, not hidden side effects.
-- [Chroma](https://github.com/chroma-core/chroma/tree/latest) is useful as a
-  heavier reference for local vector segments and cached HNSW indexes, but that
-  is a later backend shape rather than a default.
-- [Ollama v0.30.0-rc31](https://github.com/ollama/ollama/tree/v0.30.0-rc31)
-  treats models as a local control-plane concern with native routes for
-  [`/api/pull`, `/api/tags`, `/api/ps`, `/api/chat`, and `/api/embed`](https://github.com/ollama/ollama/blob/v0.30.0-rc31/server/routes.go).
-- [LiteRT-LM v0.13.1](https://github.com/google-ai-edge/LiteRT-LM/tree/v0.13.1)
-  keeps model package access behind typed resources such as
-  [`ModelResources`](https://github.com/google-ai-edge/LiteRT-LM/blob/v0.13.1/runtime/components/model_resources.h),
-  [`ModelResourcesLitertLm`](https://github.com/google-ai-edge/LiteRT-LM/blob/v0.13.1/runtime/components/model_resources_litert_lm.h),
-  and
-  [`LitertLmLoader`](https://github.com/google-ai-edge/LiteRT-LM/blob/v0.13.1/runtime/util/litert_lm_loader.h).
-
-The agentic loop also needs first-class treatment. An agent should be able to
-run a report, see which evidence was used, understand which optional backends
-were skipped, and choose the next bounded command. It should not receive an
-opaque prose blob that cannot be traced back to local records.
-
-ADR 0004 defines the shared lifecycle vocabulary for run status, result
-payloads, diagnostics, pagination, and `RecordRef` drilldown handles. ADR 0006
-defines the public CLI/MCP surface vocabulary and loop. Insights must reuse
-those result types rather than creating report-only names for status, source
-coverage, diagnostics, next actions, or record inspection.
+Making enrichment an implicit search tier would let installed dependencies or
+local model state change query behavior without an explicit request. Making
+enrichment canonical would also couple prompt evidence to replaceable models
+and indexes.
 
 ## Decision
 
-agentgrep will define insights as a staged report pipeline over local records.
-The pipeline is headless and deterministic first; optional enrichers attach to
-the same report model.
-
-The pipeline has these pieces:
-
-1. **Record source**: existing discovery and adapters yield normalized prompt
-   and conversation records.
-2. **Activity model**: records are grouped into agents, stores, sessions,
-   conversations, projects, time buckets, and coarse text surfaces.
-3. **Builtin analysis**: deterministic counters, timelines, term summaries,
-   repeated phrases, ADR 0006 source coverage, empty/error states, and
-   representative `RecordRef` handles.
-4. **Optional enrichers**: explicitly selected backends may add classical ML
-   clusters, embeddings, report-specific indexes, or local-model summaries to
-   the report model.
-5. **Evidence policy**: the report distinguishes aggregate facts,
-   `RecordRef` evidence, sampled snippets, generated summaries, and
-   diagnostics.
-6. **Renderers**: terminal, JSON, Markdown, HTML, MCP, and future TUI views
-   consume the same report model and expose ADR 0004 result state where the
-   sink is machine-readable.
-
-No renderer discovers stores, parses records, installs packages, downloads
-models, or calls a model. Renderers only present the report payload.
-
-The command shapes below are intentionally non-executable `text` examples until
-the feature exists. Once implemented, user-facing examples should move to
-`console` fences and become documentation-test cases.
-
-The default command remains vanilla:
-
-```text
-$ agentgrep insights report
-```
-
-Richer modes are explicit:
-
-```text
-$ agentgrep insights report --level builtin
-```
-
-```text
-$ agentgrep insights report --level ml
-```
-
-```text
-$ agentgrep insights report --level embeddings --model all-MiniLM-L6-v2
-```
-
-```text
-$ agentgrep insights report --level llm --backend ollama --model llama3.2
-```
-
-```text
-$ agentgrep insights report --level llm --backend litert-lm --model gemma-3n
-```
-
-```text
-$ agentgrep insights report --level best-installed
-```
-
-`builtin` is the default. An explicit `best-installed` insights request may
-select the highest usable installed insights backend, but it must not install
-packages, download models, or change search or routing policy.
-
-## Dependency Levels
-
-Optional dependencies are a ladder, not a blob. Each level must degrade to a
-clear capability message instead of a traceback.
-
-| Level | Extra | Candidate dependencies | Adds | Model behavior |
-| --- | --- | --- | --- | --- |
-| 0 | none | none beyond core `agentgrep` | deterministic reports, JSON, Markdown, terminal output, simple HTML | no models |
-| 1 | `agentgrep[insights-html]` | `jinja2`, `platformdirs` if not promoted to core | report templates, report profiles, platform cache/report directories | no models |
-| 2 | `agentgrep[insights-ml]` | `scikit-learn` | TF-IDF terms, classical clustering, topic candidates, outlier sessions | no model downloads |
-| 3 | `agentgrep[insights-embeddings]` | `sentence-transformers` | dense or sparse embeddings, semantic clusters, semantic dedupe, nearest-session examples | installed or explicitly provisioned embedding models |
-| 4 | `agentgrep[insights-index]` | SQLite registry tables, `sqlite-vec`, `tantivy-py`; Chroma remains experimental | persistent enrichment indexes, incremental refreshes, nearest-neighbor or full-text report reuse | reuses installed embedding models |
-| 5 | `agentgrep[insights-llm]` | Ollama over local HTTP, LiteRT-LM, later `llama-cpp-python` if wheels and install UX are acceptable | local narrative synthesis, cluster naming, unanswered-thread extraction, report refinement from evidence | installed or explicitly provisioned local LLMs |
-
-The base import path must stay lazy:
-
-- Importing `agentgrep` must not import `sklearn`, `torch`,
-  `sentence_transformers`, `tantivy`, `sqlite_vec`, `httpx`, Ollama clients,
-  LiteRT-LM bindings, or LLM runtimes.
-- Each optional backend exposes a small capability probe with a typed failure
-  reason.
-- A report records which level was selected, which enrichers ran, which
-  enrichers were skipped, the ADR 0004 `RunStatus`, and grounded next
-  actions the user or MCP client can run next.
-
-`agentgrep[insights-all]` may install levels 1 through 4 once those levels are
-stable. Level 5 remains separate until its platform and wheel story is good
-enough for normal users.
-
-## Enrichment and search boundaries
-
-This ADR owns insights reports, optional dependency levels, model provisioning,
-embedding and model provenance, and enrichment-cache lifecycle. Enrichment
-artifacts are independently versioned and removable. They live outside the
-durable prompt corpus and outside exact prompt-search index generations.
-Deleting, rebuilding, or changing an enrichment must not migrate prompt
-evidence, alter exact-search coverage, or change canonical public identities.
-
-An enrichment may reference a record, content, or thread identity owned by the
-public identity contract, but its own cache key is not a new public identity.
-Its derivation key includes the complete selected backend, model, policy, and
-input-contract versions. An enrichment never becomes authority for whether an
-exact query matched.
-
-Search effort is not an insights quality level. If an insights operation calls
-query-to-record search internally, it selects an explicit search effort and
-reports that nested search's coverage. An insights level, installed optional
-dependency, or available model never authorizes deeper source reads, index
-construction, model loading, or a different routing policy on behalf of a
-search request.
-
-## Model Provisioning
-
-Model provisioning is allowed only as an explicit user-facing operation or an
-explicit report flag. The default report path must never surprise the user with
-network traffic, large downloads, daemon startup, or model cache growth.
-
-Setup commands describe the action before they mutate anything:
-
-```text
-$ agentgrep insights setup embeddings
-```
-
-```text
-$ agentgrep insights setup llm --backend ollama
-```
-
-Model commands manage local model state:
-
-```text
-$ agentgrep insights models available --level embeddings
-```
-
-```text
-$ agentgrep insights models install all-MiniLM-L6-v2 --level embeddings
-```
-
-```text
-$ agentgrep insights models install llama3.2 --backend ollama
-```
-
-```text
-$ agentgrep insights models install gemma-3n --backend litert-lm
-```
-
-```text
-$ agentgrep insights models list
-```
-
-```text
-$ agentgrep insights models remove llama3.2 --backend ollama
-```
-
-Report generation may provision a missing model only when the user passes an
-explicit flag such as `--auto-download-models`. In an interactive terminal it
-must show the backend, model identifier, approximate size when known, license or
-terms hint when known, cache target, and whether the download is resumable. In
-non-interactive contexts it must also require `--yes`.
-
-Ollama provisioning delegates to Ollama's local model control plane, such as
-`/api/pull` for downloads and `/api/tags` for local inventory. The cache is
-owned by Ollama, and agentgrep records the model name, digest when available,
-daemon URL, and reachability status.
-
-LiteRT-LM provisioning stores model artifacts in agentgrep's model cache unless
-the user supplies an existing path. Cache keys include backend, model ID,
-revision or digest, file format, license or terms marker, and artifact size.
-The runtime receives a resolved local path or asset bundle; report code never
-passes an unresolved model name into the executor.
-
-Model and enrichment storage resolve independently. `model_root` is
-`AGENTGREP_MODEL_DIR` when that override is non-empty; otherwise it is
-`<platform_cache_base>/agentgrep/models`. `enrichment_root` is
-`AGENTGREP_CACHE_DIR` when that override is non-empty; otherwise it is
-`<platform_cache_base>/agentgrep/insights`. Setting either override never
-relocates the other root. Backend-owned storage such as Ollama's model cache is
-also unaffected.
-
-`platform_cache_base` uses one deterministic platform branch:
-
-1. macOS uses `~/Library/Caches`;
-2. native Windows, if supported by a later decision, uses `LOCALAPPDATA` and
-   reports a configuration error when it is unavailable;
-3. other Unix-like systems use an absolute, non-empty `XDG_CACHE_HOME`, or
-   `~/.cache` when the variable is absent or invalid.
-
-The resolver expands the user home in an explicit override, then requires an
-absolute path; a relative explicit override is a configuration error rather
-than a path resolved against the process working directory. It normalizes the
-selected absolute path lexically without resolving symlinks. Diagnostics and
-`cache dir` report the effective model and enrichment roots separately.
-Installing or removing `platformdirs` never changes either effective root; an
-implementation may use it only when its result is constrained to this algorithm.
-
-Every cache has a diagnostic surface:
-
-```text
-$ agentgrep insights doctor
-```
-
-```text
-$ agentgrep insights cache dir
-```
-
-```text
-$ agentgrep insights cache size
-```
-
-```text
-$ agentgrep insights cache prune
-```
-
-## CLI and Agentic UX
-
-The human CLI should optimize for copy-pasteable, bounded commands:
-
-- One command produces a useful builtin report.
-- A richer report explains the missing extra or model with a precise next
-  command.
-- Long-running enrichment prints progress by phase: collect, analyze, index,
-  provision model, summarize, render.
-- Cancellation leaves cache state either unchanged or inspectably partial.
-- Errors name the failing backend and the fallback report level when available.
-
-Machine output is stable. JSON and MCP report responses use a `ReportResult`
-shape adapted from the ADR 0004 result vocabulary; NDJSON streams emit
-lifecycle events and finish with an equivalent summary:
-
-```text
-$ agentgrep insights report --format json
-```
-
-```text
-$ agentgrep insights report --format ndjson
-```
-
-The JSON payload includes:
-
-- `schema_version`
-- normalized report request, selected level, and backend capabilities
-- ADR 0004 `RunStatus`, `PageInfo`, and `next_cursor` when report rows or
-  evidence lists are paginated
-- ADR 0004 `Diagnostic` entries for skipped sources, missing optional
-  dependencies, model/cache issues, malformed stores, cancellation, and
-  approximation notes
-- ADR 0006 source coverage and skipped-source reasons
-- statistics for records scanned, sessions grouped, evidence items emitted,
-  enrichers attempted, enrichers skipped, elapsed time, and active limits
-- deterministic builtin facts
-- optional enrichment facts
-- evidence references back to representative records using `RecordRef`
-  handles; session and conversation groups require a separately defined public
-  resolver before they can be opened as aggregates
-- privacy settings
-- model provenance when a model runs
-- grounded next actions
-
-Report-specific field names are allowed when they clarify the report domain,
-but they must map into these result concepts rather than forming a second
-result vocabulary.
-
-Local model summaries are always grounded in reduced evidence. The LLM prompt
-receives compact facts, session IDs, timestamps, labels, and opt-in snippets,
-not unbounded raw transcripts by default. The model output is stored as an
-enrichment with provenance, not as the source of truth.
-
-For MCP and agent use, the report should make the loop obvious:
-
-1. Inspect report summary.
-2. Read `status`, `diagnostics`, source coverage, and grounded next actions.
-3. Request the next page when `next_cursor` is present.
-4. Inspect representative records through `RecordRef`; use a separately
-   defined public resolver to open a session or conversation when one exists.
-5. Rerun with a narrower query, time range, agent, project, or backend.
-6. Escalate to embeddings or local LLM only when the builtin result is too
-   shallow for the question.
-
-## Privacy and Safety
-
-The builtin path is local-only and network-free. Optional packages may be
-installed explicitly. Model downloads are opt-in. Remote hosted LLM providers
-are out of scope for this decision.
-
-Reports include aggregate facts by default. Raw prompt or transcript text
-requires an explicit option such as `--include-text` or `--sample-text`.
-Generated summaries must identify their backend and model. Diagnostic output
-uses ADR 0004 `Diagnostic` records and redacts local absolute paths unless the
-user asks for local troubleshooting details.
-
-agentgrep must not run live upstream assistant CLIs to interpret storage. It may
-understand storage written by supported tools, but it does not ask those tools
-to analyze themselves.
-
-## Testing
-
-The base package must be tested without optional extras. A no-extra environment
-must import `agentgrep`, run the builtin report, and render JSON.
-
-Each optional level gets focused tests:
-
-- missing dependency produces the intended setup guidance
-- capability probes classify unavailable, installed, misconfigured, and stale
-  cache states
-- report JSON and MCP responses keep stable result keys, `RunStatus`,
-  diagnostics, source coverage, `RecordRef` evidence, next actions, and privacy
-  defaults
-- model provisioning uses fake registries or tiny fixtures by default
-- real model downloads run only in explicitly marked integration jobs
-- LiteRT-LM and Ollama backends test cache/provenance behavior without requiring
-  normal unit tests to download a model
-
-The docs should treat examples as executable behavior. Console examples for setup,
-doctor, model install, and report generation need either executable fixtures or
-explicit non-executed annotations with a reason.
-
-## Relationship to other ADRs
-
-ADR 0004 owns event streams, result payloads, run status, pagination,
-diagnostics, and `RecordRef`. Insights is a specialized producer of report
-facts and enrichment evidence inside that lifecycle vocabulary.
-
-ADR 0006 owns public CLI/MCP surface vocabulary, source catalog terminology,
-and the MCP loop shape. Insights report commands, MCP tools, source coverage,
-and next actions must use those public names so agents can move between search
-and insights without learning a second vocabulary.
-
-{ref}`adr-durable-prompt-corpus-derived-search-indexes` may supply
-canonical prompt evidence and exact-search read models, but this ADR does not
-write either one. {ref}`adr-progressive-deep-search` owns search effort, and
-{ref}`adr-prompt-guided-conversation-routing` owns targeted conversation
-selection. Model or embedding support installed for insights does not activate
-either search behavior.
+Insights use a deterministic local reporting pipeline with optional enrichment:
+
+1. a normalized request selects admitted evidence;
+2. deterministic reducers build the base report;
+3. explicitly selected enrichers may add derived annotations or rankings; and
+4. renderers present the report without performing discovery, provisioning, or
+   additional analysis.
+
+The deterministic base remains available without optional models or native
+dependencies. Enrichment output records its input identity, provider or model,
+policy version, and enough provenance to explain how it was produced.
+
+### Enrichment is derived
+
+Summaries, embeddings, vector indexes, clusters, inferred topics, graph edges,
+and model ranks are versioned, removable read models. They do not become
+canonical prompt evidence, public identity, or exact-search authority.
+Deleting or rebuilding enrichment must not migrate prompt evidence, change
+exact prompt coverage, or alter ordinary search results.
+
+This boundary does not forbid a similarity or insights operation from owning a
+derived score and order. Such an operation declares its metric, provider,
+generation, approximation, and pagination contract. It may not silently export
+that score into ordinary search or conversation routing.
+
+### Provisioning and activation are explicit
+
+Installing an optional dependency does not activate an enricher, build an
+index, download or load a model, contact a remote service, or change routing.
+Operations that require provisioning expose that requirement before analysis
+and require explicit user or deployment authorization.
+
+An explicitly selected unavailable provider produces a capability outcome. It
+does not silently switch metrics or models unless the caller selected a named,
+versioned fallback policy that discloses the substitution.
+
+Network use and remote processing are opt-in. Local history, prompts, derived
+features, and queries are not sent remotely by default.
+
+### Storage and lifecycle
+
+Enrichment caches remain outside the canonical prompt corpus and exact-index
+generations. Cache identity includes the canonical input reference plus the
+model, metric, policy, and relevant normalization versions; raw text alone is
+not a sufficient reproducibility key.
+
+Reports and caches have their own retention and invalidation rules. A stable
+report cursor may be exposed only when a focused report contract defines an
+immutable generation and deterministic order. Search effort and search cursors
+do not supply those rules.
+
+### Privacy and evidence
+
+Insights report reduced evidence rather than silently copying full transcript
+bodies. Outputs identify unavailable, excluded, or unsupported inputs and do
+not claim completeness beyond admitted evidence. Diagnostics avoid prompt
+text, secrets, raw local paths, and private locator material.
+
+## Relationships
+
+- ADR 0004 owns search planning and lifecycle when an insights operation
+  explicitly invokes search.
+- ADR 0006 owns public CLI and MCP spelling.
+- The prompt-corpus ADR keeps enrichments outside canonical evidence and exact
+  indexes.
+- The routing ADR permits an optional semantic candidate policy only through
+  explicit, versioned activation; it does not make insights a search tier.
 
 ## Consequences
 
-The builtin report stays fast, portable, and useful. Users can get immediate
-activity summaries without learning about embeddings or local model runtimes.
+agentgrep can offer useful deterministic reports on a minimal installation and
+add model-backed capabilities without changing exact search by environment
+accident. Providers and caches remain replaceable and auditable.
 
-Power users get a clear upgrade path. They can add one level at a time, inspect
-what changed, cache expensive work, and remove model artifacts or enrichment
-indexes when needed.
-
-The cost is a larger compatibility matrix. Optional extras, model registries,
-daemon reachability, platform caches, and integration tests all need careful
-ownership. The levelled architecture keeps that cost isolated from the default
-install and from the core search types.
-
-## Rejected and Deferred
-
-Running a live assistant agent to parse local storage is rejected. It is slower,
-less private, harder to reproduce, and unnecessary when agentgrep has storage
-adapters.
-
-Silent auto-upgrade to the richest installed backend is rejected. Installed
-dependencies may change report quality, runtime, privacy, and cost, so backend
-selection must be visible in the report.
-
-Automatic model download on the default report path is rejected. On-demand
-downloads are acceptable only through explicit model commands or explicit report
-flags with confirmation and cache provenance.
-
-Remote hosted LLM providers are deferred. A future decision can define a remote
-provider API, but local reports and local model enrichment must stand on
-their own.
-
-Making Chroma or another full vector database the default index is deferred.
-The first persistent index should be inspectable, embedded, and easy to remove.
+Reproducible enrichment requires more provenance and explicit capability
+handling. Model-backed output may be expensive or approximate, and callers must
+choose that tradeoff rather than inheriting it from installed packages.

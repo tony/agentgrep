@@ -8,253 +8,140 @@ Proposed.
 
 ## Context
 
-agentgrep has one search backend and multiple user-facing surfaces: CLI,
-Textual TUI, MCP tools, JSON, and NDJSON. ADR 0004 defines the headless
-planning, execution, event-stream, and result-type architecture. It does
-not by itself define the public vocabulary users and MCP clients rely on.
-
-The open design issues describe two related gaps:
-
-- [#54](https://github.com/tony/agentgrep/issues/54) asks for the query
-  language, fields, verbs, defaults, and flag vocabulary to be discoverable
-  instead of hidden in implementation details.
-- [#55](https://github.com/tony/agentgrep/issues/55) asks MCP tools to expose
-  result completeness, pagination, source coverage, drilldown handles, and
-  loop-friendly next actions instead of forcing clients to infer state from a
-  partial list of records.
-
-Greenfield and policy reviews in
-[#57](https://github.com/tony/agentgrep/issues/57),
-[#58](https://github.com/tony/agentgrep/issues/58), and
-[#59](https://github.com/tony/agentgrep/issues/59) converge on the same
-direction: keep AGENTS.md operational, keep planning/execution in ADR 0004, and
-give the CLI/MCP surface its own durable vocabulary. ADR 0005 defines the local
-insights report and model-backed enrichment architecture; this ADR follows it
-with the public surface vocabulary that those reports and the core search tools
-share.
+CLI, TUI, MCP, JSON, NDJSON, and library callers expose the same search engine
+through different interaction styles. If each frontend invents request fields,
+status meanings, identities, or pagination behavior, apparently equivalent
+operations diverge and become difficult to evolve safely.
 
 ## Decision
 
-agentgrep will treat the public CLI/MCP surface as compatibility-sensitive.
-AGENTS.md may point to this ADR, but it is not the source of public behavior.
-CLI help, rendered docs, MCP tool schemas, MCP resources, JSON result payloads,
-and NDJSON lifecycle summaries should be audited against this ADR and the
-focused public-surface docs/tests that implement it.
+Public surfaces adapt one normalized request, event, and result vocabulary.
+Core semantics live in the planning and focused behavior ADRs; schemas and
+frontends expose those semantics without redefining them.
 
 ### Surface ownership
 
-The public surface owns:
+The core owns normalized query, scope, effort, order, deduplication, lifecycle,
+coverage, and pagination meanings. CLI and TUI own human interaction and
+rendering. MCP and Pydantic models own schema adaptation and validation. JSON
+and NDJSON serializers own wire representation.
 
-- command and tool vocabulary;
-- query field names, aliases, comparison rules, and examples;
-- default behaviors for scope, agent selection, limits, ordering, ranking,
-  dedupe, and case handling;
-- result payloads, pagination, diagnostics, run status, and drilldown handles
-  as defined by ADR 0004;
-- public identity and reference field names defined by focused identity
-  decisions and, when adopted, focused export decisions;
-- source catalog vocabulary and coverage states;
-- MCP loop shape and next-action guidance.
+An adapter layer may rename a field idiomatically or preserve a released alias,
+but its mapping is explicit and tested. Pydantic behavior is not the semantic
+source of truth for CLI, MCP, or search.
 
-The implementation may use argparse, FastMCP, Pydantic, Textual, Rich, or other
-libraries to expose the surface. Those libraries adapt the public request and
-result types; they do not define them.
+Public descriptions and capability metadata derive from one registry-backed
+definition where practical. Root help remains cold; focused introspection may
+load the registry when explicitly requested.
 
-### Registry-backed discovery
+### Search vocabulary
 
-agentgrep should converge on registry-backed public descriptions:
+Search and grep expose the same normalized effort and order vocabulary. If the
+progressive-search ADR is adopted:
 
-- CLI help and examples;
-- library docs for the query language;
-- MCP tool descriptions and JSON schemas;
-- MCP resources for query fields, source coverage, and capability summaries;
-- future shell completion or TUI help panels.
+- omitted effort uses its compatibility rule;
+- `--deep` selects targeted effort;
+- `--exhaustive` selects exhaustive effort without requiring `--deep`; and
+- `--limit` and MCP/JSON `limit` mean the maximum canonical results returned in
+  one response or page.
 
-The registry can be implemented incrementally, but any new query field, flag,
-tool argument, response field, or source state should have one canonical public
-description and tests that prove the CLI/MCP/docs surfaces do not drift.
+Compatible grep spellings such as `-m` or `--max-count` may remain aliases for
+`--limit`. The progressive-search ADR owns the target default and the versioned
+migration from current omission behavior. Existing cursorless calls remain
+single-response calls while continuation is introduced.
 
-### Command and flag vocabulary
+No public `result_limit`/`page_size` split is created by this ADR. A future
+total-result cap across pages requires a distinct name and focused decision.
+Candidate, routing, provider, operation, byte, and display bounds also use
+distinct names and never normalize to result `limit`.
 
-The CLI keeps the existing verbs, but their shared vocabulary becomes explicit:
+Until the progressive-search ADR is adopted, released public meanings remain
+compatibility facts. Adoption supplies the explicit amendment rather than this
+Proposed ADR silently rewriting an Accepted contract.
 
-- `search`: general record search over the selected scope.
-- `grep`: grep-shaped text search that preserves familiar grep expectations
-  where they do not conflict with agentgrep privacy or source semantics.
-- `find`: fd/find-shaped source and storage discovery across agent stores.
-- `ui`: Textual browsing over the same query, result, and event types.
+### Pagination and next actions
 
-Canonical shared options:
+`next_cursor` is opaque. A continuation reuses the normalized request and the
+validated semantic snapshot required by its owning operation. It does not ask
+callers to reconstruct local paths, private keys, or offsets, and it fails
+explicitly when required state is stale or unavailable.
 
-- `--agent`: selected agent or `all`.
-- `--scope`: selected record scope, such as `all`, `prompts`, or
-  `conversations`.
-- `--limit`: primary result limit name across CLI, JSON, and MCP.
-- `--format`: output format where a command exposes more than one sink.
+The existing public `agcur1` search cursor is an offset-over-rerun token. It
+does not carry the snapshot, canonical key, deduplication state,
+representative-policy version, or provider generation required by ADR 0014.
+A compliant implementation therefore issues a new cursor version and never
+reinterprets `agcur1` as a keyset cursor. At the versioned implementation
+cutover authorized by this migration, new searches stop issuing `agcur1` and
+an `agcur1` continuation is rejected with a stable unsupported-cursor outcome.
 
-Compatibility aliases are allowed when they match a familiar tool shape. For
-example, `grep -m` and `grep --max-count` may remain aliases for `--limit`.
-Aliases must normalize into the canonical request model before planning.
+A continuation may vary only the per-response `limit`. An explicitly supplied
+query, scope, effort, order, filter, or other normalized field that conflicts
+with the cursor is a validation error. Cursor state never silently overwrites a
+conflicting caller value.
 
-Future case handling should prefer a single explicit option such as
-`--case {smart,ignore,respect}`. Existing compatibility flags may remain as
-aliases, but the normalized request should carry one case policy.
+ADR 0014 owns core search order and continuation. Focused similarity, export,
+insights, and source-discovery operations may define their own stable cursors;
+they do not inherit a search cursor merely because they return records.
 
-`find --type` and `--scope` must not silently describe different axes. If
-`--type` filters source roles while `--scope` filters record scopes, help text,
-docs, JSON, and MCP metadata must name that distinction. If they become aliases,
-they must normalize before planning and diagnostics must explain conflicts.
+Results may include additive typed next actions for pagination, effort
+escalation, scope broadening, inspection, export, similarity, or other focused
+operations. Each action kind defines its own request patch. Consumers ignore
+unknown action kinds while continuing to honor status and coverage.
 
-### Query introspection
+### Results and identity
 
-The query language must be inspectable without reading private stores. The CLI
-surface should provide bounded introspection commands such as
-`agentgrep query fields` and
-`agentgrep query explain 'agent:codex AND timestamp:2026-06'`.
+Every structured result preserves the lifecycle established by ADR 0004:
+normalized request summary, records, status, coverage, privacy-safe
+diagnostics, counts, applied order and limit, and page metadata when supported.
+NDJSON finishes with an equivalent summary rather than emitting records alone.
 
-The MCP surface should expose the same capability through a tool or resource
-that is safe to call before search. The output should include field names,
-aliases, supported operators, value kinds, examples, whether a field can prune
-sources, whether it requires record parsing, and diagnostics for malformed
-queries.
+{class}`~agentgrep.RecordRef` is the public physical record-drilldown handle. It
+is not canonical equality, grouping, bookmark, export, similarity, or
+conversation identity. Public content, record, thread, and stability field
+names remain reserved for a focused identity decision. Private corpus keys,
+locators, paths, row numbers, and cursor coordinates never acquire public
+identity merely because an internal resolver uses them.
 
-Query introspection may import the query registry and planner even when root
-`agentgrep --help` stays cold-start sensitive. Introspection commands exist to
-load and explain that registry.
+A public thread identifier does not imply a public conversation resolver.
+Bookmark reopening, portable export, import, and conversation resolution each
+require their owning public-surface contract. Storage inspection does not
+create a second portable format or import path.
 
-### Source catalog vocabulary
+### Channels and discoverability
 
-Source discovery must expose machine-readable coverage instead of free-form
-strings alone. A source or source-family response should include:
+Interactive CLI and TUI surfaces may advertise deeper search or next actions.
+Machine-readable stdout contains only the selected result format; hints and
+progress use the appropriate interactive or structured channel. Exact wording,
+layout, and exit-code mapping live in user-facing documentation and tests, not
+in this architecture decision.
 
-- stable public store-family identifier;
-- agent identifier;
-- source role and record scopes;
-- source kind and path kind;
-- coverage level;
-- `searchable` and `search_by_default`;
-- `searchable_reason` when a source is skipped, opaque, unsafe, unavailable,
-  or intentionally out of default search;
-- `inspectable` when result drilldown can target the source;
-- version-detection strategy or availability state;
-- page info and diagnostics when discovery is paginated or partial.
+MCP tools return structured lifecycle results and use capability metadata to
+describe safety and side effects. A tool does not infer writes, provisioning,
+or deeper effort from an installed dependency or response format.
 
-Display paths may be rendered for humans, but MCP clients should use stable
-identifiers, result cursors, and `RecordRef` handles rather than local paths
-as primary inputs.
+### Compatibility
 
-The public store-family identifier classifies an adapter/store contract and may
-group many discovered physical source instances. It is distinct from the
-private corpus source-instance key used for observation binding and locator
-resolution. This ADR defines no public physical source-instance identity; a
-future one requires a focused privacy and stability contract and must not expose
-the private corpus key under a public field name.
+Public request fields, enum values, status values, result fields, and action
+kinds are compatibility-sensitive. Additions should be ignorable where safe.
+Renames, removals, changed defaults, and changed meanings require a versioned
+migration or explicit superseding decision.
 
-`RecordRef` is the public physical drilldown handle defined by ADR 0004. It is
-not interchangeable with canonical content, record, or thread identity, and a
-private corpus occurrence, conversation, locator, row, or generation key must
-not be exposed as one of those public identities. A public thread identifier is
-an equality and grouping field; it does not create a conversation resolver.
-`RecordRef` may inspect an emitted or representative record, but it never opens
-a session, thread or conversation as an aggregate. That operation requires a
-separate focused public-surface and privacy decision.
+## Relationships
 
-### MCP loop
-
-MCP tools should support this loop:
-
-1. Discover capabilities, query fields, and source coverage.
-2. Explain or validate the intended query when needed.
-3. Search with an explicit scope, limit, and output expectation.
-4. Read the result payload's stats, run status, diagnostics, and
-   `next_cursor`.
-5. Request the next page when `next_cursor` is present.
-6. Inspect a result through `RecordRef` when the user needs more context.
-7. Refine the query using diagnostics and next actions rather than guessing at
-   backend-specific flags or file paths.
-
-MCP responses should include concise next-action hints only when they are
-grounded in result state, such as "request next page", "narrow by agent",
-"inspect this record", or "enable non-default source coverage". Next actions
-must not include prompt text, secret values, raw argv, or local absolute paths.
-
-Next-action kinds form an additive public vocabulary. Each kind owns its own
-typed patch; fields required by one kind are not required by unrelated actions.
-Progressive search therefore may define effort-escalation and scope-broadening
-actions without forcing pagination, inspection, query-refinement, export, or
-insights actions to carry a target search effort. Consumers ignore unknown
-action kinds while continuing to honor result status and coverage.
-
-### Result payloads
-
-ADR 0004 owns the event streams and result type vocabulary. This ADR makes that
-vocabulary public-surface policy:
-
-- JSON responses expose the result payload by default.
-- NDJSON responses emit lifecycle events and finish with an equivalent summary.
-- MCP tool responses expose stats, page info, run status, diagnostics,
-  records, and `RecordRef` handles by default.
-- Pydantic models and FastMCP schemas adapt those fields for MCP clients but do
-  not own the semantics.
-
-Storage decisions may supply evidence to these surfaces, but they do not create
-new commands, portable formats, import contracts, or public resolver handles.
-A portable export command requires, and is then owned by, a focused export
-decision such as the work tracked by
-[#81](https://github.com/tony/agentgrep/issues/81); this ADR does not assert
-that such a decision is adopted or implemented. A future conversation
-drilldown token or corpus import requires a separate public-surface and privacy
-contract rather than an internal storage key exposed through convenience.
+- ADR 0004 owns normalized planning, lifecycle, status, coverage, and
+  `RecordRef` semantics.
+- ADR 0014 owns canonical core-search ordering and continuation.
+- The proposed prompt-corpus ADR introduces no public identity, import, or
+  portable export surface.
+- The proposed progressive-search and routing ADRs own effort guarantees and
+  routing work, while this ADR owns their public spelling.
 
 ## Consequences
 
-### Positive
+Equivalent operations gain one semantic contract across CLI, MCP, TUI, and
+library use. New actions and fields can be added without making frontends parse
+human text or private paths.
 
-- CLI help, docs, MCP tools, JSON, and NDJSON can converge on one vocabulary.
-- MCP clients can build reliable loops without path guessing or silent
-  truncation.
-- Query-language discovery becomes a user-facing capability rather than an
-  implementation detail.
-- Pydantic schemas remain useful without becoming the source of truth.
-
-### Tradeoffs
-
-- New flags, fields, tools, and response keys need surface tests or generated
-  descriptions to prevent drift.
-- Some compatibility aliases must be maintained and normalized carefully.
-- The source catalog needs stable public names for states that were previously
-  implicit.
-
-### Risks
-
-Surface sprawl: too many public names can make the CLI and MCP harder to
-learn. The mitigation is canonical vocabulary plus aliases that normalize
-before planning.
-
-Generated-description drift: registry-backed docs can still drift if generation
-is partial. The mitigation is focused tests that compare parser help, docs, MCP
-schemas, and registry metadata where a field or flag is shared.
-
-Privacy leakage: richer source and diagnostic metadata can expose local details.
-The mitigation is the existing privacy boundary: no prompt text, secret values,
-raw argv, or local absolute paths in machine-readable diagnostics or next
-actions.
-
-## Relationship to other ADRs
-
-ADR 0001 owns storage-version evidence and source compatibility. ADR 0004 owns
-planning, execution, events, result payloads, run status, pagination,
-diagnostics, and record references. ADR 0005 owns local insights reports and
-model-backed enrichment. This ADR owns how those names appear in public CLI and
-MCP surfaces. {ref}`adr-durable-prompt-corpus-derived-search-indexes` owns
-private prompt-corpus storage, not public identity or export vocabulary.
-{ref}`adr-progressive-deep-search` owns search-effort semantics and its two
-deep-search action kinds. {ref}`adr-prompt-guided-conversation-routing` owns
-targeted routing policy, not new public identity fields.
-
-## Final position
-
-agentgrep should feel like one tool whether reached from a terminal, a TUI, or
-an MCP client. The public surface is the shared vocabulary, normalized request,
-result payload, source catalog, and drilldown loop. Implementation libraries can
-make that surface convenient; they should not redefine it.
+The shared vocabulary creates coordination work across schemas, serializers,
+docs, and tests. Compatibility aliases may outlive their preferred spelling,
+but they remain adapters to one meaning rather than competing semantics.
