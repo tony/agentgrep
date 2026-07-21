@@ -29,8 +29,9 @@ Adapters detect source versions from concrete data evidence, in this order:
 4. catalog observation metadata as an explicitly lower-confidence fallback.
 
 When application metadata and source shape disagree, the source shape governs
-parsing. Normal discovery and search never execute an upstream agent CLI merely
-to learn a version.
+parsing. Agentgrep interprets local history through its own adapters and does
+not invoke an upstream assistant CLI to identify, parse, summarize, or otherwise
+interpret that history.
 
 For opt-in inventory sources that are unsafe or noisy as text, an adapter may
 use structural summaries such as known top-level keys, event names, manifest

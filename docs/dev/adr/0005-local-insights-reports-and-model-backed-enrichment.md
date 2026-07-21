@@ -52,12 +52,20 @@ index, download or load a model, contact a remote service, or change routing.
 Operations that require provisioning expose that requirement before analysis
 and require explicit user or deployment authorization.
 
+Importing `agentgrep` does not import or initialize optional enrichment, model,
+or provider runtimes. A named capability may load its optional runtime only
+after the caller explicitly selects it.
+
 An explicitly selected unavailable provider produces a capability outcome. It
 does not silently switch metrics or models unless the caller selected a named,
 versioned fallback policy that discloses the substitution.
 
-Network use and remote processing are opt-in. Local history, prompts, derived
-features, and queries are not sent remotely by default.
+Network use for explicitly authorized provisioning or local-provider
+communication remains opt-in. Remote hosted enrichment providers are out of
+scope for this decision; supporting one requires a focused future ADR that
+defines its privacy boundary and satisfies ADR 0003's worker contract. Under
+this ADR, local history, prompts, derived features, and queries are not sent to
+a remote provider.
 
 ### Storage and lifecycle
 
