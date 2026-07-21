@@ -47,9 +47,11 @@ result. A targeted or otherwise heuristic plan may deliberately select an
 incomplete source universe, but it reports `approximate`.
 
 The physical plan may push predicates down, use indexes, batch operations, or
-apply deterministic work bounds. Unsupported pushdown falls back to canonical
-matching or becomes a visible coverage outcome. A provider, transport, or
-timing condition never silently changes the logical query or source policy.
+apply deterministic work bounds. A pushdown may over-admit candidates, but it
+must never exclude a record that canonical matching would accept under the
+logical plan. If that guarantee is unavailable, the planner bypasses the
+pushdown or uses a canonical fallback. A provider, transport, or timing
+condition never silently changes the logical query or source policy.
 
 Wall-clock deadlines terminate the shared operation as cancellation. Planned
 approximation uses deterministic logical work bounds. Individual source or
