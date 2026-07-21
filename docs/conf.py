@@ -68,6 +68,7 @@ conf = merge_sphinx_config(
         "_mermaid_cache",
         "AGENTS.md",
         "CLAUDE.md",
+        "superpowers/**",
     ],
 )
 
