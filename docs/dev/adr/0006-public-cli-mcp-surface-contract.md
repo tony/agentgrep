@@ -55,6 +55,11 @@ total-result cap across pages requires a distinct name and focused decision.
 Candidate, routing, provider, operation, byte, and display bounds also use
 distinct names and never normalize to result `limit`.
 
+`find --type` selects discoverable source or storage roles. The search and grep
+`scope` field selects normalized record kinds. Public descriptions and schemas
+keep these axes distinct and do not treat them as aliases without an explicit
+migration.
+
 Until the progressive-search ADR is adopted, released public meanings remain
 compatibility facts. Adoption supplies the explicit amendment rather than this
 Proposed ADR silently rewriting an Accepted contract.
