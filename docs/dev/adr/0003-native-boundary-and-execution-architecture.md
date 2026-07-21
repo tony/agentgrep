@@ -112,6 +112,15 @@ Every native path retains a passing Python-only suite. Benchmarks exercise the
 user-visible path and report enough boundary information to justify the chosen
 shape.
 
+### Review evidence
+
+Each change that adds or modifies native code states its boundary shape and
+provides the user-visible measurement against a named Python baseline,
+boundary-crossing evidence, Python-only behavior, packaging and fallback
+impact, and shape-specific verification. Worker changes also cite the ADR that
+owns their protocol or execution mode; accelerator changes additionally
+satisfy ADR 0002's checklist.
+
 ## Relationships
 
 - ADR 0002 owns transparent Python/Rust accelerator compatibility.

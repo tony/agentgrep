@@ -56,9 +56,9 @@ ADR 0003 is the canonical policy for native boundary shapes:
   a versioned message-passing protocol. ADR 0003 owns the classification; a
   worker protocol needs its own follow-up ADR.
 
-Do not duplicate the accelerator import pattern, CI matrix, or native change
-checklists here. Keep those details in ADR 0002 and ADR 0003 so agents and
-reviewers have one source of truth.
+Do not duplicate accelerator import mechanics, CI requirements, or native-change
+review evidence here. ADR 0002 owns accelerator compatibility and its checklist;
+ADR 0003 owns native-boundary classification and review evidence.
 
 ### Pure Python / Rust Accelerator Compatibility
 
