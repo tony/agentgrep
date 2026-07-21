@@ -11,9 +11,9 @@ Accepted.
 agentgrep exposes a Lucene-inspired query language: field predicates
 (`agent:codex`), boolean composition (`AND` / `OR` / `NOT`, `+` / `-`),
 grouping, date comparisons (`timestamp:>2026-01-01`), and ranges
-(`timestamp:[a TO b]`). ADR 0006 makes this language a public, discoverable
-surface. This ADR records what that language is, what it deliberately is not,
-and how it is completed.
+(`timestamp:[a TO b]`). Those forms are a public, discoverable surface. This
+ADR records what that language is, what it deliberately is not, and how it is
+completed.
 
 The language is frequently mistaken for a full-text engine. It is not.
 agentgrep matches by **substring containment** (casefolded), **regex**
@@ -82,7 +82,7 @@ Boolean operators, grouping, and quoted phrases engage the parser whether or
 not a field predicate is present. A cheap, dependency-free heuristic decides
 whether input carries query syntax (a field colon, an uppercase boolean
 keyword, a parenthesis, or a quote) so that plain bare-term queries keep the
-legacy fast path and the cold-start budget in ADR 0006.
+legacy fast path and preserve the cold import boundary in ADR 0010.
 
 ### Phrase queries
 
@@ -130,8 +130,7 @@ MCP search and validation tools. It does not change the execution engine
 
 - The query language must be discoverable from CLI help examples, the MCP
   server instructions, MCP tool and parameter descriptions, and a
-  machine-readable MCP resource, consistent with the registry-backed discovery
-  direction in ADR 0006.
+  machine-readable MCP resource.
 - Field and operator descriptions derive from the field registry so the
   surfaces cannot drift from the compiler.
 
@@ -192,9 +191,9 @@ contracts belong to their focused decisions. An alternate provider that adds
 an in-process native extension, native engine, long-lived native thread or
 worker process must be classified and governed by ADR 0003. This ADR declines
 BM25 and index-specific query semantics regardless of provider. ADR 0004 owns
-planning, execution, and result payloads, which are unchanged. ADR 0006 owns
-the public CLI and MCP surface and calls for registry-backed query discovery;
-this ADR supplies the query-language content those surfaces expose.
+planning, execution, and result payloads, which are unchanged. If adopted, ADR
+0006 owns shared public CLI and MCP vocabulary. This ADR owns query-language
+content and discoverability.
 
 ## Final position
 

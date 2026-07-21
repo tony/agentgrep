@@ -529,10 +529,8 @@ Key highlights:
   current ruff config does not flag function-local imports (`PLC` is
   not in `select`); if it is ever enabled, add the relevant paths to
   `per-file-ignores`. Pattern follows CPython's own
-  `Lib/importlib/__init__.py`. Bounded introspection subcommands, such
-  as future `query fields` or `query explain` commands, may import the
-  query registry and planner because their purpose is introspection; keep
-  the root help path cold.
+  `Lib/importlib/__init__.py`. Focused query introspection may import the query
+  registry when explicitly requested; keep the root help path cold.
 
 ### Docstrings
 
