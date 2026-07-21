@@ -88,6 +88,20 @@ escalation, scope broadening, inspection, export, similarity, or other focused
 operations. Each action kind defines its own request patch. Consumers ignore
 unknown action kinds while continuing to honor status and coverage.
 
+### Source coverage and identity
+
+Public source selection and capability reporting use stable store-family
+identity. A discovered file, database, or other physical source is a local
+instance; its path, adapter coordinate, and locator remain local or private
+data, not portable public identity.
+
+Coverage terms have stable meanings. `searchable` means some supported search
+request may include the store family. `search_by_default` means an ordinary
+request includes it without explicit scope or coverage opt-in and therefore
+implies `searchable`. `inspectable` means the source has a supported read-only
+record-inspection path; it neither implies default search nor turns a physical
+locator into public identity.
+
 ### Results and identity
 
 Every structured result preserves the lifecycle established by ADR 0004:
