@@ -42,6 +42,19 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### `mcp_swap.py doctor` and `use-local --env`
+
+The dev config-swap helper gains a read-only `doctor` subcommand that reports
+the effective MCP-swap environment: which server name each CLI points at (and a
+mismatch when the repo is registered under a name other than the derived
+default), un-reverted swaps and orphaned backups accumulating on disk, a state
+entry whose backup has gone missing, and auth-overriding env vars such as
+`OPENAI_API_KEY`. `use-local` also takes a repeatable `--env KEY=VALUE` to write
+env (e.g. an isolated data dir) into the server entry without a manual
+post-edit.
+
 ## agentgrep 0.1.0a41 (2026-07-19)
 
 agentgrep 0.1.0a41 makes Pydantic a required dependency and removes the
