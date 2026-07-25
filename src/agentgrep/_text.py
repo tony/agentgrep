@@ -684,6 +684,42 @@ def detect_content_format(text: str) -> ContentFormat:
     return "text"
 
 
+#: Structural signals that a body might be source code. A positive result only
+#: routes the body to the detail worker, where Pygments confirms the language
+#: off the message pump; it is deliberately inclusive of code and quiet on prose.
+_CODE_SIGNAL = re.compile(
+    r"""
+      ^[ \t]*(?:import|from)\ [\w.]+                      # import x / from x
+    | ^[ \t]*(?:def|class|func|fn|struct|enum|trait|impl)\ +\w  # def name / class name
+    | ^[ \t]*(?:function|const|let|var)\ +\w+\s*[=(]       # function foo( / const x =
+    | ^[ \t]*(?:public|private|protected|static)\ +\w     # java-ish modifiers
+    | ^[ \t]*(?:package|namespace|module|use)\ +[\w:.]+   # package/module decl
+    | ^\s*\#(?:include|define|pragma)\b                   # C preprocessor
+    | [{};]\ *$                                            # line ends in brace/semicolon
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
+
+
+def looks_like_code(text: str) -> bool:
+    r"""Cheaply guess whether ``text`` might be source code (routing only).
+
+    A pump-safe pre-filter: a positive result routes the body to the detail
+    worker, where :mod:`pygments` confirms the language off the pump and a
+    confidence gate rejects prose. It errs toward routing (a false positive
+    only costs one off-pump guess) while leaving plain messages on the
+    synchronous inline path.
+
+    Examples
+    --------
+    >>> looks_like_code("import os\ndef main():\n    return 0\n")
+    True
+    >>> looks_like_code("how do I roll back the staging deploy")
+    False
+    """
+    return bool(text) and _CODE_SIGNAL.search(text) is not None
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class AnsiColors:
     """Semantic ANSI colors for terminal status output."""

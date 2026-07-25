@@ -136,3 +136,50 @@ async def test_detail_pane_markdown_render_select_copy(tmp_path: pathlib.Path) -
         await pilot.pause()
         assert layout._detail_raw_mode is False
         assert "```" not in str(body_widget._render())
+
+
+def _python_body() -> str:
+    """Return a Python source body (looks_like_code + Pygments-confident)."""
+    return (
+        '"""Module docstring for the deferred plan API."""\n'
+        "from __future__ import annotations\n"
+        "import typing as t\n"
+        "from dataclasses import dataclass, field\n"
+        "\n\n"
+        "@dataclass\n"
+        "class FakeResult:\n"
+        '    """Small command result."""\n'
+        "    stdout: list[str] = field(default_factory=list)\n"
+        "    returncode: int = 0\n"
+        "\n"
+        "    def ok(self) -> bool:\n"
+        "        # a trailing comment that would trip the ATX-heading rule\n"
+        "        return self.returncode == 0\n"
+    )
+
+
+async def test_detail_pane_syntax_highlights_code(tmp_path: pathlib.Path) -> None:
+    """A Python body renders as a styled (highlighted) Text off the pump.
+
+    The ``# comment`` line would trip the markdown heading heuristic, so this
+    also proves code detection takes precedence over the format heuristic.
+    """
+    record = _make_record(_python_body())
+    app = build_streaming_ui_app(
+        tmp_path,
+        _empty_query(),
+        control=SearchControl(),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:  # type: ignore[attr-defined]
+        layout = app.screen  # type: ignore[attr-defined]
+        await pilot.pause()
+        layout.all_records = [record]
+        layout.filtered_records = [record]
+        layout.show_detail(record)
+        await app.workers.wait_for_complete()  # type: ignore[attr-defined]
+        await pilot.pause()
+
+        rendered = layout._detail_rendered_renderable
+        assert isinstance(rendered, Text)
+        assert rendered.spans, "expected syntax-highlight spans on the code Text"
+        assert "def ok(self)" in rendered.plain

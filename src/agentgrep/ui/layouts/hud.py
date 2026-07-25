@@ -38,6 +38,7 @@ from agentgrep._text import (
     find_first_match_line,
     format_compact_path,
     format_display_path,
+    looks_like_code,
     truncate_lines,
 )
 from agentgrep._types import (
@@ -122,6 +123,13 @@ _DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...], int]
 # text find scans/scrolls against, and the flattened text ``Y`` copies.
 _DetailBody = tuple[object, str, str]
 _DETAIL_RICH_FORMAT_MAX_CHARS = 2048
+
+#: Bytes of a body sampled for the off-pump Pygments language guess.
+_CODE_GUESS_SAMPLE_BYTES = 4096
+
+#: Minimum Pygments ``analyse_text`` confidence to syntax-highlight a body as
+#: code. Real code scores near 1.0; prose scores ~0.01, so this rejects prose.
+_CODE_GUESS_MIN_CONFIDENCE = 0.3
 _RichSyntaxType = _RichSyntax
 
 
@@ -1817,7 +1825,11 @@ class HudLayout(LayoutScreen):
         # cursor navigation stays synchronous. ``detect_content_format`` is a
         # bounded scan over <=64 KiB (pump-safe).
         fmt = detect_content_format(body_truncated)
-        inline_ok = fmt == "text" and len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
+        inline_ok = (
+            fmt == "text"
+            and len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
+            and not looks_like_code(body_truncated)
+        )
         if inline_ok:
             self._present_detail(
                 record,
@@ -1924,6 +1936,7 @@ class HudLayout(LayoutScreen):
             filter_terms=filter_terms,
             syntax_theme=syntax_theme,
             render_width=render_width,
+            guess_code=True,
         )
         self.app.call_from_thread(
             functools.partial(
@@ -2204,6 +2217,7 @@ class HudLayout(LayoutScreen):
         filter_terms: cabc.Sequence[str] | None = None,
         syntax_theme: str = "ansi_dark",
         render_width: int = 80,
+        guess_code: bool = False,
     ) -> _DetailBody:
         """Return ``(renderable, find_source, rendered_plain)`` for ``body_text``.
 
@@ -2231,7 +2245,34 @@ class HudLayout(LayoutScreen):
         )
         fmt = detect_content_format(body_text)
         result: _DetailBody
-        if fmt == "json":
+        # Code takes precedence over the JSON/markdown heuristic: a source file
+        # with a ``# comment`` line would otherwise trip the ATX-heading rule.
+        # The guess is off the pump (only the offload worker sets guess_code).
+        code_body: Text | None = None
+        if guess_code and looks_like_code(body_text):
+            lexer = self._guess_code_lexer(body_text)
+            if lexer is not None:
+                code_body = self._flatten_syntax(
+                    body_text,
+                    render_width=render_width,
+                    lexer=lexer,
+                    theme=syntax_theme,
+                )
+        if code_body is not None:
+            _streaming._apply_bounded_literal_highlights(
+                code_body,
+                code_body.plain,
+                safe_query_terms,
+                case_sensitive=effective_case_sensitive,
+                style=match_styles.search if match_styles else self._match_style("search"),
+            )
+            self._apply_filter_highlight(
+                code_body,
+                match_styles.filter if match_styles else None,
+                terms=filter_terms,
+            )
+            result = (code_body, body_text, code_body.plain)
+        elif fmt == "json":
             formatted = body_text
             if _streaming._json_pretty_print_is_bounded(body_text):
                 with contextlib.suppress(RecursionError, ValueError):
@@ -2314,6 +2355,68 @@ class HudLayout(LayoutScreen):
             )
             result = (highlighted, body_text, body_text)
         return result
+
+    @staticmethod
+    def _guess_code_lexer(body_text: str) -> str | None:
+        """Return a Pygments lexer alias when ``body_text`` is confidently code.
+
+        Runs only in the offload worker: ``guess_lexer`` scans every lexer's
+        ``analyse_text`` (bounded but not pump-cheap). A leading sample drives
+        the guess, and the confidence gate rejects prose (~0.01) while keeping
+        real code (near 1.0). ``None`` means "render as plain text".
+        """
+        from pygments.lexers import guess_lexer
+        from pygments.lexers.special import TextLexer
+        from pygments.util import ClassNotFound
+
+        sample = body_text[:_CODE_GUESS_SAMPLE_BYTES]
+        with contextlib.suppress(ClassNotFound):
+            lexer = guess_lexer(sample)
+            if (
+                not isinstance(lexer, TextLexer)
+                and lexer.aliases
+                and lexer.analyse_text(sample) >= _CODE_GUESS_MIN_CONFIDENCE
+            ):
+                return lexer.aliases[0]
+        return None
+
+    @staticmethod
+    def _flatten_syntax(
+        body_text: str,
+        *,
+        render_width: int,
+        lexer: str,
+        theme: str,
+    ) -> Text:
+        """Render code to a styled ``Text`` via a headless Rich ``Console``.
+
+        Mirrors :meth:`_flatten_markdown` for a ``rich.syntax.Syntax``: the
+        result paints cheaply, stays mouse-selectable, and ``.plain`` yields the
+        visible source. Runs off the pump (offload worker only).
+        """
+        console = _RichConsole(
+            width=max(1, render_width),
+            color_system="truecolor",
+            force_terminal=False,
+            highlight=False,
+            markup=False,
+            emoji=False,
+        )
+        syntax = _RichSyntax(
+            body_text,
+            lexer,
+            theme=theme,
+            word_wrap=True,
+            background_color="default",
+        )
+        styled = Text(no_wrap=False)
+        for line in console.render_lines(syntax, pad=False):
+            for segment in line:
+                if segment.control or not segment.text:
+                    continue
+                styled.append(segment.text, segment.style)
+            styled.append("\n")
+        return styled
 
     @staticmethod
     def _flatten_markdown(
