@@ -111,6 +111,16 @@ build-backend = "hatchling.build"
 # broke every consumer pytest run at startup).
 packages = ["src/agentgrep"]
 
+[tool.uv]
+# Resolve the interpreter from PATH (mise/system), not uv's managed downloads.
+# uv's default `managed` preference selects a free-threaded 3.14 build without
+# opt-in when it is the newest managed patch (astral-sh/uv#16722); orjson (the
+# optional `speedups` accelerator) refuses to build on free-threaded CPython,
+# so a managed 3.14t venv breaks `uv sync --all-extras`. Deferring to PATH lets
+# the committed `.tool-versions` (`python 3.14`, a GIL build) drive uv and mise
+# from one source of truth.
+python-preference = "system"
+
 [tool.uv.exclude-newer-package]
 # git-pull packages release in lockstep with their workspaces, so a
 # fresh release blocking on the 3-day cooldown blocks every
