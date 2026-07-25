@@ -557,6 +557,29 @@ type
 """
 ```
 
+**Classes with fields** — `NamedTuple`, dataclasses — document every field in
+an `Attributes` section:
+
+```python
+class HistoryEntry(t.NamedTuple):
+    """One recalled search query: the raw text, its unix ts, and launch scope.
+
+    Attributes
+    ----------
+    text : str
+        Query text exactly as the user typed it.
+    ts : float
+        Unix timestamp of when the query ran.
+    scope : str
+        Scope the query launched under, or ``""`` when it had none.
+    """
+```
+
+Autodoc renders every field whether or not you describe it, so an
+undocumented `NamedTuple` field ships to the API docs as "Alias for field
+number 0" and a dataclass field ships bare. Document all of them — a class
+with three fields and two documented still ships a stub for the third.
+
 ### Doctests
 
 agentgrep is part library, part CLI/TUI, part MCP server. Most of the
