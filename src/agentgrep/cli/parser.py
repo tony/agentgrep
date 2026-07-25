@@ -209,11 +209,11 @@ def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
         if argument == "--color" and index + 1 < len(argv):
             value = argv[index + 1]
             if value in {"auto", "always", "never"}:
-                return t.cast("ColorMode", value)
+                return value
         if argument.startswith("--color="):
             value = argument.partition("=")[2]
             if value in {"auto", "always", "never"}:
-                return t.cast("ColorMode", value)
+                return value
     return "auto"
 
 
