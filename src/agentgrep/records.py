@@ -218,7 +218,49 @@ EnvelopeFactory = t.Callable[[str, dict[str, object], list[dict[str, object]]], 
 
 
 class SearchRecordPayload(t.TypedDict):
-    """JSON payload for search records."""
+    """JSON payload for search records.
+
+    Mirrors :class:`SearchRecord` on the wire, with paths rewritten to their display form.
+
+    Attributes
+    ----------
+    schema_version : str
+        :data:`SCHEMA_VERSION` stamped on every emitted payload so a reader can tell which
+        wire shape it holds.
+    kind : t.Literal["prompt", "history"]
+        ``"prompt"`` when ``role`` is a user role, ``"history"`` for everything else the
+        transcript holds.
+    agent : AgentName
+        Agent that owns the store this record came from.
+    store : str
+        Runtime store key the record was read from.
+    adapter_id : str
+        Versioned parser identity that produced the record.
+    path : str
+        Display form of the source path, with the user's home abbreviated to ``~``.
+    text : str
+        Message body, and the text term matching ran against.
+    title : str | None
+        Session or conversation title. ``None`` when the store names none.
+    role : str | None
+        Speaker label as the store spelled it, e.g. ``"user"`` or ``"assistant"``, kept
+        uncased. ``None`` when the store records no role.
+    timestamp : str | None
+        ISO 8601 time the message was recorded. ``None`` when the store records none.
+    model : str | None
+        Model credited with the message. ``None`` when the store records none.
+    session_id : str | None
+        Store's identifier for the session. ``None`` when the store records none.
+    conversation_id : str | None
+        Store's identifier for the conversation or thread. ``None`` when the store records
+        none.
+    origin : RecordOriginPayload | None
+        Project the record came from. ``None`` when nothing was recorded, recovered, or
+        left after display rewriting.
+    metadata : dict[str, object]
+        Adapter-specific extras with no normalized field of their own, with path-like
+        legacy origin values rewritten for display.
+    """
 
     schema_version: str
     kind: t.Literal["prompt", "history"]
@@ -238,7 +280,29 @@ class SearchRecordPayload(t.TypedDict):
 
 
 class RecordOriginPayload(t.TypedDict, total=False):
-    """JSON payload for project-origin metadata."""
+    """JSON payload for project-origin metadata.
+
+    Mirrors :class:`RecordOrigin` on the wire. Every key is optional: a field the origin
+    left ``None`` is omitted rather than emitted as null, and an origin with no keys left
+    is emitted as ``None`` instead of an empty object.
+
+    Attributes
+    ----------
+    cwd : str
+        Display form of the working directory the session ran in.
+    repo : str
+        Display form of the repository root the session belonged to.
+    worktree : str
+        Display form of the checkout directory when the session ran in a git worktree.
+    branch : str
+        Branch checked out during the session.
+    remote : str
+        Repository remote normalized to a scheme/host/path URL. A remote carrying
+        credentials or an unrecognized scheme is omitted rather than rewritten.
+    cwd_hash : str
+        Digest a store derived from the working-directory path and used as a directory
+        name.
+    """
 
     cwd: str
     repo: str
@@ -249,7 +313,30 @@ class RecordOriginPayload(t.TypedDict, total=False):
 
 
 class FindRecordPayload(t.TypedDict):
-    """JSON payload for find records."""
+    """JSON payload for find records.
+
+    Mirrors :class:`FindRecord` on the wire, with paths rewritten to their display form.
+
+    Attributes
+    ----------
+    schema_version : str
+        :data:`SCHEMA_VERSION` stamped on every emitted payload so a reader can tell which
+        wire shape it holds.
+    kind : t.Literal["find"]
+        Constant tag marking a discovered source rather than a message.
+    agent : AgentName
+        Agent that owns the store this source belongs to.
+    store : str
+        Runtime store key the source belongs to.
+    adapter_id : str
+        Versioned parser identity that would read this source.
+    path : str
+        Display form of the discovered path, with the user's home abbreviated to ``~``.
+    path_kind : PathKind
+        Filesystem entry the records live in.
+    metadata : dict[str, object]
+        Discovery extras, such as the source's parse format.
+    """
 
     schema_version: str
     kind: t.Literal["find"]
@@ -262,7 +349,40 @@ class FindRecordPayload(t.TypedDict):
 
 
 class SourceHandlePayload(t.TypedDict):
-    """JSON payload for discovered sources."""
+    """JSON payload for discovered sources.
+
+    Mirrors the wire-facing part of :class:`SourceHandle`; ``origin_summary`` stays
+    internal to the engine and is not emitted.
+
+    Attributes
+    ----------
+    schema_version : str
+        :data:`SCHEMA_VERSION` stamped on every emitted payload so a reader can tell which
+        wire shape it holds.
+    agent : AgentName
+        Agent that owns the store this source belongs to.
+    store : str
+        Runtime store key, e.g. ``"claude.projects"``.
+    adapter_id : str
+        Versioned parser identity for this source, e.g. ``"claude.projects_jsonl.v1"``.
+    path : str
+        Display form of the source path, with the user's home abbreviated to ``~``.
+    path_kind : PathKind
+        Filesystem entry the records live in.
+    source_kind : SourceKind
+        Parse format the adapter applies to the bytes.
+    coverage : StoreCoverage
+        Runtime search policy for the store, deciding which scopes open this source.
+    version_detection : SourceVersionDetectionPayload | None
+        Detected app/data version. ``None`` when discovery skipped detection or learned
+        nothing.
+    search_root : str | None
+        Display form of the directory the glob that found ``path`` was walked under, with
+        a trailing separator. ``None`` for sources named by an exact filename.
+    mtime_ns : int
+        Modification time in nanoseconds, used for recency ordering and as a timestamp of
+        last resort for stores that record none.
+    """
 
     schema_version: str
     agent: AgentName
@@ -278,7 +398,23 @@ class SourceHandlePayload(t.TypedDict):
 
 
 class EnvelopePayload(t.TypedDict):
-    """JSON payload for top-level envelopes."""
+    """JSON payload for top-level envelopes.
+
+    The outermost object the ``--json`` output mode writes: one envelope wrapping the
+    record payloads a single command produced.
+
+    Attributes
+    ----------
+    schema_version : str
+        :data:`SCHEMA_VERSION` stamped on every emitted payload so a reader can tell which
+        wire shape it holds.
+    command : str
+        Subcommand that produced the results, e.g. ``"search"`` or ``"find"``.
+    query : dict[str, object]
+        Request the results answer, echoed back so a stored envelope stays self-describing.
+    results : list[dict[str, object]]
+        Serialized record payloads in emit order. Empty when nothing matched.
+    """
 
     schema_version: str
     command: str
@@ -287,7 +423,27 @@ class EnvelopePayload(t.TypedDict):
 
 
 class SourceVersionDetectionPayload(t.TypedDict):
-    """JSON payload for source version detection metadata."""
+    """JSON payload for source version detection metadata.
+
+    Mirrors :class:`SourceVersionDetection` on the wire.
+
+    Attributes
+    ----------
+    app_version : str | None
+        Version of the agent that wrote the source. ``None`` when the detection pinned a
+        data shape but learned no application version.
+    data_version : str | None
+        Version of the on-disk record shape the adapter parses. ``None`` when the shape
+        was not pinned.
+    strategy : VersionDetectionStrategy
+        How the version was learned — a version probe, metadata embedded in the source,
+        inference from the record shape, or the catalogue's observed version.
+    confidence : VersionDetectionConfidence
+        How much weight the detection carries.
+    evidence : str
+        Short note naming what was inspected, such as the object keys that decided a
+        shape.
+    """
 
     app_version: str | None
     data_version: str | None
