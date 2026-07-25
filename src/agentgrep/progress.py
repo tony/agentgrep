@@ -622,7 +622,34 @@ def format_source_progress_detail(records: int, matches: int) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class ProgressSnapshot:
-    """Immutable view of search-progress state for one render pass."""
+    """Immutable view of search-progress state for one render pass.
+
+    Attributes
+    ----------
+    query_label : str
+        Search terms joined for display, or ``"all records"`` when the query has no terms.
+    phase : str
+        Stage the search is in, such as ``"discovering"``, ``"planning"``, or
+        ``"scanning"``.
+    current : int | None
+        Numerator of the ``N/M sources`` counter — sources kept while planning, or the
+        one-based index of the source being scanned. ``None`` when the phase has no
+        position to report.
+    total : int | None
+        Denominator of the ``N/M sources`` counter: sources this phase covers. ``None``
+        before discovery reports a count.
+    detail : str | None
+        Free-form suffix for the phase, such as the file name being scanned or the record
+        and match counts inside it. ``None`` when there is nothing to add; the formatter
+        drops it first when the line must fit a narrow terminal.
+    matches : int
+        Accepted results so far across the whole search.
+    elapsed : float
+        Seconds since the search started, on the monotonic clock.
+    source_records_seen : int | None
+        Records read from the source currently being scanned, reset at each source
+        boundary. ``None`` outside a source scan and on reporters that do not track it.
+    """
 
     query_label: str
     phase: str
@@ -736,7 +763,17 @@ def _report_source_progress(
 
 @dataclasses.dataclass(frozen=True)
 class StreamingRecordsBatch:
-    """Batch of newly deduped records emitted by :meth:`StreamingSearchProgress.flush`."""
+    """Batch of newly deduped records emitted by :meth:`StreamingSearchProgress.flush`.
+
+    Attributes
+    ----------
+    records : tuple[SearchRecord, ...]
+        Records buffered since the previous flush, in the order the engine accepted them.
+        Never empty — an empty buffer emits no batch at all.
+    total : int
+        Accepted matches across the whole search at flush time, which runs ahead of the
+        length of ``records``.
+    """
 
     records: tuple[SearchRecord, ...]
     total: int
@@ -744,7 +781,23 @@ class StreamingRecordsBatch:
 
 @dataclasses.dataclass(frozen=True)
 class StreamingSearchFinished:
-    """Terminal event emitted by :class:`StreamingSearchProgress` when the search ends."""
+    """Terminal event emitted by :class:`StreamingSearchProgress` when the search ends.
+
+    Attributes
+    ----------
+    outcome : t.Literal["complete", "interrupted", "error"]
+        How the search ended: it exhausted its sources, it was stopped early by an
+        answer-now or an interrupt, or the worker raised.
+    total : int
+        Result count the search finished with. Zero on the ``"error"`` path, where no
+        count was reached.
+    elapsed : float
+        Seconds from search start to this event, on the monotonic clock. Zero on the
+        ``"error"`` path, where no start time was reached.
+    error : BaseException | None
+        Exception that ended the search when ``outcome`` is ``"error"``; ``None``
+        otherwise.
+    """
 
     outcome: t.Literal["complete", "interrupted", "error"]
     total: int
