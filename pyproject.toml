@@ -337,6 +337,17 @@ doctest_optionflags = [
   "ELLIPSIS",
   "NORMALIZE_WHITESPACE",
 ]
+# Python silences DeprecationWarning outside `__main__` by default, which is
+# how an upstream deprecation reaches end users before it reaches the suite.
+# Escalating makes the deprecation the suite's problem on the release that
+# introduces it, not on the release that removes the feature. The suite is
+# clean under this setting; when an upstream deprecation does fire, add a
+# narrow `ignore::DeprecationWarning:<module>` entry with the migration
+# tracked, rather than relaxing the blanket rule.
+filterwarnings = [
+  "error::DeprecationWarning",
+  "error::PendingDeprecationWarning",
+]
 markers = [
   "documentation: documentation contracts and executable examples",
   "mcp: MCP protocol, schema, and client integration coverage",
