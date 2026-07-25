@@ -125,7 +125,34 @@ neither and therefore joins no optimization set).
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class QueryRequest:
-    """Immutable frontend-neutral search intent owned by the planner."""
+    """Immutable frontend-neutral search intent owned by the planner.
+
+    Attributes
+    ----------
+    terms : tuple[str, ...]
+        Text needles a record must match. Empty admits every record the remaining filters
+        allow, which is the metadata-only shape of the plan.
+    scope : SearchScope
+        Which stores the plan opens: prompt history only, conversation transcripts, or
+        all of them.
+    agents : tuple[AgentName, ...]
+        Agents whose stores are discovered. An empty tuple discovers nothing.
+    limit : int | None
+        Result ceiling, which also lets bounded sources stop scanning early. ``None``
+        runs the search to exhaustion.
+    dedupe : bool
+        Whether records that collapse to one identity are folded together.
+    any_term : bool
+        Whether one matching term suffices. ``False`` requires every term to match.
+    regex : bool
+        Whether each term is a regular expression rather than a literal substring.
+    case_sensitive : bool
+        Whether matching respects case. ``False`` folds case on both sides.
+    has_compiled_source_predicate : bool
+        Whether the query carried a source-level predicate from the query compiler, so
+        candidates can be pruned before any file is opened. Held as a flag rather than
+        the closure itself so the request stays comparable and free of callables.
+    """
 
     terms: tuple[str, ...]
     scope: SearchScope
@@ -140,7 +167,29 @@ class QueryRequest:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AdapterCapability:
-    """Declared cheap operations for one adapter family."""
+    """Declared cheap operations for one adapter family.
+
+    Attributes
+    ----------
+    adapter_id : str
+        Versioned parser identity the capabilities describe, e.g.
+        ``"codex.sessions_jsonl.v1"``.
+    metadata_only_discovery : bool
+        Whether sources can be enumerated from discovery metadata alone, with no read of
+        the source itself.
+    source_predicate_pushdown : bool
+        Whether a compiled source-level predicate can prune this adapter's sources before
+        they are opened.
+    jsonl_raw_text_prefilter : bool
+        Whether raw JSONL lines can be tested for literal terms before JSON decode, as
+        :data:`RAW_TEXT_PREFILTER_ADAPTERS` records per adapter id.
+    sqlite_predicate_pushdown : bool
+        Whether predicates can be pushed into the SQL the adapter issues instead of
+        filtering rows after they are read.
+    streaming_records : bool
+        Whether the parser yields records incrementally instead of materializing the
+        whole source first.
+    """
 
     adapter_id: str
     metadata_only_discovery: bool = True
@@ -152,7 +201,27 @@ class AdapterCapability:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LogicalSearchPlan:
-    """Normalized search work before concrete source handles exist."""
+    """Normalized search work before concrete source handles exist.
+
+    Attributes
+    ----------
+    request : QueryRequest
+        Frontend-neutral intent this plan normalizes.
+    initial_store_roles : frozenset[StoreRole] | None
+        Store roles the first discovery pass opens. ``None`` at ``all`` scope, where every
+        role is admitted.
+    expects_prompt_fallback : bool
+        Whether prompt scope may need a second discovery pass over conversation stores.
+        Agents that ship no prompt-history store contribute their prompts through their
+        transcripts instead.
+    source_predicate_available : bool
+        Whether the compiled query supplies a source-level predicate, so candidates can be
+        dropped before any file is opened.
+    text_prefilter_required : bool
+        Whether the query carries terms, so a root grep or raw-line prefilter can decide
+        source admission. ``False`` for metadata-only searches, which visit every scoped
+        source.
+    """
 
     request: QueryRequest
     initial_store_roles: frozenset[StoreRole] | None
@@ -163,7 +232,20 @@ class LogicalSearchPlan:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class PlannerDecision:
-    """One privacy-safe planning decision summary."""
+    """One privacy-safe planning decision summary.
+
+    Attributes
+    ----------
+    name : str
+        Decision label, e.g. ``"scope_prune"``, ``"root_prefilter"``, or
+        ``"candidate_order"``.
+    source_count : int
+        How many sources the decision left in play, or how many it admitted when the
+        decision only re-admits a group.
+    detail : str
+        Short reason or mechanism behind the decision — the scope name, ``"grep_tool"``,
+        ``"sqlite_source"``. Never a path or prompt text, so profiles stay shareable.
+    """
 
     name: str
     source_count: int
@@ -172,7 +254,15 @@ class PlannerDecision:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LimitPolicy:
-    """Scheduler policy for deciding whether remaining source tasks can be skipped."""
+    """Scheduler policy for deciding whether remaining source tasks can be skipped.
+
+    Attributes
+    ----------
+    mode : LimitPolicyMode
+        Skip rule the scheduler applies. ``"source_order_frontier"`` skips queued
+        lower-priority tasks once a limited query's frontier holds enough accepted
+        candidates, which is safe because tasks are queued newest-source-first.
+    """
 
     mode: LimitPolicyMode = "source_order_frontier"
 
@@ -192,7 +282,44 @@ class LimitPolicy:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceTask:
-    """One executable source scan in a physical search plan."""
+    """One executable source scan in a physical search plan.
+
+    Attributes
+    ----------
+    source : SourceHandle
+        Discovered source this task scans.
+    strategy : SourceStrategy
+        Cheapest read the planner proved safe for this source, from a metadata-only visit
+        through raw-line-prefiltered bounded reverse scans to a full scan.
+    record_order : SourceRecordOrder
+        Order records arrive in. ``"newest_first"`` for the bounded reverse strategies;
+        ``"unknown"`` when the source is read front to back.
+    limit_behavior : SourceLimitBehavior
+        ``"bounded_source"`` when the scan may stop once the query limit is satisfied,
+        ``"drain_source"`` when it must read the whole source before results are ordered.
+    can_stream_records : bool
+        Whether records reach the scan incrementally rather than after the whole source
+        is parsed.
+    restore_order_key : tuple[int, str]
+        Newest-first sort key for the source — negated ``mtime_ns`` paired with the path
+        string — so plan order can be reconstructed after concurrent execution finishes
+        tasks out of order.
+    cost_hint : int
+        Relative scan cost for scheduling: lowest for a metadata-only visit, highest for a
+        full scan, with the prefiltered strategies in between.
+    source_group : str
+        ``agent:store:adapter_id`` label that aggregates scheduler and profiler counters
+        without exposing a path.
+    can_yield_batches : bool
+        Whether the strategy can emit partial batches before the source is exhausted.
+        Only bounded sources can, since a drained source orders its records at the end.
+    supports_cancellation : bool
+        Whether the scan polls the control handle between records, so an answer-now
+        request stops it mid-source.
+    limit_policy : LimitPolicy
+        Rule deciding whether queued lower-priority tasks can be skipped once the limit is
+        satisfied.
+    """
 
     source: SourceHandle
     strategy: SourceStrategy
@@ -209,7 +336,17 @@ class SourceTask:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceAuthorityPlan:
-    """Selected source families that may need candidate-level resolution."""
+    """Selected source families that may need candidate-level resolution.
+
+    Attributes
+    ----------
+    codex_rollout_selected : bool
+        Whether the plan selected any ``codex.sessions`` rollout transcript, the canonical
+        copy of a Codex prompt.
+    codex_state_selected : bool
+        Whether the plan selected the ``codex.state_db`` index, which can repeat a prompt
+        that a rollout transcript also holds.
+    """
 
     codex_rollout_selected: bool = False
     codex_state_selected: bool = False
@@ -228,7 +365,23 @@ class SourceAuthorityPlan:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class PhysicalSearchPlan:
-    """Executable source-task plan consumed by search drivers."""
+    """Executable source-task plan consumed by search drivers.
+
+    Attributes
+    ----------
+    logical : LogicalSearchPlan
+        Normalized intent the tasks were derived from.
+    tasks : tuple[SourceTask, ...]
+        Executable source scans in newest-source-first order, which is also the priority
+        order the scheduler drains them in.
+    decisions : tuple[PlannerDecision, ...]
+        Planning decisions in the order they applied, for profiler spans and explain
+        output. Empty for plans built directly from a source list rather than by the
+        planner.
+    source_authority : SourceAuthorityPlan
+        Which Codex source families the plan selected, telling execution whether matched
+        candidates need cross-store resolution before dedupe.
+    """
 
     logical: LogicalSearchPlan
     tasks: tuple[SourceTask, ...]
