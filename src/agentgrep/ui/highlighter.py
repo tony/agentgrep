@@ -19,7 +19,7 @@ import typing as t
 
 from rich.highlighter import Highlighter
 
-from agentgrep._text import highlight_query_spans
+from agentgrep._text import highlight_markup_spans, highlight_query_spans
 
 if t.TYPE_CHECKING:
     from rich.text import Text
@@ -127,3 +127,60 @@ class QueryHighlighter(Highlighter):
             style = self._role_styles.get(role)
             if style is not None:
                 text.stylize(style, start, end)
+
+
+# Structural-markup role -> concrete Rich style. The dark map uses ANSI-256
+# ``color(N)`` indices so tags stay legible on the transparent ansi theme
+# (matching :data:`_DARK_ROLE_STYLES`): cyan tag name, dim-grey delimiters,
+# amber attribute name, green attribute value, dim italic comment. The ``text``
+# role is intentionally absent — prose runs are never styled.
+_MARKUP_DARK_ROLE_STYLES: dict[str, str] = {
+    "tag-name": "bold color(79)",
+    "tag-delim": "color(245)",
+    "attr-name": "color(215)",
+    "attr-value": "color(114)",
+    "comment": "italic color(245)",
+}
+_MARKUP_LIGHT_ROLE_STYLES: dict[str, str] = {
+    "tag-name": "bold #007f7f",
+    "tag-delim": "#606060",
+    "attr-name": "#502000",
+    "attr-value": "#006000",
+    "comment": "italic #606060",
+}
+
+
+class MarkupHighlighter(Highlighter):
+    """Highlight XML/markup structural tags in the detail pane's body ``Text``.
+
+    Mirrors :class:`QueryHighlighter`: the shared grammar is lexed once by
+    :func:`agentgrep.highlight_markup_spans`, and concrete Rich styles are
+    applied by offset because Rich highlighters cannot resolve Textual theme
+    variables. Only structural roles are styled; the mostly-prose ``text`` runs
+    are left untouched, so :attr:`rich.text.Text.plain` never changes.
+    """
+
+    def __init__(self, *, dark: bool = True) -> None:
+        """Initialize the highlighter for a dark or light canvas.
+
+        Parameters
+        ----------
+        dark : bool
+            Whether to select the dark-canvas markup palette.
+        """
+        self._role_styles = _MARKUP_DARK_ROLE_STYLES if dark else _MARKUP_LIGHT_ROLE_STYLES
+
+    def highlight(self, text: Text) -> None:
+        """Apply structural-markup styles to ``text`` in place by offset.
+
+        Parameters
+        ----------
+        text : rich.text.Text
+            The detail body; only tag/attribute/comment spans are stylized, so
+            ``text.plain`` is preserved byte for byte.
+        """
+        plain = text.plain
+        for start, role, token in highlight_markup_spans(plain):
+            style = self._role_styles.get(role)
+            if style is not None:
+                text.stylize(style, start, start + len(token))

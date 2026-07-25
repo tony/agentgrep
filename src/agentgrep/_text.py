@@ -9,6 +9,7 @@ module.
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import json
 import os
@@ -36,6 +37,8 @@ __all__ = [
     "FIND_DESCRIPTION",
     "GREP_DESCRIPTION",
     "INLINE_CODE_RE",
+    "MARKUP_HIGHLIGHT_ROLES",
+    "MARKUP_TOKEN_RE",
     "QUERY_BOOLEAN_KEYWORDS",
     "QUERY_FIELD_TOKEN_RE",
     "QUERY_HIGHLIGHT_ROLES",
@@ -51,6 +54,7 @@ __all__ = [
     "find_first_match_line",
     "format_compact_path",
     "format_display_path",
+    "highlight_markup_spans",
     "highlight_matches",
     "highlight_query_spans",
     "should_enable_color",
@@ -162,6 +166,119 @@ def highlight_query_spans(query: str) -> list[tuple[int, str, str]]:
         else:
             role = _QUERY_TOKEN_GROUP_ROLES.get(group, "value")
         spans.append((match.start(), role, text))
+    return spans
+
+
+# XML/markup structural lexer: one pass over a body that
+# :func:`looks_like_markup` has already classified as tag-shaped. Prompt bodies
+# from agent stores are mostly prose with sparse structural tags
+# (``<EPHEMERAL_MESSAGE>``, ``<bash_command_reminder>``, closers). This mirrors
+# the query-language lexer (:func:`highlight_query_spans`) exactly: a shared
+# grammar lexed once, each frontend mapping the role strings to its own styling.
+# Order matters (longest / most specific alternatives first). Delimiters carry
+# their own tokens; a tag ``NAME`` is anchored by a lookbehind on ``<`` / ``</``
+# so a bare word in prose can never be mistaken for one. ``.`` under DOTALL is
+# the terminal catch-all, so the spans cover the body end to end.
+MARKUP_TOKEN_RE = re.compile(
+    r"""
+      (?P<COMMENT><!--.*?-->)
+    | (?P<CLOSEDELIM></)
+    | (?P<SELFCLOSE>/>)
+    | (?P<OPENDELIM><(?=[A-Za-z/!]))
+    | (?P<CLOSE>>)
+    | (?P<NAME>(?<=<)[A-Za-z][\w:.-]*|(?<=</)[A-Za-z][\w:.-]*)
+    | (?P<WS>\s+)
+    | (?P<ATTRVALUE>"[^"]*"|'[^']*')
+    | (?P<ATTRNAME>[A-Za-z_:][\w:.-]*(?=\s*=))
+    | (?P<EQ>=)
+    | (?P<TEXT>[^<>]+|.)
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+# Semantic roles emitted by :func:`highlight_markup_spans`. Like the query
+# roles, each consumer maps these strings to its own styling; ``text`` is the
+# unstyled default a highlighter skips.
+MARKUP_HIGHLIGHT_ROLES: frozenset[str] = frozenset(
+    {
+        "tag-delim",
+        "tag-name",
+        "attr-name",
+        "attr-value",
+        "comment",
+        "text",
+    },
+)
+# MARKUP_TOKEN_RE group name -> semantic role. Everything not a tag delimiter,
+# name, attribute, or comment is prose ``text``.
+_MARKUP_TOKEN_GROUP_ROLES: dict[str, str] = {
+    "COMMENT": "comment",
+    "CLOSEDELIM": "tag-delim",
+    "SELFCLOSE": "tag-delim",
+    "OPENDELIM": "tag-delim",
+    "CLOSE": "tag-delim",
+    "NAME": "tag-name",
+    "WS": "text",
+    "ATTRVALUE": "attr-value",
+    "ATTRNAME": "attr-name",
+    "EQ": "text",
+    "TEXT": "text",
+}
+
+
+def highlight_markup_spans(text: str) -> list[tuple[int, str, str]]:
+    """Lex a markup-shaped body into contiguous ``(start, role, text)`` spans.
+
+    The single source of truth for structural-tag highlighting, mirroring
+    :func:`highlight_query_spans`. The returned spans cover ``text`` end to end
+    (including prose ``text`` runs), in source order, so a consumer can rebuild
+    the string or stylize by offset. ``role`` is one of
+    :data:`MARKUP_HIGHLIGHT_ROLES`.
+
+    This is a shape-only lexer: it does not validate nesting. Callers gate on
+    :func:`looks_like_markup` first so a stray ``<`` in prose or code
+    (``List<int>``, ``a < b``) is never styled.
+
+    The lexer is tag-context aware: ``attr-name`` / ``attr-value`` roles are
+    emitted only between an open ``<`` delimiter and its closing ``>`` (or
+    ``/>``). A prose ``key = value`` or a quoted phrase outside a tag stays
+    ``text`` — the token grammar alone would otherwise mistake it for an
+    attribute inside a body that has already passed the markup gate.
+
+    Parameters
+    ----------
+    text : str
+        The body to lex.
+
+    Returns
+    -------
+    list[tuple[int, str, str]]
+        ``(start_offset, role, text)`` spans in source order.
+
+    Examples
+    --------
+    >>> highlight_markup_spans("<a>")
+    [(0, 'tag-delim', '<'), (1, 'tag-name', 'a'), (2, 'tag-delim', '>')]
+    >>> {role for _, role, _ in highlight_markup_spans("a < b")}
+    {'text'}
+    >>> {role for _, role, _ in highlight_markup_spans("key = value")}
+    {'text'}
+    >>> sorted({role for _, role, _ in highlight_markup_spans('<t k="v">')})
+    ['attr-name', 'attr-value', 'tag-delim', 'tag-name', 'text']
+    """
+    spans: list[tuple[int, str, str]] = []
+    in_tag = False
+    for match in MARKUP_TOKEN_RE.finditer(text):
+        group = match.lastgroup or "TEXT"
+        role = _MARKUP_TOKEN_GROUP_ROLES.get(group, "text")
+        if group in ("OPENDELIM", "CLOSEDELIM"):
+            in_tag = True
+        elif group in ("CLOSE", "SELFCLOSE"):
+            in_tag = False
+        elif role in ("attr-name", "attr-value") and not in_tag:
+            # A tag-shaped token in prose (``key = value``, a quoted phrase)
+            # outside any ``<...>`` is not an attribute.
+            role = "text"
+        spans.append((match.start(), role, match.group()))
     return spans
 
 
@@ -608,6 +725,25 @@ ContentFormat = t.Literal["json", "markdown", "text"]
 """Detected body format for detail-pane rendering — see :func:`detect_content_format`."""
 
 
+#: Structural markdown signals; any match routes a body to markdown rendering.
+#: Weak/incidental markers (a single ``- `` line, ``2 ** 3``, a ``#hashtag``)
+#: are intentionally excluded so a plain message keeps its literal line breaks
+#: and match highlighting (see :func:`detect_content_format`).
+_MARKDOWN_SIGNALS = re.compile(
+    r"""
+      ^```                                     # fenced code block
+    | ^\#{1,6}\ \S                             # ATX heading
+    | \*\*[^\s*][^*\n]*\*\*                     # **bold**
+    | ^[ ]*>[ \t]\S                            # blockquote
+    | \[[^\]\n]+\]\([^)\n]+\)                   # [link](url)
+    | ^[ \t]*[-*+]\ \S[^\n]*\n[ \t]*[-*+]\ \S   # two-plus bullet list items
+    | ^[ \t]*\d+\.\ \S[^\n]*\n[ \t]*\d+\.\ \S   # two-plus numbered list items
+    | ^[ ]*\|.+\|[^\n]*\n[ ]*\|?[\s:|-]*-{2,}   # pipe table (row + separator)
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
+
+
 def detect_content_format(text: str) -> ContentFormat:
     r"""Sniff the format of a record body for syntax-aware rendering.
 
@@ -618,10 +754,13 @@ def detect_content_format(text: str) -> ContentFormat:
     (``.jsonl`` / ``.sqlite``) while ``record.text`` is an extracted
     chat-message payload — the only reliable signal is the body itself.
 
-    The markdown heuristic is intentionally false-negative-biased: a plain
-    chat message that incidentally starts with ``- `` should not lose its
-    match highlighting to a misfire. Only fenced code blocks (triple
-    backtick) or ATX headings at the start of a line trip markdown mode.
+    Markdown mode trips on a *structural* signal — a fenced code block, an
+    ATX heading, ``**bold**``, a blockquote, a ``[link](url)``, a two-plus
+    item bullet or numbered list, or a pipe table — because those imply the
+    author wrote markdown (and reflowing the body is then expected). Weak,
+    incidental markers are deliberately ignored: a single ``- `` line, a lone
+    ``*``/``_``, ``2 ** 3``, or a ``#hashtag`` stay ``"text"`` so a plain
+    message keeps its literal line breaks and match highlighting.
 
     Parameters
     ----------
@@ -640,6 +779,8 @@ def detect_content_format(text: str) -> ContentFormat:
     'json'
     >>> detect_content_format("# Heading\\n\\nbody")
     'markdown'
+    >>> detect_content_format("**bold** section header\\n\\nbody")
+    'markdown'
     >>> detect_content_format("plain message body")
     'text'
     >>> detect_content_format("- not really markdown")
@@ -655,11 +796,84 @@ def detect_content_format(text: str) -> ContentFormat:
             pass
         else:
             return "json"
-    if re.search(r"^```", text, re.MULTILINE):
-        return "markdown"
-    if re.search(r"^#{1,6} \S", text, re.MULTILINE):
+    if _MARKDOWN_SIGNALS.search(text):
         return "markdown"
     return "text"
+
+
+#: Structural signals that a body might be source code. A positive result only
+#: routes the body to the detail worker, where Pygments confirms the language
+#: off the message pump; it is deliberately inclusive of code and quiet on prose.
+_CODE_SIGNAL = re.compile(
+    r"""
+      ^[ \t]*(?:import|from)\ [\w.]+                      # import x / from x
+    | ^[ \t]*(?:def|class|func|fn|struct|enum|trait|impl)\ +\w  # def name / class name
+    | ^[ \t]*(?:function|const|let|var)\ +\w+\s*[=(]       # function foo( / const x =
+    | ^[ \t]*(?:public|private|protected|static)\ +\w     # java-ish modifiers
+    | ^[ \t]*(?:package|namespace|module|use)\ +[\w:.]+   # package/module decl
+    | ^\s*\#(?:include|define|pragma)\b                   # C preprocessor
+    | [{};]\ *$                                            # line ends in brace/semicolon
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
+
+
+def looks_like_code(text: str) -> bool:
+    r"""Cheaply guess whether ``text`` might be source code (routing only).
+
+    A pump-safe pre-filter: a positive result routes the body to the detail
+    worker, where :mod:`pygments` confirms the language off the pump and a
+    confidence gate rejects prose. It errs toward routing (a false positive
+    only costs one off-pump guess) while leaving plain messages on the
+    synchronous inline path.
+
+    Examples
+    --------
+    >>> looks_like_code("import os\ndef main():\n    return 0\n")
+    True
+    >>> looks_like_code("how do I roll back the staging deploy")
+    False
+    """
+    return bool(text) and _CODE_SIGNAL.search(text) is not None
+
+
+#: Structural tag shapes for the :func:`looks_like_markup` gate. An open tag is
+#: ``<name ...>`` (attributes optional); a close tag is ``</name>``; a
+#: self-closing tag is ``<name .../>``. Names anchor on a letter so a bare ``<``
+#: in prose or a ``List<int>`` generic is not a candidate.
+_MARKUP_OPEN_TAG_RE = re.compile(r"<([A-Za-z][\w:.-]*)(?:\s[^<>]*?)?>")
+_MARKUP_CLOSE_TAG_RE = re.compile(r"</([A-Za-z][\w:.-]*)\s*>")
+_MARKUP_SELFCLOSE_TAG_RE = re.compile(r"<([A-Za-z][\w:.-]*)(?:\s[^<>]*?)?/>")
+
+
+def looks_like_markup(text: str) -> bool:
+    r"""Cheaply gate whether ``text`` is XML/markup-shaped (styling only).
+
+    A structural gate, not a per-``<`` test: a body qualifies only when at least
+    two *paired* structural tags are present — a matched open/close pair, two
+    ``</name>`` closers, or two self-closing tags. This keeps generics and
+    comparisons out (``List<int>``, ``Vec<T>``, ``a < b``, ``x > y`` all have a
+    ``<`` or ``>`` but never a matched pair), so a mostly-prose body with sparse
+    real tags is styled while ordinary prose is left plain. A positive result
+    routes structural spans (:func:`highlight_markup_spans`) onto the body; it
+    never changes the text.
+
+    Examples
+    --------
+    >>> looks_like_markup("<note>hi</note>\n<warn>x</warn>")
+    True
+    >>> looks_like_markup("The parser builds a List<int> when a < b and x > y.")
+    False
+    """
+    if not text or "<" not in text:
+        return False
+    opens = collections.Counter(m.group(1) for m in _MARKUP_OPEN_TAG_RE.finditer(text))
+    closes = collections.Counter(m.group(1) for m in _MARKUP_CLOSE_TAG_RE.finditer(text))
+    self_closing = sum(1 for _ in _MARKUP_SELFCLOSE_TAG_RE.finditer(text))
+    paired = self_closing
+    for name, close_count in closes.items():
+        paired += 2 * min(opens.get(name, 0), close_count)
+    return paired >= 2
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

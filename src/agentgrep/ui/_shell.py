@@ -23,7 +23,7 @@ from textual.app import App
 from textual.binding import BindingType
 from textual.worker import Worker, WorkerState
 
-from agentgrep.ui import _runtime, preferences, registry, theme as ui_theme
+from agentgrep.ui import _runtime, keymaps, preferences, registry, theme as ui_theme
 from agentgrep.ui.widgets.theme_picker import ThemePicker
 
 if t.TYPE_CHECKING:
@@ -133,6 +133,10 @@ class ExplorerApp(App[None]):
         self._ctx = ctx
         self._composition = composition
         self._theme_config_path = config_path or preferences.theme_config_path(home=ctx.home)
+        # Read the optional user keymap override now -- construction runs off
+        # the message pump, so the bounded file read is safe here; ``on_mount``
+        # applies it via ``set_keymap`` (an in-memory dict, no I/O).
+        self._keymap_override = keymaps.load_keymap_override(home=ctx.home)
         self._needs_theme_setup = offer_theme_setup and valid_selection is None
         if self._needs_theme_setup:
             self.add_mode(_EXPLORER_MODE, self._build_layout_screen)
@@ -165,8 +169,9 @@ class ExplorerApp(App[None]):
 
     @_runtime.pump_only
     def on_mount(self) -> None:
-        """Bind pump guards and start the optional watchdog/audit hooks."""
+        """Bind pump guards, apply the user keymap, start watchdog/audit hooks."""
         _runtime.bind_pump_thread()
+        self.set_keymap(self._keymap_override)
         self.theme_changed_signal.subscribe(self, self._on_theme_changed)
         if _runtime.watchdog_enabled():
             self.set_interval(_runtime.HEARTBEAT_INTERVAL, _runtime.record_heartbeat)

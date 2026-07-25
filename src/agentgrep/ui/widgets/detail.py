@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import typing as t
 
+from textual import events
+from textual.binding import Binding, BindingType
 from textual.containers import VerticalScroll
 
 from agentgrep.ui.format import scroll_percent
@@ -28,23 +30,57 @@ class DetailScroll(VerticalScroll, can_focus=True):
     in the focus chain.
     """
 
-    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
-        ("k", "scroll_up", "Up"),
-        ("j", "scroll_down", "Down"),
-        ("h", "focus_results", "Results"),
-        ("left", "focus_results", ""),
-        ("g", "scroll_home", "Top"),
-        ("G", "scroll_end", "Bottom"),
-        ("ctrl+d", "scroll_half_down", "½ Down"),
-        ("ctrl+u", "scroll_half_up", "½ Up"),
-        ("/", "open_find", "Find"),
-        ("ctrl+f", "open_find", "Find"),
+    # Remappable scroll/focus/find/toggle/copy bindings carry ``id=``s so a
+    # user keymap file can rebind their keys by id. The authored keys bind the
+    # arrow, vim (hjkl), and emacs (ctrl+n/p) motions all at once. ``ctrl+b`` ->
+    # ``page_up`` stays id-less. The detail pane consumes no typed text, so the
+    # bare-letter copy chords (``y`` / ``Y``) are safe.
+    BINDINGS: t.ClassVar[list[BindingType]] = [
+        Binding("up,k,ctrl+p", "scroll_up", "Up", id="detail.scroll_up"),
+        Binding("down,j,ctrl+n", "scroll_down", "Down", id="detail.scroll_down"),
+        Binding("left,h", "focus_results", "Results", id="detail.focus_results"),
+        Binding("home,g", "scroll_home", "Top", id="detail.scroll_home"),
+        Binding("end,G", "scroll_end", "Bottom", id="detail.scroll_end"),
+        Binding("ctrl+d", "scroll_half_down", "½ Down", id="detail.scroll_half_down"),
+        Binding("ctrl+u", "scroll_half_up", "½ Up", id="detail.scroll_half_up"),
+        Binding("slash,ctrl+f", "open_find", "Find", id="detail.open_find"),
         ("ctrl+b", "page_up", "Pg Up"),
+        # Raw <-> rendered toggle: ``alt+r`` (codex precedent) with ``ctrl+e``
+        # as a fallback for terminals that mangle ``alt``.
+        Binding("alt+r,ctrl+e", "toggle_raw", "Raw", id="detail.toggle_raw"),
+        Binding("y", "copy_source", "Copy src", id="detail.copy_source"),
+        Binding("Y", "copy_rendered", "Copy rendered", id="detail.copy_rendered"),
     ]
+
+    def on_key(self, event: events.Key) -> None:
+        """Intercept keys for tmux-style visual select before the scroll bindings.
+
+        ``on_key`` runs on the focused widget as the event bubbles, before the
+        app checks (non-priority) bindings, so consuming the event here (``v``
+        to begin, then the vi motions / ``y`` / ``escape`` while active)
+        preempts the stock ``hjkl`` scroll and ``y`` copy-source bindings
+        without touching them. Outside visual mode the screen returns ``False``
+        and the normal bindings run unchanged.
+        """
+        if t.cast("t.Any", self.screen).handle_detail_visual_key(event):
+            event.stop()
+            event.prevent_default()
 
     def action_open_find(self) -> None:
         """Open the find-in-detail bar (``/`` or ``ctrl+f``); no-op without a record."""
         t.cast("t.Any", self.screen).action_open_detail_find()
+
+    def action_toggle_raw(self) -> None:
+        """Toggle the detail pane between rendered and raw source (``alt+r``)."""
+        t.cast("t.Any", self.screen).action_toggle_detail_raw()
+
+    def action_copy_source(self) -> None:
+        """Copy the raw record source to the clipboard (``y``)."""
+        t.cast("t.Any", self.screen).action_copy_detail_source()
+
+    def action_copy_rendered(self) -> None:
+        """Copy the flattened rendered text to the clipboard (``Y``)."""
+        t.cast("t.Any", self.screen).action_copy_detail_rendered()
 
     def action_focus_results(self) -> None:
         """Move focus leftward back to the results list (vim-style ``h``)."""
