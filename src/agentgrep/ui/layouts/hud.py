@@ -3005,7 +3005,7 @@ class HudLayout(LayoutScreen):
         self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
 
     def _after_resize(self) -> None:
-        """Refresh chrome; the detail pane scroll wrapper handles its own reflow."""
+        """Refresh chrome and re-flow the width-baked detail body on a resize."""
         # Recompute (not just repaint) because the result viewport's new height
         # can change max_scroll_y and therefore the displayed percentage.
         self._refresh_results_status_right()
@@ -3016,6 +3016,16 @@ class HudLayout(LayoutScreen):
         # Crossing the split breakpoint moves the detail pane between
         # the right side and the bottom.
         self._apply_responsive_layout()
+        # The rendered markdown/code body is flattened to a Text baked at the
+        # pane width, so re-run the (off-pump) build when a resize actually
+        # changed the width. The cache-key guard skips no-op resizes (width
+        # quantizes), mirroring the filter path. Raw source and the visual
+        # overlay are plain Text that Textual re-wraps for free -- skip them.
+        record = self._current_detail_record
+        if record is not None and not self._detail_visual_active and not self._detail_raw_mode:
+            detail_key = self._detail_cache_key(self.search_query.terms, record)
+            if detail_key != self._presented_detail_cache_key:
+                self.show_detail(record)
 
     def action_stop_search(self) -> None:
         """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
