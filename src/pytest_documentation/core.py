@@ -77,7 +77,38 @@ def redact_path(path: pathlib.Path, *, project_root: pathlib.Path | None = None)
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExampleLocation:
-    """Location metadata for one documentation example."""
+    """Location metadata for one documentation example.
+
+    Attributes
+    ----------
+    path : pathlib.Path
+        Real path of the source document, used to resolve sibling files and to run the
+        example relative to its own directory.
+    display_path : str
+        Privacy-preserving rendering of ``path`` — project-relative, else home-relative,
+        else redacted — safe to put in test ids and failure output.
+    start_line : int
+        1-based line of the example's first content line in the source document.
+    end_line : int
+        1-based line of the example's last content line. Equal to ``start_line`` for a
+        one-line example.
+    start_index : int
+        Character offset of the example's first content line in the document text.
+    end_index : int
+        Character offset just past the example's last content line, so
+        ``text[start_index:end_index]`` spans it.
+    prefix : str
+        Markdown blockquote prefix stripped from every content line, such as ``"> "``.
+        ``""`` when the example was not nested in a quote.
+    indent : str
+        Leading whitespace stripped from every content line for a list-nested fence.
+        ``""`` when the fence sat at the left margin.
+    group : str
+        Name of the enclosing unit the example belongs to — a ``group=`` fence setting,
+        the just recipe the script came from, or the config filename. Appended to
+        :meth:`label`, and read back by the recipe evaluator as the recipe to run.
+        ``""`` when the example belongs to no named unit.
+    """
 
     path: pathlib.Path
     display_path: str
@@ -108,7 +139,33 @@ class ExampleLocation:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class DocumentationExample:
-    """Collected documentation example."""
+    """Collected documentation example.
+
+    Attributes
+    ----------
+    kind : str
+        Broad category the collector assigned — ``"code"``, ``"config"``, ``"recipe"``.
+        Used as the evaluator lookup key when ``language`` matches none.
+    language : str
+        Lower-case language tag from the fence info string, or a synthetic tag such as
+        ``"just-recipe"``. Tried first when selecting an evaluator.
+    source : str
+        Example text with Markdown quote prefixes, fence indentation, and MyST directive
+        options removed — what actually gets compiled or run.
+    raw_source : str
+        Example text before dedenting, so a caller can map back onto the document.
+    location : ExampleLocation
+        Where the example came from, and the display path failures are reported against.
+    tags : frozenset[str]
+        Bare tokens from the fence info string beyond the language, normalized without a
+        leading ``.``. Empty when the fence carried only a language.
+    settings : t.Mapping[str, str]
+        ``key=value`` tokens from the fence info string, held read-only after
+        construction. Empty when the fence carried none.
+    test_id : str
+        Stable pytest id. Left ``""`` by a collector that wants the default
+        ``display_path:start_line:language`` form, which ``__post_init__`` fills in.
+    """
 
     kind: str
     language: str
@@ -156,7 +213,19 @@ class EvaluationFailureKind(enum.Enum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExampleDocument:
-    """Source document provided to collectors."""
+    """Source document provided to collectors.
+
+    Attributes
+    ----------
+    path : pathlib.Path
+        Real path of the file being collected.
+    text : str
+        Full decoded file contents. Collectors index into it, so every offset an example
+        records refers to this string.
+    context : CollectionContext
+        Collection-time configuration, which supplies the project root ``display_path``
+        renders against.
+    """
 
     path: pathlib.Path
     text: str
@@ -170,7 +239,16 @@ class ExampleDocument:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CollectionContext:
-    """Collection-time configuration shared across collectors."""
+    """Collection-time configuration shared across collectors.
+
+    Attributes
+    ----------
+    project_root : pathlib.Path
+        Root that display paths are made relative to, and that redaction strips from
+        diagnostic text.
+    encoding : str
+        Text encoding documents are read with.
+    """
 
     project_root: pathlib.Path
     encoding: str = "utf-8"
@@ -178,7 +256,30 @@ class CollectionContext:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class EvaluationResult:
-    """Result returned by documentation example evaluators."""
+    """Result returned by documentation example evaluators.
+
+    Attributes
+    ----------
+    status : EvaluationStatus
+        Terminal verdict, passed or failed.
+    example : DocumentationExample
+        Example this result belongs to, which carries the location a failure is reported
+        against.
+    failure_kind : EvaluationFailureKind
+        Machine-readable reason a failure was classified under.
+        :attr:`EvaluationFailureKind.NONE` on a pass.
+    returncode : int
+        Exit status of the evaluated command. ``0`` for evaluators that run no
+        subprocess, and for a command that was accepted without executing.
+    stdout : str
+        Redacted standard output of the evaluated command. ``""`` when there was none.
+    stderr : str
+        Redacted standard error of the evaluated command. ``""`` when there was none.
+    message : str
+        Redacted explanation carried into the pytest report — the policy reason a script
+        was rewritten, or the exception text behind a failure. ``""`` when the run needs
+        no explanation.
+    """
 
     status: EvaluationStatus
     example: DocumentationExample
