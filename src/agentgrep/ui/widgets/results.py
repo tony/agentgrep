@@ -17,6 +17,7 @@ from rich.segment import Segment
 from rich.style import Style
 from rich.styled import Styled
 from textual import events
+from textual.binding import Binding, BindingType
 from textual.geometry import Region, Size
 from textual.reactive import reactive
 from textual.scroll_view import ScrollView
@@ -54,21 +55,21 @@ class SearchResultsList(ScrollView, can_focus=True):
         scrollbar-size: 0 0;
     }
     """
-    BINDINGS: t.ClassVar[list[tuple[str, str, str]]] = [
-        ("up", "cursor_up", ""),
-        ("down", "cursor_down", ""),
-        ("home", "first", ""),
-        ("end", "last", ""),
+    # Remappable navigation carries ``id=``s so a keymap preset can substitute
+    # its keys live per keypress (Textual ``apply_keymap``); ``pageup`` /
+    # ``pagedown`` stay id-less. The authored keys bind the arrow, vim (hjkl),
+    # and emacs (ctrl+n/p) motions all at once; a user keymap file may rebind
+    # any of them by id.
+    BINDINGS: t.ClassVar[list[BindingType]] = [
+        Binding("up,k,ctrl+p", "cursor_up", "Up", id="results.cursor_up"),
+        Binding("down,j,ctrl+n", "cursor_down", "Down", id="results.cursor_down"),
+        Binding("right,l", "focus_detail", "Detail", id="results.focus_detail"),
+        Binding("home,g", "cursor_top", "Top", id="results.cursor_top"),
+        Binding("end,G", "cursor_bottom", "Bottom", id="results.cursor_bottom"),
+        Binding("ctrl+d", "cursor_half_page_down", "½ Down", id="results.half_page_down"),
+        Binding("ctrl+u", "cursor_half_page_up", "½ Up", id="results.half_page_up"),
         ("pageup", "page_up", ""),
         ("pagedown", "page_down", ""),
-        ("k", "cursor_up", "Up"),
-        ("j", "cursor_down", "Down"),
-        ("l", "focus_detail", "Detail"),
-        ("right", "focus_detail", ""),
-        ("g", "cursor_top", "Top"),
-        ("G", "cursor_bottom", "Bottom"),
-        ("ctrl+d", "cursor_half_page_down", "½ Down"),
-        ("ctrl+u", "cursor_half_page_up", "½ Up"),
     ]
 
     highlighted: reactive[int | None] = reactive(None, repaint=False)
