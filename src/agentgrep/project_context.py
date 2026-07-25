@@ -14,7 +14,28 @@ __all__ = ["ProjectContext", "detect_project_context"]
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ProjectContext:
-    """Best-effort description of the invoking project."""
+    """Best-effort description of the invoking project.
+
+    Attributes
+    ----------
+    cwd : pathlib.Path
+        Absolute, lexically normalized working directory the command was invoked from.
+        ``$PWD`` wins over the physical path when both name the same directory, so a
+        symlinked checkout keeps the name the user typed.
+    repo : pathlib.Path | None
+        Repository the checkout belongs to, read from ``commondir`` so a linked worktree
+        resolves to the main worktree. ``None`` when no ``.git`` was found above ``cwd``.
+    worktree : pathlib.Path | None
+        Directory holding the ``.git`` entry the upward walk stopped at — the checkout
+        ``cwd`` sits in. ``None`` when no ``.git`` was found above ``cwd``.
+    git_dir : pathlib.Path | None
+        Resolved git directory: ``<worktree>/.git`` for a normal repository, or the target
+        of a ``gitdir:`` pointer file for a linked worktree. ``None`` when no ``.git`` was
+        found above ``cwd``.
+    branch : str | None
+        Branch named by ``.git/HEAD``, or a truncated commit id when ``HEAD`` is detached.
+        ``None`` when ``HEAD`` is absent, unreadable, or empty.
+    """
 
     cwd: pathlib.Path
     repo: pathlib.Path | None = None
