@@ -62,7 +62,21 @@ class _SourceScanCacheEntry:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceScanCacheStats:
-    """Privacy-safe counters for one source-scan cache."""
+    """Privacy-safe counters for one source-scan cache.
+
+    Attributes
+    ----------
+    entries : int
+        Cached scans held at the moment the counters were read.
+    hits : int
+        Lookups answered from the cache, skipping the source read.
+    misses : int
+        Lookups that found no entry for the key.
+    stores : int
+        Completed scans written into the cache, counting a refresh of an existing key.
+    evictions : int
+        Entries dropped least-recently-used first to stay under the size bound.
+    """
 
     entries: int
     hits: int
@@ -156,7 +170,33 @@ class SourceScanCache:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceScanResult:
-    """Candidate records and counters from one planned source task."""
+    """Candidate records and counters from one planned source task.
+
+    Attributes
+    ----------
+    index : int
+        One-based position of this source in the plan.
+    total : int
+        Number of planned sources in the run, so a consumer can render progress.
+    source : SourceHandle
+        Source that was scanned.
+    task : SourceTask
+        Planned task naming the strategy the scan ran under.
+    records : tuple[SearchRecord, ...]
+        Source-local matching records. A drained source is sorted newest-first here; a
+        bounded reverse scan already arrives that way.
+    records_seen : int
+        Records parsed from the source, matching or not.
+    matches_seen : int
+        Records that satisfied the compiled matcher.
+    duration_seconds : float
+        Wall-clock seconds the scan took, or the cache lookup alone when ``cache_hit``.
+    batch_count : int
+        Batches the scan emitted before it finished.
+    cache_hit : bool
+        Whether the runtime source-scan cache answered this task instead of the source
+        being read.
+    """
 
     index: int
     total: int
@@ -172,7 +212,31 @@ class SourceScanResult:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceScanBatch:
-    """One source-local batch of matching candidate records."""
+    """One source-local batch of matching candidate records.
+
+    Attributes
+    ----------
+    index : int
+        One-based position of this source in the plan.
+    total : int
+        Number of planned sources in the run, so a consumer can render progress.
+    source : SourceHandle
+        Source the batch was read from.
+    task : SourceTask
+        Planned task naming the strategy the scan runs under.
+    records : tuple[SearchRecord, ...]
+        Matching records accumulated since the previous batch, never re-sent in a later
+        one. Empty only on a closing batch that had nothing left to flush.
+    records_seen : int
+        Running count of records parsed from this source, including the current batch.
+    matches_seen : int
+        Running count of matching records from this source, including the current batch.
+    duration_seconds : float
+        Wall-clock seconds since the source scan started.
+    is_final : bool
+        Whether this closes the source. The counters on a final batch are the source's
+        totals.
+    """
 
     index: int
     total: int

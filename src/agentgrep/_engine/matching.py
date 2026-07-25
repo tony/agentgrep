@@ -12,7 +12,27 @@ from agentgrep.records import SearchMatchSurface, SearchQuery, SearchRecord
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CompiledRecordMatcher:
-    """Precomputed record matcher for one search query."""
+    """Precomputed record matcher for one search query.
+
+    Attributes
+    ----------
+    query : SearchQuery
+        Query this matcher was compiled from. Scope, match surface, boolean mode, and any
+        compiled record predicate are read back from it on every record.
+    needles : tuple[str, ...]
+        Literal terms already folded to the query's case mode, so per-record matching does
+        no case work on the term side. Empty for a regex query or a query with no terms.
+    regexes : tuple[re.Pattern[str], ...]
+        One compiled pattern per term when the query is a regex query, carrying the
+        case-insensitivity flag. Empty ``()`` for literal queries.
+    use_joined_surface : bool
+        Whether literal terms must run against the joined field surface instead of
+        field-by-field. A term containing a newline can only match across the separators
+        the join inserts, so field-by-field matching would miss it.
+    origin_filter_matcher : OriginMatcher | None
+        Matcher for the query's explicit project origin filter. ``None`` when the query
+        set none, which admits every record the other checks accept.
+    """
 
     query: SearchQuery
     needles: tuple[str, ...]
