@@ -182,3 +182,33 @@ async def test_detail_pane_syntax_highlights_code(tmp_path: pathlib.Path) -> Non
         assert isinstance(rendered, Text)
         assert rendered.spans, "expected syntax-highlight spans on the code Text"
         assert "def ok(self)" in rendered.plain
+
+
+async def test_detail_markdown_links_carry_osc8(tmp_path: pathlib.Path) -> None:
+    """A markdown link renders with an OSC-8 hyperlink style (terminal-clickable).
+
+    rich.markdown emits an OSC-8 ``link`` style, ``_flatten_markdown`` preserves
+    it on the styled ``Text``, and Textual keeps it through
+    ``Content.from_rich_text`` (``Style.link``) -- so links are ctrl-clickable in
+    an OSC-8 terminal with no extra code. This locks that a flatten refactor can
+    not silently drop the link.
+    """
+    url = "https://example.invalid/runbook"
+    record = _make_record(f"# Doc\n\nSee [the runbook]({url}) for details.\n")
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
+        await pilot.pause()
+        layout.all_records = [record]
+        layout.filtered_records = [record]
+        layout.show_detail(record)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        rendered = layout._detail_rendered_renderable
+        assert isinstance(rendered, Text)
+        links = {span.style.link for span in rendered.spans if getattr(span.style, "link", None)}
+        assert url in links
