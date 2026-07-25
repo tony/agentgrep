@@ -42,6 +42,37 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Rich, selectable, copyable detail pane (#140)
+
+The detail pane now renders Markdown and source-code prompt bodies as styled
+text off the UI thread, detecting the format by structure rather than guessing
+from headings. Rendered bodies are selectable (legible even on
+terminal-transparent ansi themes), and Markdown links are clickable in OSC-8
+terminals. Two copy commands take either the rendered text or the raw source, an
+`alt+r` toggle swaps between them, and the body re-flows to the new width when
+the terminal is resized.
+
+#### Highlight XML/markup prompt bodies (#140)
+
+Agent-injected structured prompts such as `<EPHEMERAL_MESSAGE>` and
+`<bash_command_reminder>` now have their tags highlighted in the detail pane
+while the surrounding prose stays plain. Ordinary prose or code containing stray
+angle brackets (`List<int>`, `a < b`) is left untouched.
+
+#### Visual select and yank in the detail pane (#140)
+
+The detail pane gains tmux copy-mode-vi-style selection: `v` starts a visual
+selection, `h`/`j`/`k`/`l` move it, and `y` yanks the selected text to the
+clipboard.
+
+#### Configurable keymaps (#140)
+
+Key bindings are now customizable through a single `keymaps.toml` in your config
+directory. Vim, Emacs, and arrow-key bindings all work at once out of the box,
+with no mode to pick, and any binding can be remapped in the file.
+
 ### Development
 
 #### `mcp_swap.py doctor` and `use-local --env`
