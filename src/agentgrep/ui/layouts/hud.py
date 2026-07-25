@@ -42,6 +42,7 @@ from agentgrep._text import (
     format_compact_path,
     format_display_path,
     looks_like_code,
+    looks_like_markup,
     truncate_lines,
 )
 from agentgrep._types import (
@@ -71,7 +72,7 @@ from agentgrep.ui.completion import (
     keyword_completion_candidates,
 )
 from agentgrep.ui.format import scroll_percent
-from agentgrep.ui.highlighter import QueryHighlighter
+from agentgrep.ui.highlighter import MarkupHighlighter, QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import (
     CompletionDropdown,
@@ -2598,6 +2599,13 @@ class HudLayout(LayoutScreen):
                 match_styles.filter if match_styles else None,
                 terms=filter_terms,
             )
+            # Structural-tag overlay for markup-shaped prompt bodies
+            # (``<EPHEMERAL_MESSAGE>`` reminders and the like). Gated on a
+            # paired-tag structural test so generics/comparisons in prose stay
+            # plain, and applied by offset so ``highlighted.plain`` is unchanged.
+            # This runs in the offload worker; the lexer is one bounded pass.
+            if looks_like_markup(body_text):
+                MarkupHighlighter(dark=syntax_theme != "ansi_light").highlight(highlighted)
             result = (highlighted, body_text, body_text)
         return result
 
