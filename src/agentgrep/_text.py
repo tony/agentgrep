@@ -608,6 +608,25 @@ ContentFormat = t.Literal["json", "markdown", "text"]
 """Detected body format for detail-pane rendering — see :func:`detect_content_format`."""
 
 
+#: Structural markdown signals; any match routes a body to markdown rendering.
+#: Weak/incidental markers (a single ``- `` line, ``2 ** 3``, a ``#hashtag``)
+#: are intentionally excluded so a plain message keeps its literal line breaks
+#: and match highlighting (see :func:`detect_content_format`).
+_MARKDOWN_SIGNALS = re.compile(
+    r"""
+      ^```                                     # fenced code block
+    | ^\#{1,6}\ \S                             # ATX heading
+    | \*\*[^\s*][^*\n]*\*\*                     # **bold**
+    | ^[ ]*>[ \t]\S                            # blockquote
+    | \[[^\]\n]+\]\([^)\n]+\)                   # [link](url)
+    | ^[ \t]*[-*+]\ \S[^\n]*\n[ \t]*[-*+]\ \S   # two-plus bullet list items
+    | ^[ \t]*\d+\.\ \S[^\n]*\n[ \t]*\d+\.\ \S   # two-plus numbered list items
+    | ^[ ]*\|.+\|[^\n]*\n[ ]*\|?[\s:|-]*-{2,}   # pipe table (row + separator)
+    """,
+    re.MULTILINE | re.VERBOSE,
+)
+
+
 def detect_content_format(text: str) -> ContentFormat:
     r"""Sniff the format of a record body for syntax-aware rendering.
 
@@ -618,10 +637,13 @@ def detect_content_format(text: str) -> ContentFormat:
     (``.jsonl`` / ``.sqlite``) while ``record.text`` is an extracted
     chat-message payload — the only reliable signal is the body itself.
 
-    The markdown heuristic is intentionally false-negative-biased: a plain
-    chat message that incidentally starts with ``- `` should not lose its
-    match highlighting to a misfire. Only fenced code blocks (triple
-    backtick) or ATX headings at the start of a line trip markdown mode.
+    Markdown mode trips on a *structural* signal — a fenced code block, an
+    ATX heading, ``**bold**``, a blockquote, a ``[link](url)``, a two-plus
+    item bullet or numbered list, or a pipe table — because those imply the
+    author wrote markdown (and reflowing the body is then expected). Weak,
+    incidental markers are deliberately ignored: a single ``- `` line, a lone
+    ``*``/``_``, ``2 ** 3``, or a ``#hashtag`` stay ``"text"`` so a plain
+    message keeps its literal line breaks and match highlighting.
 
     Parameters
     ----------
@@ -640,6 +662,8 @@ def detect_content_format(text: str) -> ContentFormat:
     'json'
     >>> detect_content_format("# Heading\\n\\nbody")
     'markdown'
+    >>> detect_content_format("**bold** section header\\n\\nbody")
+    'markdown'
     >>> detect_content_format("plain message body")
     'text'
     >>> detect_content_format("- not really markdown")
@@ -655,9 +679,7 @@ def detect_content_format(text: str) -> ContentFormat:
             pass
         else:
             return "json"
-    if re.search(r"^```", text, re.MULTILINE):
-        return "markdown"
-    if re.search(r"^#{1,6} \S", text, re.MULTILINE):
+    if _MARKDOWN_SIGNALS.search(text):
         return "markdown"
     return "text"
 
