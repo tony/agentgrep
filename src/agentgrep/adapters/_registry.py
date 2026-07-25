@@ -41,14 +41,34 @@ class StreamParser(t.Protocol):
 
 
 class ParserSpec(t.NamedTuple):
-    """One ``adapter_id`` -> plain parser dispatch row."""
+    """One ``adapter_id`` -> plain parser dispatch row.
+
+    Attributes
+    ----------
+    adapter_id : str
+        Versioned parser identity a source handle carries, e.g.
+        ``"cursor_ide.state_vscdb_modern.v1"``. Unique across the merged registry.
+    parser : SourceParser
+        Callable dispatched with the source handle alone. It never receives the engine's
+        ``raw_skip_line`` predicate or ``reverse`` flag.
+    """
 
     adapter_id: str
     parser: SourceParser
 
 
 class StreamParserSpec(t.NamedTuple):
-    """One ``adapter_id`` -> stream-aware parser dispatch row."""
+    """One ``adapter_id`` -> stream-aware parser dispatch row.
+
+    Attributes
+    ----------
+    adapter_id : str
+        Versioned parser identity a source handle carries, e.g.
+        ``"codex.sessions_jsonl.v1"``. Unique across the merged registry.
+    parser : StreamParser
+        Callable that also honours the engine's ``raw_skip_line`` predicate and
+        ``reverse`` flag, so raw-line prefiltering and bounded reverse scans reach it.
+    """
 
     adapter_id: str
     parser: StreamParser
