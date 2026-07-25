@@ -27,7 +27,11 @@ readme = "README.md"
 dependencies = [
   "pydantic>=2.11.3",
   "textual>=3.2.0",
-  "fastmcp>=3.4.0",
+  # Capped below 4.0: the response-limiting middleware specializes FastMCP's
+  # private `_truncate_to_result`, and 4.0 is a breaking major that renames
+  # camelCase result fields behind a deprecation bridge. Lift the cap only
+  # once both are verified against a 4.x release.
+  "fastmcp>=3.4.0,<4",
   "rapidfuzz>=3.10.0",
 ]
 
