@@ -17,7 +17,16 @@ from .core import DocumentationExample, blocked_command_error, redact_text
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SandboxSeed:
-    """File or directory copied into each temporary sandbox."""
+    """File or directory copied into each temporary sandbox.
+
+    Attributes
+    ----------
+    source : pathlib.Path
+        Real file or directory to copy. A directory is copied whole.
+    target : pathlib.Path
+        Destination relative to the sandbox home, such as ``.codex/history.jsonl``. An
+        existing directory at this location is replaced.
+    """
 
     source: pathlib.Path
     target: pathlib.Path
@@ -25,7 +34,35 @@ class SandboxSeed:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SandboxCommandPlan:
-    """Executable plan for one shell documentation example."""
+    """Executable plan for one shell documentation example.
+
+    Planning rewrites a documented command into a form safe to run against a temporary
+    home — a dry run, a redirect to the local checkout, or no run at all.
+
+    Attributes
+    ----------
+    original_script : str
+        Script exactly as the documentation wrote it, kept so a report can show what the
+        reader would have typed.
+    script : str
+        Form actually handed to the shell. ``":"`` for a plan that is accepted without
+        running anything.
+    reason : str
+        Why the script was rewritten, surfaced as the result message. ``"literal"`` means
+        it runs unchanged and produces no message.
+    execute : bool
+        Whether to spawn a subprocess at all. ``False`` synthesizes a completed process
+        from ``returncode``, ``stdout``, and ``stderr``.
+    accept_empty_result : bool
+        Whether an exit status of 1 counts as a pass, for a documented search whose
+        matches depend on the machine's own agent history.
+    returncode : int
+        Exit status to report when ``execute`` is ``False``.
+    stdout : str
+        Standard output to report when ``execute`` is ``False``.
+    stderr : str
+        Standard error to report when ``execute`` is ``False``.
+    """
 
     original_script: str
     script: str
@@ -39,7 +76,22 @@ class SandboxCommandPlan:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SandboxExecution:
-    """Completed sandbox run plus policy metadata."""
+    """Completed sandbox run plus policy metadata.
+
+    Attributes
+    ----------
+    plan : SandboxCommandPlan
+        Plan that produced this run, including the script as documented.
+    completed : subprocess.CompletedProcess[str]
+        Finished process with its args, stdout, and stderr already redacted of local
+        paths. Synthesized rather than spawned when the plan did not execute.
+    message : str
+        Policy note to carry into the result, taken from the plan's rewrite reason.
+        ``""`` when the script ran as written.
+    accept_empty_result : bool
+        Whether an exit status of 1 counts as a pass, mirrored from the plan so the
+        evaluator does not have to reach through it.
+    """
 
     plan: SandboxCommandPlan
     completed: subprocess.CompletedProcess[str]
