@@ -40,11 +40,30 @@ class DetailScroll(VerticalScroll, can_focus=True):
         ("/", "open_find", "Find"),
         ("ctrl+f", "open_find", "Find"),
         ("ctrl+b", "page_up", "Pg Up"),
+        # Raw <-> rendered toggle: ``alt+r`` (codex precedent) with ``ctrl+e``
+        # as a fallback for terminals that mangle ``alt``. The detail pane
+        # consumes no typed text, so the bare-letter copy chords are safe.
+        ("alt+r", "toggle_raw", "Raw"),
+        ("ctrl+e", "toggle_raw", "Raw"),
+        ("y", "copy_source", "Copy src"),
+        ("Y", "copy_rendered", "Copy rendered"),
     ]
 
     def action_open_find(self) -> None:
         """Open the find-in-detail bar (``/`` or ``ctrl+f``); no-op without a record."""
         t.cast("t.Any", self.screen).action_open_detail_find()
+
+    def action_toggle_raw(self) -> None:
+        """Toggle the detail pane between rendered and raw source (``alt+r``)."""
+        t.cast("t.Any", self.screen).action_toggle_detail_raw()
+
+    def action_copy_source(self) -> None:
+        """Copy the raw record source to the clipboard (``y``)."""
+        t.cast("t.Any", self.screen).action_copy_detail_source()
+
+    def action_copy_rendered(self) -> None:
+        """Copy the flattened rendered text to the clipboard (``Y``)."""
+        t.cast("t.Any", self.screen).action_copy_detail_rendered()
 
     def action_focus_results(self) -> None:
         """Move focus leftward back to the results list (vim-style ``h``)."""

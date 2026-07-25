@@ -435,9 +435,13 @@ Screen {
        Focus is shown by recoloring that header, not by a border here. */
     border: none;
 }
-#detail {
-    /* 1 cell of left (and right) padding so the contents don't hug the seam. */
+#detail-meta, #detail-body {
+    /* 1 cell of left (and right) padding so the contents don't hug the seam.
+       Two stacked Statics (metadata header + body) replace the former single
+       #detail Group so each is individually mouse-selectable. */
     padding: 0 1;
+    width: 1fr;
+    height: auto;
 }
 #results {
     height: 1fr;
