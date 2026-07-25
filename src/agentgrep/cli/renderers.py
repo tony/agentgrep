@@ -422,7 +422,18 @@ def _grep_show_line_col(args: GrepArgs) -> tuple[bool, bool]:
 
 @dataclasses.dataclass(slots=True)
 class GrepSummary:
-    """Accumulates per-agent match counts for pretty-style grep footer."""
+    """Accumulates per-agent match counts for pretty-style grep footer.
+
+    Attributes
+    ----------
+    total : int
+        Records emitted so far. ``0`` suppresses the footer entirely.
+    per_agent : dict[str, int]
+        Records emitted per agent name, in insertion order; the footer sorts it by name.
+    elapsed : float
+        Wall-clock seconds the search took, set by the caller once the stream ends and
+        rendered to one decimal place.
+    """
 
     total: int = 0
     per_agent: dict[str, int] = dataclasses.field(default_factory=dict)

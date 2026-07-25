@@ -81,6 +81,51 @@ class FindArgs:
     fd alignment landed); ``-g`` selects glob; ``--exact`` selects exact
     adapter_id matching. ``type_filter`` constrains by record kind;
     ``extensions`` restricts to paths with matching suffixes.
+
+    Attributes
+    ----------
+    pattern : str | None
+        Text matched against agent, store, adapter_id, and path. ``None`` when the
+        positional was omitted, which lists every discovered source.
+    agents : tuple[AgentName, ...]
+        Agents to search, from repeatable ``--agent``. Every agent in
+        :data:`~agentgrep.records.AGENT_CHOICES` when the flag is unset or names ``all``.
+    limit : int | None
+        Result ceiling from ``--limit``. ``None`` returns every match.
+    output_mode : OutputMode
+        Rendering target chosen by ``--json`` / ``--ndjson`` / ``--ui``, else ``"text"``.
+    color_mode : ColorMode
+        ``--color`` selection: ``"auto"``, ``"always"``, or ``"never"``.
+    pattern_mode : FindPatternMode
+        How ``pattern`` is read: ``"regex"`` by default, ``"glob"`` under ``-g``,
+        ``"fixed"`` (literal substring) under ``-F``, ``"exact"`` (equality against
+        adapter_id) under ``--exact``.
+    type_filter : FindTypeFilter
+        Record kind from ``-t/--type``. ``"all"`` admits prompts, history, and sessions.
+    extensions : tuple[str, ...]
+        Suffixes from repeatable ``-e/--extension``. ``()`` accepts any extension.
+    case_mode : CaseMode
+        Case resolution: ``"smart"`` by default, ``"ignore"`` under ``-i``, ``"respect"``
+        under ``-s``.
+    list_details : bool
+        Whether ``-l/--list-details`` selected the long format — agent, kind, store,
+        adapter_id, path.
+    print0 : bool
+        Whether ``-0/--print0`` separates output records with NUL instead of newline.
+    absolute_path : bool
+        Whether ``-a/--absolute-path`` prints real absolute paths instead of
+        privacy-collapsed display paths.
+    full_path : bool
+        Whether ``--full-path`` matches a ``-g`` glob against the absolute path rather
+        than the file basename (fd's ``-p``).
+    progress_mode : ProgressMode
+        ``--progress`` selection for the stderr source-discovery spinner.
+    compiled : CompiledQuery | None
+        Compiled query-language predicate. ``None`` when the pattern carried no query
+        syntax, or the query collapsed to bare text the legacy path already handles.
+    raw_query : str
+        Pattern text exactly as typed, before compilation, used to seed the explorer's
+        search box. ``""`` when no pattern was given.
     """
 
     pattern: str | None
@@ -103,7 +148,15 @@ class FindArgs:
 
 @dataclasses.dataclass(slots=True)
 class UIArgs:
-    """Typed arguments for ``agentgrep ui``."""
+    """Typed arguments for ``agentgrep ui``.
+
+    Attributes
+    ----------
+    initial_query : str
+        Search text the explorer opens with. ``""`` starts on an empty search box.
+    color_mode : ColorMode
+        ``--color`` selection: ``"auto"``, ``"always"``, or ``"never"``.
+    """
 
     initial_query: str
     color_mode: ColorMode
@@ -117,6 +170,65 @@ class GrepArgs:
     are tri-state selectors rather than independent booleans so the
     resolution order (``-s`` > ``-i`` > ``-S`` / ``-F`` > ``-w`` > ``-E``)
     is enforced at parse time.
+
+    Attributes
+    ----------
+    patterns : tuple[str, ...]
+        Text patterns, combined as AND. Holds the residual text after query compilation,
+        so a ``field:value`` positional does not reach line matching.
+    agents : tuple[AgentName, ...]
+        Agents to search, from repeatable ``--agent``. Every agent in
+        :data:`~agentgrep.records.AGENT_CHOICES` when the flag is unset or names ``all``.
+    scope : SearchScope
+        Stores the engine opens after query reconciliation: a ``scope:`` predicate in the
+        query widens discovery to ``"all"`` so the predicate can narrow it back.
+    case_mode : CaseMode
+        Case resolution: ``"smart"`` by default, ``"ignore"`` under ``-i``, ``"respect"``
+        under ``-s``.
+    pattern_mode : PatternMode
+        How each pattern is read: ``"regex"`` by default, ``"fixed"`` (literal) under
+        ``-F``, ``"word"`` (whole-word) under ``-w``.
+    invert_match : bool
+        Whether ``-v/--invert-match`` selects records that do not match.
+    count_only : bool
+        Whether ``-c/--count`` prints only the match count per (agent, store).
+    files_with_matches : bool
+        Whether ``-l/--files-with-matches`` lists source paths instead of match text.
+    only_matching : bool
+        Whether ``-o/--only-matching`` prints only the matched portion of each record.
+    no_dedupe : bool
+        Whether ``--no-dedupe`` disables per-session dedup for a raw rg-style view.
+    line_number : bool | None
+        Line-number prefix forced on by ``-n`` or off by ``-N``. ``None`` leaves the
+        choice to the renderer's TTY-aware default.
+    heading : bool | None
+        File-grouped headings forced on by ``--heading`` or off by ``--no-heading``.
+        ``None`` leaves the choice to the renderer's TTY-aware default.
+    limit : int | None
+        Match ceiling from ``--limit`` / ``-m`` / ``--max-count``. ``None`` returns every
+        match.
+    vimgrep : bool
+        Whether ``--vimgrep`` emits one match per line as ``path:line:col:text``.
+    column : bool
+        Whether ``--column`` adds column numbers, which also forces line numbers on.
+    output_mode : OutputMode
+        Rendering target chosen by ``--json`` / ``--ndjson`` / ``--ui``, else ``"text"``.
+    color_mode : ColorMode
+        ``--color`` selection: ``"auto"``, ``"always"``, or ``"never"``.
+    progress_mode : ProgressMode
+        ``--progress`` selection for the stderr search spinner.
+    style : GrepStyle
+        ``--style`` selection: ``"default"`` renders rg-faithful output, ``"pretty"``
+        renders snippet-first with amber highlights.
+    compiled : CompiledQuery | None
+        Compiled query-language predicate. ``None`` when the positionals carried no query
+        syntax, or the query collapsed to bare text the legacy path already handles.
+    raw_query : str
+        Positionals joined by spaces exactly as typed, before compilation, used to seed
+        the explorer's search box under ``--ui``.
+    base_scope : SearchScope
+        Scope the explorer returns to for an interactive query with no ``scope:``
+        predicate, taken from ``--scope`` before query widening.
     """
 
     patterns: tuple[str, ...]
@@ -149,6 +261,52 @@ class SearchArgs:
 
     Differentiates from ``grep`` by applying rapidfuzz relevance scoring
     and session grouping to produce a best-first result set.
+
+    Attributes
+    ----------
+    terms : tuple[str, ...]
+        Search terms, combined as AND. Holds the residual text after query compilation.
+        Empty when an origin flag alone drives the search.
+    agents : tuple[AgentName, ...]
+        Agents to search, from repeatable ``--agent``. Every agent in
+        :data:`~agentgrep.records.AGENT_CHOICES` when the flag is unset or names ``all``.
+    scope : SearchScope
+        Stores the engine opens after query reconciliation: a ``scope:`` predicate in the
+        query widens discovery to ``"all"`` so the predicate can narrow it back.
+    case_sensitive : bool
+        Whether ``--case-sensitive`` forces case-sensitive matching.
+    limit : int | None
+        Result ceiling applied after ranking, from ``--limit``. ``None`` returns every
+        match.
+    output_mode : OutputMode
+        Rendering target chosen by ``--json`` / ``--ndjson`` / ``--ui``, else ``"text"``.
+    color_mode : ColorMode
+        ``--color`` selection: ``"auto"``, ``"always"``, or ``"never"``.
+    progress_mode : ProgressMode
+        ``--progress`` selection for the stderr search spinner.
+    threshold : int
+        Minimum fuzzy score from ``--threshold``, between 0 and 100. ``0`` keeps every
+        match the filters admit.
+    no_group : bool
+        Whether ``--no-group`` emits flat results instead of session-grouped ones.
+    no_rank : bool
+        Whether ``--no-rank`` keeps discovery order instead of relevance scoring.
+    compiled : CompiledQuery | None
+        Compiled query-language predicate. ``None`` when the terms carried no query
+        syntax, or the query collapsed to bare text the legacy path already handles.
+    raw_query : str
+        Query text used to seed the explorer's search box, with the origin flags rendered
+        back as ``cwd:`` / ``repo:`` / ``branch:`` predicates ahead of the typed terms.
+    origin_boost : RecordOrigin | None
+        Current project whose records rank higher under ``--here``, without filtering
+        anything out. ``None`` applies no boost.
+    origin_filter : RecordOrigin | None
+        Project filter from ``--cwd`` / ``--repo`` / ``--branch`` / ``--only-here``, held
+        apart from ``compiled`` so text-only searches keep the fast path. ``None`` filters
+        by no origin.
+    base_scope : SearchScope
+        Scope the explorer returns to for an interactive query with no ``scope:``
+        predicate, taken from ``--scope`` before query widening.
     """
 
     terms: tuple[str, ...]
@@ -171,7 +329,22 @@ class SearchArgs:
 
 @dataclasses.dataclass(slots=True)
 class ParserBundle:
-    """CLI parsers used for root and subcommand help."""
+    """CLI parsers used for root and subcommand help.
+
+    The subcommand parsers are carried alongside the root parser so argument validation
+    can route an error through the parser whose usage line the user needs to see.
+
+    Attributes
+    ----------
+    parser : argparse.ArgumentParser
+        Root ``agentgrep`` parser, which owns ``--color`` and the subparsers.
+    find_parser : argparse.ArgumentParser
+        Subparser for ``agentgrep find``.
+    grep_parser : argparse.ArgumentParser
+        Subparser for ``agentgrep grep``.
+    search_parser : argparse.ArgumentParser
+        Subparser for ``agentgrep search``.
+    """
 
     parser: argparse.ArgumentParser
     find_parser: argparse.ArgumentParser

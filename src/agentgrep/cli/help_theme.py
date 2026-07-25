@@ -69,6 +69,49 @@ class AnsiHelpTheme(t.NamedTuple):
     its own color. They use a 256-color sub-palette kept off the basic-color
     chrome above, so a predicate never shares a hue with a heading, option, or
     subcommand on the same line. Shell quotes around a query render plain.
+
+    Every field holds the raw ANSI escape sequence written before the span it styles;
+    ``reset`` is written after it. The ``query_*`` entries map the shared roles
+    :func:`~agentgrep._text.highlight_query_spans` emits onto colors.
+
+    Attributes
+    ----------
+    heading : str
+        An ``examples:`` section heading. Bold cyan by default.
+    reset : str
+        Sequence written after every styled span to return to the default style.
+    label : str
+        The value token following an option that takes one, such as ``codex`` in
+        ``--agent codex``. Yellow by default.
+    long_option : str
+        A ``--``-prefixed flag in an example line. Green by default.
+    short_option : str
+        A single-dash flag in an example line. Green by default.
+    prog : str
+        The leading program name of an example line. Bold magenta by default.
+    action : str
+        The subcommand token following the program name. Cyan by default.
+    inline_code : str
+        Text that was an RST ``inline-code`` span in the description prose. Bold blue by
+        default.
+    query_keyword : str
+        The boolean and range keywords ``AND``, ``OR``, ``NOT``, and ``TO``. Bold amber
+        by default.
+    query_operator : str
+        A comparison operator: ``>=``, ``<=``, ``>``, ``<``, ``=``, ``!``, ``~``, ``^``.
+        Amber by default.
+    query_field : str
+        The field name of a predicate, the part before ``:``. Teal by default.
+    query_punct : str
+        The ``:`` separator, grouping and range brackets, and the quotes delimiting a
+        phrase. Dim grey by default.
+    query_value : str
+        Predicate values, bare terms, dates, and the inside of a phrase. Near-foreground
+        by default, so the text a reader cares about stays the most legible span.
+    query_wildcard : str
+        A ``*`` or ``?`` wildcard inside a value. Bold gold by default.
+    query_negation : str
+        A standalone leading ``-`` or ``+`` term sign. Bold rose by default.
     """
 
     heading: str
