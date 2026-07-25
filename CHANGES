@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a42 (Yet to be released)
+## agentgrep 0.1.0a43 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a42 (2026-07-25)
+
+agentgrep 0.1.0a42 makes the interactive TUI's detail pane far more
+capable. Prompt bodies now render as styled, selectable text (Markdown,
+source code, and XML/markup structured prompts alike) with two copy
+modes, clickable links, live reflow on resize, tmux-style visual select
+and yank, and a single editable keymap file that keeps vim, emacs, and
+arrow-key bindings all working at once. The release also gives the
+developer config-swap helper a read-only `mcp_swap.py doctor` and a
+repeatable `use-local --env`.
 
 ### What's new
 
