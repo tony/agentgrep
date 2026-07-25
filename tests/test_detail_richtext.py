@@ -10,6 +10,7 @@ pane to the raw source view.
 from __future__ import annotations
 
 import pathlib
+import typing as t
 
 import pytest
 from rich.text import Text
@@ -78,20 +79,19 @@ async def test_detail_pane_markdown_render_select_copy(tmp_path: pathlib.Path) -
     md_body = _markdown_body()
     assert len(md_body) > 2048
     record = _make_record(md_body)
-    app = build_streaming_ui_app(
-        tmp_path,
-        _empty_query(),
-        control=SearchControl(),
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
     )
-    async with app.run_test(size=(120, 40)) as pilot:  # type: ignore[attr-defined]
-        layout = app.screen  # type: ignore[attr-defined]
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
         await pilot.pause()
         layout.all_records = [record]
         layout.filtered_records = [record]
         layout.show_detail(record)
         # Markdown is offloaded: wait for the worker + its call_from_thread
         # present, then flush the pump.
-        await app.workers.wait_for_complete()  # type: ignore[attr-defined]
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         # (1) The body renders RICH (styled Text), not the plain >2048 fallback.
@@ -165,18 +165,17 @@ async def test_detail_pane_syntax_highlights_code(tmp_path: pathlib.Path) -> Non
     also proves code detection takes precedence over the format heuristic.
     """
     record = _make_record(_python_body())
-    app = build_streaming_ui_app(
-        tmp_path,
-        _empty_query(),
-        control=SearchControl(),
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
     )
-    async with app.run_test(size=(120, 40)) as pilot:  # type: ignore[attr-defined]
-        layout = app.screen  # type: ignore[attr-defined]
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
         await pilot.pause()
         layout.all_records = [record]
         layout.filtered_records = [record]
         layout.show_detail(record)
-        await app.workers.wait_for_complete()  # type: ignore[attr-defined]
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         rendered = layout._detail_rendered_renderable

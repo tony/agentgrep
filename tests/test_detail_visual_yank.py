@@ -10,6 +10,7 @@ yank the exact selected source substring to the clipboard. A second pass proves
 from __future__ import annotations
 
 import pathlib
+import typing as t
 
 import pytest
 
@@ -50,14 +51,17 @@ def _empty_query() -> SearchQuery:
 async def test_detail_visual_select_and_yank(tmp_path: pathlib.Path) -> None:
     """``v`` + ``j``/``l`` motions + ``y`` yanks the exact selected substring."""
     record = _make_record(_BODY)
-    app = build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl())
-    async with app.run_test(size=(120, 40)) as pilot:  # type: ignore[attr-defined]
-        layout = app.screen  # type: ignore[attr-defined]
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
         await pilot.pause()
         layout.all_records = [record]
         layout.filtered_records = [record]
         layout.show_detail(record)
-        await app.workers.wait_for_complete()  # type: ignore[attr-defined]
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         body_widget = layout._detail_body
@@ -71,23 +75,23 @@ async def test_detail_visual_select_and_yank(tmp_path: pathlib.Path) -> None:
         await pilot.press("v")
         await pilot.pause()
         assert layout._detail_visual_active is True
-        assert body_widget in app.screen.selections  # type: ignore[attr-defined]
+        assert body_widget in app.screen.selections
 
         await pilot.press("j", "l", "l", "l", "y")
         await pilot.pause()
 
-        assert app.clipboard == "line one\nline"  # type: ignore[attr-defined]
+        assert app.clipboard == "line one\nline"
         # y exits visual mode and clears the native selection.
         assert layout._detail_visual_active is False
-        assert app.screen.selections == {}  # type: ignore[attr-defined]
+        assert app.screen.selections == {}
 
         # Re-enter visual mode, then escape cancels + clears the selection.
         await pilot.press("v")
         await pilot.pause()
         assert layout._detail_visual_active is True
-        assert body_widget in app.screen.selections  # type: ignore[attr-defined]
+        assert body_widget in app.screen.selections
 
         await pilot.press("escape")
         await pilot.pause()
         assert layout._detail_visual_active is False
-        assert app.screen.selections == {}  # type: ignore[attr-defined]
+        assert app.screen.selections == {}
