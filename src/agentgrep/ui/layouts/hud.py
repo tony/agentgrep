@@ -24,8 +24,11 @@ from rich.console import Console as _RichConsole
 from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
+from textual import events
 from textual.binding import Binding, BindingType
 from textual.containers import Center, Horizontal, Vertical
+from textual.geometry import Offset
+from textual.selection import Selection
 from textual.timer import Timer
 from textual.widgets import Footer, Static
 from textual.worker import Worker, WorkerCancelled
@@ -303,6 +306,16 @@ class HudLayout(LayoutScreen):
         # the ``Y`` copy-rendered command.
         self._detail_rendered_renderable: object = None
         self._detail_rendered_plain: str = ""
+        # tmux copy-mode-vi visual select over the detail body, driven by
+        # Textual's NATIVE selection. When active the body Static shows a plain
+        # selectable Text of the bounded source and a logical (row, col) cursor
+        # drives a Selection overlay. Per motion only ``screen.selections`` is
+        # reassigned (O(1)); Textual re-renders the resident Text with a
+        # per-logical-line span, so no body is re-tokenized (ADR 0011).
+        self._detail_visual_active: bool = False
+        self._detail_visual_anchor: tuple[int, int] = (0, 0)
+        self._detail_visual_cursor: tuple[int, int] = (0, 0)
+        self._detail_visual_lines: tuple[str, ...] = ()
         # The text the detail body is actually DISPLAYED as — the pretty-
         # printed JSON for json bodies, the raw body otherwise. Find matches
         # and scroll work against this so offsets line up with what is shown.
@@ -735,8 +748,10 @@ class HudLayout(LayoutScreen):
         self._presented_detail_cache_key = None
         self._detail_scroll_positions.clear()
         self._detail_find_state.clear()
-        # A fresh search wipes the detail; close any open find bar.
+        # A fresh search wipes the detail; close any open find bar and cancel
+        # any in-flight visual select.
         self._reset_detail_find_state()
+        self._reset_detail_visual()
         self.all_records = []
         self.filtered_records = []
         self._search_done = False
@@ -1726,6 +1741,9 @@ class HudLayout(LayoutScreen):
             self._reset_detail_find_state()
         # Showing a record means results exist — leave the bare-canvas state.
         self._set_empty_state(empty=False)
+        # A record switch cancels any in-flight visual select (its cursor +
+        # anchor index the outgoing body's lines).
+        self._reset_detail_visual()
         self._current_detail_record = record
         self._detail_build_generation += 1
         detail_generation = self._detail_build_generation
@@ -2113,6 +2131,233 @@ class HudLayout(LayoutScreen):
             return
         self.app.copy_to_clipboard(self._detail_rendered_plain)
         self.notify("copied rendered text")
+
+    # -- tmux copy-mode-vi visual select (native Textual selection) ----------
+
+    @_runtime.pump_only
+    def handle_detail_visual_key(self, event: events.Key) -> bool:
+        """Route a detail-pane key for tmux-style visual select.
+
+        Delegated to from :meth:`DetailScroll.on_key`. Returns ``True`` when the
+        key was consumed so the caller stops the event and the normal
+        scroll/copy bindings do not also fire; ``False`` lets them run.
+
+        Outside visual mode only ``v`` / ``space`` are claimed (they begin a
+        selection); every other key falls through to the stock bindings. Inside
+        visual mode the vi motions (``hjkl`` / ``0`` / ``$`` / ``g`` / ``G``)
+        move the selection cursor, ``y`` / ``enter`` yank, and ``escape`` /
+        ``q`` cancel. Each branch is O(1) plus a bounded re-render (NB-9).
+        """
+        key = event.key
+        char = event.character
+        if not self._detail_visual_active:
+            if key in {"v", "space"}:
+                self._begin_detail_visual()
+                return True
+            return False
+        if key in {"escape", "q"}:
+            self._cancel_detail_visual()
+        elif key in {"y", "enter"}:
+            self._yank_detail_visual()
+        elif key in {"v", "space"}:
+            self._detail_visual_anchor = self._detail_visual_cursor
+            self._render_detail_visual()
+        elif key in {"h", "left"}:
+            self._move_detail_visual(0, -1)
+        elif key in {"l", "right"}:
+            self._move_detail_visual(0, 1)
+        elif key in {"j", "down"}:
+            self._move_detail_visual(1, 0)
+        elif key in {"k", "up"}:
+            self._move_detail_visual(-1, 0)
+        elif key in {"0", "home"} or char == "0":
+            self._visual_line_edge(start=True)
+        elif key in {"dollar_sign", "end"} or char == "$":
+            self._visual_line_edge(start=False)
+        elif key == "g":
+            self._visual_document_edge(top=True)
+        elif key == "G":
+            self._visual_document_edge(top=False)
+        else:
+            return False
+        return True
+
+    def _visual_clamp_col(self, row: int, col: int) -> int:
+        """Clamp ``col`` onto a character of line ``row`` (vi never sits past EOL)."""
+        line = self._detail_visual_lines[row] if 0 <= row < len(self._detail_visual_lines) else ""
+        return max(0, min(col, max(0, len(line) - 1)))
+
+    def _visual_top_visible_row(self) -> int:
+        """Logical source line at the top of the viewport (wrap-aware, one-time).
+
+        Walks the source lines accumulating each one's wrapped display-row count
+        until it passes the scrolled-past rows -- the first still-visible logical
+        line. Bounded by ``scroll_y`` and run only when visual mode begins, so it
+        never touches the message pump per motion. Accurate for a raw/plain body;
+        a close estimate for a markdown/code body whose rendered scroll maps only
+        approximately onto source lines.
+        """
+        scroll_y = int(getattr(self._detail_scroll, "scroll_y", 0) or 0)
+        if scroll_y <= 0 or self._detail_body is None:
+            return 0
+        width = max(1, int(getattr(self._detail_body.size, "width", 80) or 80))
+        consumed = 0
+        for index, line in enumerate(self._detail_visual_lines):
+            rows = max(1, -(-len(line) // width))
+            if consumed + rows > scroll_y:
+                return index
+            consumed += rows
+        return max(0, len(self._detail_visual_lines) - 1)
+
+    @_runtime.pump_only
+    def _begin_detail_visual(self) -> None:
+        """Enter visual mode: anchor at the cursor and paint the selectable source.
+
+        Presents the bounded raw source as a plain ``Text`` so native selection
+        renders and extracts identically for text, markdown, and JSON bodies —
+        ``y`` then yanks an exact source substring, mirroring the whole-source
+        ``y`` command over a range.
+        """
+        if self._current_detail_record is None or self._detail_body is None:
+            return
+        source = self._detail_body_text
+        if not source:
+            return
+        self._detail_visual_lines = tuple(source.splitlines() or [""])
+        # Seed the anchor at the top of the current viewport so ``v`` begins
+        # where the eye is on a long body instead of at line 0.
+        row = self._visual_top_visible_row()
+        col = 0
+        self._detail_visual_cursor = (row, col)
+        self._detail_visual_anchor = (row, col)
+        self._detail_visual_active = True
+        self._detail_body.update(Text(source, no_wrap=False))
+        self._render_detail_visual()
+        self.notify("visual select — hjkl move, y yank, esc cancel")
+
+    @_runtime.pump_only
+    def _move_detail_visual(self, drow: int, dcol: int) -> None:
+        """Move the selection cursor by ``drow`` lines / ``dcol`` columns."""
+        row, col = self._detail_visual_cursor
+        if drow:
+            row = max(0, min(row + drow, len(self._detail_visual_lines) - 1))
+            col = self._visual_clamp_col(row, col)
+        if dcol:
+            col = self._visual_clamp_col(row, col + dcol)
+        self._detail_visual_cursor = (row, col)
+        self._render_detail_visual()
+        self._follow_detail_visual_cursor()
+
+    @_runtime.pump_only
+    def _visual_line_edge(self, *, start: bool) -> None:
+        """Move the cursor to column 0 (``0``) or the last char (``$``)."""
+        row = self._detail_visual_cursor[0]
+        line = self._detail_visual_lines[row] if self._detail_visual_lines else ""
+        col = 0 if start else max(0, len(line) - 1)
+        self._detail_visual_cursor = (row, col)
+        self._render_detail_visual()
+        self._follow_detail_visual_cursor()
+
+    @_runtime.pump_only
+    def _visual_document_edge(self, *, top: bool) -> None:
+        """Move the cursor to the first (``g``) or last (``G``) line."""
+        row = 0 if top else max(0, len(self._detail_visual_lines) - 1)
+        col = self._visual_clamp_col(row, 0)
+        self._detail_visual_cursor = (row, col)
+        self._render_detail_visual()
+        self._follow_detail_visual_cursor()
+
+    def _detail_visual_selection(self) -> Selection:
+        """Build the inclusive :class:`Selection` for the anchor..cursor range.
+
+        tmux copy-mode selection includes the cell under the cursor, so the
+        higher offset's column is bumped by one (Textual selection ends are
+        exclusive). ``extract`` and the render both slice-clamp, so the bump is
+        safe at end-of-line.
+        """
+        (loy, lox), (hiy, hix) = sorted(
+            (self._detail_visual_anchor, self._detail_visual_cursor),
+        )
+        return Selection(Offset(lox, loy), Offset(hix + 1, hiy))
+
+    @_runtime.pump_only
+    def _render_detail_visual(self) -> None:
+        """Publish the current selection to the screen (Textual paints the highlight).
+
+        Reassigns ``screen.selections`` only; the body's resident ``Text`` is
+        re-rendered with a per-logical-line span (no re-tokenize, NB-9).
+        """
+        if self._detail_body is None:
+            return
+        self.screen.selections = {
+            t.cast("t.Any", self._detail_body): self._detail_visual_selection(),
+        }
+
+    @_runtime.pump_only
+    def _yank_detail_visual(self) -> None:
+        """Copy the selected source substring (``y`` / Enter) and exit visual mode.
+
+        Reads the widget's native ``get_selection`` over the active
+        :class:`Selection` (an exact ``(text, ending)`` extract), then copies
+        via OSC-52 ``copy_to_clipboard``. Bounded: the source is already
+        <=64 KiB and the read is O(selected).
+        """
+        if self._detail_body is None:
+            self._cancel_detail_visual()
+            return
+        selection = self._detail_visual_selection()
+        extracted = t.cast("t.Any", self._detail_body).get_selection(selection)
+        text = (
+            extracted[0]
+            if extracted is not None
+            else selection.extract(
+                self._detail_body_text,
+            )
+        )
+        self._cancel_detail_visual()
+        self.app.copy_to_clipboard(text)
+        self.notify("copied selection")
+
+    @_runtime.pump_only
+    def _cancel_detail_visual(self) -> None:
+        """Exit visual mode (``escape`` / ``q``): clear the selection and repaint."""
+        if not self._detail_visual_active:
+            return
+        self._detail_visual_active = False
+        self.screen.clear_selection()
+        if self._detail_find_active:
+            self._present_detail_find()
+        else:
+            self._paint_detail_body()
+
+    def _reset_detail_visual(self) -> None:
+        """Drop visual state on a record switch or fresh search (clears highlight)."""
+        if self._detail_visual_active:
+            self._detail_visual_active = False
+            with contextlib.suppress(Exception):
+                self.screen.clear_selection()
+        self._detail_visual_anchor = (0, 0)
+        self._detail_visual_cursor = (0, 0)
+        self._detail_visual_lines = ()
+
+    @_runtime.pump_only
+    def _follow_detail_visual_cursor(self) -> None:
+        """Best-effort scroll so the selection cursor's line stays in view.
+
+        Logical-line based; exact for unwrapped source and approximate under
+        wrapping. Guarded so a scroll hiccup never breaks a motion.
+        """
+        scroll = self._detail_scroll
+        if scroll is None:
+            return
+        row = self._detail_visual_cursor[0]
+        with contextlib.suppress(Exception):
+            height = int(getattr(scroll.size, "height", 0) or 0)
+            top = float(getattr(scroll, "scroll_y", 0) or 0)
+            if row < top:
+                scroll.scroll_to(y=row, animate=False)
+            elif height and row >= top + height:
+                scroll.scroll_to(y=max(0, row - height + 1), animate=False)
 
     def _detail_cache_key(
         self,

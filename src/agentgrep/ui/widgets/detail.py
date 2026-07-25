@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import typing as t
 
+from textual import events
 from textual.binding import Binding, BindingType
 from textual.containers import VerticalScroll
 
@@ -50,6 +51,20 @@ class DetailScroll(VerticalScroll, can_focus=True):
         Binding("y", "copy_source", "Copy src", id="detail.copy_source"),
         Binding("Y", "copy_rendered", "Copy rendered", id="detail.copy_rendered"),
     ]
+
+    def on_key(self, event: events.Key) -> None:
+        """Intercept keys for tmux-style visual select before the scroll bindings.
+
+        ``on_key`` runs on the focused widget as the event bubbles, before the
+        app checks (non-priority) bindings, so consuming the event here (``v``
+        to begin, then the vi motions / ``y`` / ``escape`` while active)
+        preempts the stock ``hjkl`` scroll and ``y`` copy-source bindings
+        without touching them. Outside visual mode the screen returns ``False``
+        and the normal bindings run unchanged.
+        """
+        if t.cast("t.Any", self.screen).handle_detail_visual_key(event):
+            event.stop()
+            event.prevent_default()
 
     def action_open_find(self) -> None:
         """Open the find-in-detail bar (``/`` or ``ctrl+f``); no-op without a record."""
