@@ -48,7 +48,20 @@ type FindProfileType = t.Literal["prompts", "history", "sessions", "all"]
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class EnginePhaseSample:
-    """One profiled engine phase or subprocess call."""
+    """One profiled engine phase or subprocess call.
+
+    Attributes
+    ----------
+    name : str
+        Span name, e.g. ``"search.plan"``, ``"search.collect.source"``, or
+        ``"subprocess.run"``.
+    duration_seconds : float
+        Wall-clock seconds the span covered, clamped at zero. Aggregate rows that carry
+        only counts, such as the discovery and planner-decision groups, record ``0.0``.
+    attributes : ProfileAttributes
+        Scalar span metadata — agent, store, adapter, strategy, counts. Empty when the
+        span carries none. Holds no prompt text, argv, or local paths.
+    """
 
     name: str
     duration_seconds: float
@@ -65,7 +78,14 @@ class EnginePhaseSample:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class EngineProfile:
-    """Immutable snapshot of collected engine profile samples."""
+    """Immutable snapshot of collected engine profile samples.
+
+    Attributes
+    ----------
+    samples : tuple[EnginePhaseSample, ...]
+        Recorded spans in the order they were recorded, so a nested span appears after
+        the spans it contains.
+    """
 
     samples: tuple[EnginePhaseSample, ...]
 
@@ -172,7 +192,22 @@ def _command_family(command: cabc.Sequence[str]) -> str:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ProfiledSearchResult:
-    """Search results plus phase timings and source counts."""
+    """Search results plus phase timings and source counts.
+
+    Attributes
+    ----------
+    records : tuple[SearchRecord, ...]
+        Records the profiled run collected. Empty when the run was cancelled before
+        collection started.
+    profile : EngineProfile
+        Spans recorded across discovery, planning, and collection.
+    discovered_source_count : int
+        Sources discovery returned, before source-predicate pruning and planning.
+    planned_source_count : int
+        Source tasks the physical plan carried into execution; the gap against
+        ``discovered_source_count`` is what scope, predicate, and prefilter pruning
+        removed.
+    """
 
     records: tuple[SearchRecord, ...]
     profile: EngineProfile
@@ -197,7 +232,19 @@ class ProfiledSearchResult:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ProfiledFindResult:
-    """Find results plus phase timings and source counts."""
+    """Find results plus phase timings and source counts.
+
+    Attributes
+    ----------
+    records : tuple[FindRecord, ...]
+        Sources the profiled ``find`` run kept, one record each, truncated at the
+        requested limit.
+    profile : EngineProfile
+        Spans recorded across discovery and per-source filtering.
+    discovered_source_count : int
+        Sources discovery returned, before the source predicate, type filter, and path
+        pattern ran.
+    """
 
     records: tuple[FindRecord, ...]
     profile: EngineProfile
