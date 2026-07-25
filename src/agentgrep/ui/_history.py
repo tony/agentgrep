@@ -47,7 +47,19 @@ DISK_CAP = 1000
 
 
 class HistoryEntry(t.NamedTuple):
-    """One recalled search query: the raw text, its unix ts, and launch scope."""
+    """One recalled search query: the raw text, its unix ts, and launch scope.
+
+    Attributes
+    ----------
+    text : str
+        Query text exactly as the user typed it, stripped and capped at
+        :data:`QUERY_TEXT_MAX_CHARS`.
+    ts : float
+        Unix timestamp of when the query ran, used to order recall newest-first.
+    scope : str
+        Scope the query launched under, or ``""`` when the record carried none. Recorded
+        for a future scope filter; nothing reads it today.
+    """
 
     text: str
     ts: float

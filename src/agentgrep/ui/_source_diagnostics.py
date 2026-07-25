@@ -22,7 +22,16 @@ __all__ = [
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceScanStarted:
-    """One UI-private source-start marker coalesced with a progress snapshot."""
+    """One UI-private source-start marker coalesced with a progress snapshot.
+
+    Attributes
+    ----------
+    source_id : int
+        Index identifying this source for the run, which the matching
+        :class:`SourceScanFinished` repeats so concurrent scans stay paired.
+    store : str
+        Store label shown in the slow-source row.
+    """
 
     source_id: int
     store: str
@@ -30,7 +39,17 @@ class SourceScanStarted:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceScanFinished:
-    """One UI-private source-finish marker coalesced with a progress snapshot."""
+    """One UI-private source-finish marker coalesced with a progress snapshot.
+
+    Attributes
+    ----------
+    source_id : int
+        Index of the source this closes, matching the :class:`SourceScanStarted` that
+        opened it. An unknown id is ignored.
+    finished_at : float
+        Worker-side :func:`time.monotonic` reading taken as the source completed, so a
+        backlog in the UI pump cannot stretch the duration this marker closes.
+    """
 
     source_id: int
     finished_at: float
@@ -41,7 +60,16 @@ type SourceScanLifecycle = SourceScanStarted | SourceScanFinished
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class UiProgressSnapshot:
-    """A canonical snapshot plus its TUI-only source lifecycle marker."""
+    """A canonical snapshot plus its TUI-only source lifecycle marker.
+
+    Attributes
+    ----------
+    snapshot : ProgressSnapshot
+        The frontend-neutral progress snapshot the engine emitted, unchanged.
+    lifecycle : SourceScanLifecycle
+        The start or finish marker that coincided with ``snapshot``. Only snapshots
+        carrying one are wrapped, so this is never absent.
+    """
 
     snapshot: ProgressSnapshot
     lifecycle: SourceScanLifecycle

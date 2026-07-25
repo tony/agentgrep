@@ -39,6 +39,26 @@ class SlashCommand:
     the active layout and the raw argument remainder (everything after the
     command token), then reports whether execution succeeded. ``argument_hint``
     is display-only; ``accepts_args`` independently controls dispatch.
+
+    Attributes
+    ----------
+    name : str
+        Canonical token, without the leading ``/``, shown in the menu and used in help.
+    aliases : tuple[str, ...]
+        Extra tokens that resolve to this command. ``()`` leaves ``name`` the only
+        spelling.
+    description : str
+        One-line summary rendered in the ``/`` menu and by ``/help``.
+    run : cabc.Callable[[t.Any, str], bool]
+        Handler taking the active layout and the raw argument remainder, returning
+        whether the command did its work. The layout is typed ``t.Any`` so this module
+        never imports a Textual class.
+    argument_hint : str
+        Placeholder appended to ``name`` in menu labels, such as ``<pane>``. ``""``
+        renders the bare name.
+    accepts_args : bool
+        Whether a typed remainder reaches ``run``. ``False`` makes dispatch reject the
+        whole line when anything follows the token, rather than dropping it silently.
     """
 
     name: str

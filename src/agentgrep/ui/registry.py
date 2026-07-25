@@ -34,7 +34,21 @@ __all__ = [
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LayoutSpec:
-    """A registered layout: its stable name, one-line summary, and lazy loader."""
+    """A registered layout: its stable name, one-line summary, and lazy loader.
+
+    Attributes
+    ----------
+    name : str
+        Injected name callers select the layout by, unique within :data:`LAYOUTS`.
+    summary : str
+        One-line description of the surface, shown when the layouts are listed.
+    loader : cabc.Callable[[], type[LayoutScreen]]
+        Zero-argument callable importing and returning the screen class. Deferred so
+        reading the registry never imports Textual.
+    uses_history : bool
+        Whether this layout has a search box whose queries are persisted and recalled.
+        ``False`` leaves the history file untouched for the session.
+    """
 
     name: str
     summary: str
@@ -44,7 +58,18 @@ class LayoutSpec:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class WorkflowSpec:
-    """A registered workflow: its stable name, summary, and lazy loader."""
+    """A registered workflow: its stable name, summary, and lazy loader.
+
+    Attributes
+    ----------
+    name : str
+        Injected name callers select the workflow by, unique within :data:`WORKFLOWS`.
+    summary : str
+        One-line description of what typing in the search box does under this workflow.
+    loader : cabc.Callable[[], type[Workflow]]
+        Zero-argument callable importing and returning the workflow class. Deferred so
+        reading the registry never imports Textual.
+    """
 
     name: str
     summary: str
