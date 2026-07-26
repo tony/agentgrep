@@ -273,7 +273,10 @@ convention = "numpy"
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
 # more naturally as one line than wrapped.
 "scripts/benchmark.py" = ["B008", "E501"]
-"scripts/mcp_swap.py" = ["T201"]
+# The config swap restores the original bytes on any failure of the write or
+# the revalidation that follows it. Narrowing the handler would let some
+# failure modes leave a third-party CLI's config half-rewritten.
+"scripts/mcp_swap.py" = ["T201", "BLE001"]
 # The documentation harness exists to run the Python examples embedded in the
 # docs; `exec` of a compiled example in an isolated namespace is its whole
 # job, not an untrusted-input hazard. Whatever an example raises is the result
