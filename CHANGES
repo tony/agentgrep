@@ -42,6 +42,14 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Fixes
+
+#### Keep detail scroll status on the selected result (#148)
+
+Queued scroll updates from a previously selected result no longer replace the
+detail status for the current result. Returning to a result still restores its
+last scroll position.
+
 ### Documentation
 
 #### Class fields describe themselves in the API reference (#144)
@@ -51,6 +59,13 @@ They previously reached the rendered API reference as "Alias for field
 number 0" or as a bare name carrying only its type.
 
 ### Development
+
+#### Focused default TUI layout boundaries (#148)
+
+The default TUI now separates search and result streaming, detail interaction,
+and deterministic body rendering into focused modules. The detail scroll
+widget owns per-result positions, while the public layout type and key bindings
+remain unchanged.
 
 #### CI actions updated to current majors
 
