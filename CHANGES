@@ -36,11 +36,23 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a43 (Yet to be released)
+## agentgrep 0.1.0a44 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a43 (2026-07-26)
+
+agentgrep 0.1.0a43 tightens the interactive TUI's detail pane and the
+rendered API reference. Selecting a result now keeps that result's own
+scroll status, so a slower render from a result you already moved away
+from can no longer overwrite it, and returning to a result still restores
+where you left off. The record, query, and CLI argument types describe
+every field they carry instead of reaching the API reference as bare
+names. Behind the default TUI, search streaming, detail interaction, and
+body rendering are now separate modules, with the public layout type and
+key bindings unchanged.
 
 ### Fixes
 
