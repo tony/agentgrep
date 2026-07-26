@@ -119,12 +119,10 @@ conf["fastmcp_section_badge_map"] = {
     "Diagnostic": "readonly",
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
-conf["doctest_global_setup"] = "\n".join(
-    (
-        "import pathlib",
-        "from agentgrep import format_timestamp_tig",
-        "from agentgrep.store_catalog import gemini_project_hash",
-    )
+conf["doctest_global_setup"] = (
+    "import pathlib\n"
+    "from agentgrep import format_timestamp_tig\n"
+    "from agentgrep.store_catalog import gemini_project_hash"
 )
 
 # IBM Plex Mono 400 italic shows up on every page that has a syntax-

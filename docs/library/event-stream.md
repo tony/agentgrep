@@ -237,6 +237,7 @@ from agentgrep import events
 async def update_ui(home, query, render_record):
     def _drain() -> list[events.SearchEvent]:
         return list(agentgrep.iter_search_events(home, query))
+
     for event in await asyncio.to_thread(_drain):
         if isinstance(event, events.RecordEmitted):
             render_record(event.record)

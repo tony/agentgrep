@@ -74,7 +74,7 @@ dev = [
   # Sphinx, but pinned here so the lexer and its test stay importable.
   "pygments",
   # Lint / typecheck
-  "ruff",
+  "ruff>=0.16.0",
   "ty>=0.0.58",
   # scripts/mcp_swap.py is a PEP 723 standalone with `tomlkit` as its only
   # third-party dependency. Keep tomlkit in the dev group so the module remains
@@ -201,7 +201,10 @@ target-version = "py314"
 line-length = 100
 
 [tool.ruff.lint]
-select = [
+# `select` is deliberately unset: ruff 0.16 enables a curated default rule
+# set, and an explicit `select` would replace it rather than extend it.
+# `extend-select` layers this project's additional linters on top.
+extend-select = [
   "E", # pycodestyle
   "F", # pyflakes
   "I", # isort
@@ -270,7 +273,41 @@ convention = "numpy"
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
 # more naturally as one line than wrapped.
 "scripts/benchmark.py" = ["B008", "E501"]
-"scripts/mcp_swap.py" = ["T201"]
+# The config swap restores the original bytes on any failure of the write or
+# the revalidation that follows it. Narrowing the handler would let some
+# failure modes leave a third-party CLI's config half-rewritten.
+"scripts/mcp_swap.py" = ["T201", "BLE001"]
+# The documentation harness exists to run the Python examples embedded in the
+# docs; `exec` of a compiled example in an isolated namespace is its whole
+# job, not an untrusted-input hazard. Whatever an example raises is the result
+# the harness reports, so it catches BaseException and turns it into a redacted
+# EvaluationResult rather than letting one bad example abort collection.
+"src/pytest_documentation/evaluators.py" = ["S102", "BLE001"]
+# The HUD layout is a chain of base classes, and each link re-exports the
+# detail cache/find key aliases the next one needs. `X as X` is the explicit
+# re-export form: drop the alias and F401 flags the import instead, since
+# neither module uses the name itself. BLE001 covers the wrap-aware scroll
+# helper, which reaches into Rich's private line divider: any breakage there
+# falls back to the logical-line estimate rather than raising on the pump. The
+# alias chain continues in `_hud_search.py`, listed under the next note.
+"src/agentgrep/ui/layouts/_hud_detail_interaction.py" = ["PLC0414", "BLE001"]
+# A scan worker runs on its own thread, where an escaping exception dies
+# silently and leaves the consumer waiting. These handlers catch BaseException
+# so the failure is forwarded as a queued failure item or an error event and
+# re-raised (engine) or reported (TUI) on the consuming side.
+"src/agentgrep/_engine/scheduling.py" = ["BLE001"]
+"src/agentgrep/_engine/search.py" = ["BLE001"]
+"src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414", "BLE001"]
+"src/agentgrep/ui/layouts/greplog.py" = ["BLE001"]
+# Catalog inspection walks whatever an adapter can parse out of a real store,
+# so any reader failure is data the client asked about. The MCP contract is to
+# return it as `error_message` with its exception type, not to fail the tool
+# call, which means the handler has to accept every exception a reader raises.
+"src/agentgrep/mcp/tools/catalog_tools.py" = ["BLE001"]
+# Theme persistence is best-effort background bookkeeping on a writer thread:
+# it already narrows the expected OSError internally, and a preferences file
+# the user cannot write must never take the TUI down with it.
+"src/agentgrep/ui/_shell.py" = ["BLE001"]
 
 [tool.pytest.ini_options]
 addopts = [

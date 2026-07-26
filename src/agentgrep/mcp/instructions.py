@@ -82,17 +82,15 @@ _INSTR_PRIVACY = (
     "outside the immediate request scope."
 )
 
-_BASE_INSTRUCTIONS = "\n\n".join(
-    (
-        _INSTR_HEADER,
-        _INSTR_SCOPE,
-        _INSTR_SEARCH_VS_DISCOVERY,
-        _INSTR_DEFAULTS,
-        _INSTR_QUERY,
-        _INSTR_RESULT_LOOP,
-        _INSTR_RESOURCES,
-        _INSTR_PRIVACY,
-    )
+_BASE_INSTRUCTIONS = (
+    f"{_INSTR_HEADER}\n\n"
+    f"{_INSTR_SCOPE}\n\n"
+    f"{_INSTR_SEARCH_VS_DISCOVERY}\n\n"
+    f"{_INSTR_DEFAULTS}\n\n"
+    f"{_INSTR_QUERY}\n\n"
+    f"{_INSTR_RESULT_LOOP}\n\n"
+    f"{_INSTR_RESOURCES}\n\n"
+    f"{_INSTR_PRIVACY}"
 )
 
 

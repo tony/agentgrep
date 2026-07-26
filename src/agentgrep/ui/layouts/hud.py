@@ -16,6 +16,7 @@ from collections import abc as cabc
 from rich.text import Text
 from textual.binding import Binding, BindingType
 from textual.containers import Center, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Footer, Static
 
@@ -835,7 +836,7 @@ class HudLayout(_HudSearchBase):
     def _focus_widget_by_id(self, widget_id: str) -> None:
         try:
             target = self.query_one(f"#{widget_id}")
-        except Exception:
+        except NoMatches:
             return
         target_pane: t.Literal["results", "detail"] | None = None
         if widget_id in {"results", "filter"}:
