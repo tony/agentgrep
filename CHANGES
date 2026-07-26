@@ -42,6 +42,15 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### Lint floor moved to ruff 0.16 (#149)
+
+Minimum `ruff>=0.16.0` (was unpinned). 0.16.0 stabilizes `sorted-min-max`
+(`FURB192`) out of preview, and starts formatting Python code blocks inside
+Markdown, so `ruff format` now covers the docs tree alongside `src/` and
+`tests/`.
+
 ## agentgrep 0.1.0a43 (2026-07-26)
 
 agentgrep 0.1.0a43 tightens the interactive TUI's detail pane and the
