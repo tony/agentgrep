@@ -22,16 +22,44 @@ import pydantic
 
 
 class StoreFormat(enum.StrEnum):
-    """On-disk encoding of a store's payload."""
+    """On-disk encoding of a store's payload.
+
+    Descriptive only: it tells a reader what the bytes look like, including for
+    rows agentgrep never opens. The parse format an adapter actually uses is
+    :attr:`DiscoverySpec.source_kind`.
+    """
 
     JSONL = "jsonl"
+    """One JSON object per line, appended as the agent writes records."""
+
     JSON_ARRAY = "json_array"
+    """The whole file is one JSON array; each element is a record."""
+
     JSON_OBJECT = "json_object"
+    """The whole file is one JSON object — a config, a task, a single document."""
+
     SQLITE = "sqlite"
+    """A SQLite database; records live in tables an adapter queries."""
+
     TEXT = "text"
+    """Plain text read as written, such as instruction files and logs."""
+
     MARKDOWN_FRONTMATTER = "md_frontmatter"
+    """Markdown body under a YAML frontmatter header carrying the metadata."""
+
     PROTOBUF = "protobuf"
+    """Protobuf-serialised payload, usually a ``.pb`` file.
+
+    Some decode; the loose Antigravity and Windsurf conversation files are
+    encrypted or custom-encoded and readable only as bytes.
+    """
+
     OPAQUE = "opaque"
+    """Bytes with no format agentgrep claims to read, or a whole directory tree.
+
+    Secret stores, caches, and worktrees are catalogued for their location
+    alone.
+    """
 
 
 class StoreRole(enum.StrEnum):
@@ -44,52 +72,133 @@ class StoreRole(enum.StrEnum):
     """
 
     PRIMARY_CHAT = "primary_chat"
+    """The agent's full per-thread transcript — its canonical conversation record.
+
+    The role conversation scope enumerates. Prompt scope reaches it only for
+    agents that have no ``PROMPT_HISTORY`` store of their own.
+    """
+
     SUPPLEMENTARY_CHAT = "supplementary_chat"
+    """Conversation content beside the primary transcript.
+
+    Sub-agent transcripts, checkpoints, conversation summaries, and
+    post-retention archives. Counted as a chat role for scope decisions, so it
+    reaches the same scopes as ``PRIMARY_CHAT``.
+    """
+
     PROMPT_HISTORY = "prompt_history"
+    """A flat log of the prompts a user typed, appended across every thread.
+
+    The store the default prompt scope goes to first. An agent that has one
+    never falls back to its chat stores for that scope.
+    """
+
     PERSISTENT_MEMORY = "persistent_memory"
+    """Facts the agent carries between sessions.
+
+    Memory files and memory tables steer future runs rather than recording a
+    past one, so they stay out of default search.
+    """
+
     PLAN = "plan"
+    """A plan the agent wrote for a task, such as a plan file or a goal record."""
+
     TODO = "todo"
+    """Task and todo lists the agent maintains for its own work in progress."""
+
     INSTRUCTION = "instruction"
+    """Standing instructions loaded into the agent's behaviour.
+
+    Skills, commands, rules, and project instruction files. They describe
+    future sessions rather than record past ones.
+    """
+
     APP_STATE = "app_state"
+    """The agent's own bookkeeping: config, session indexes, logs, auth records.
+
+    A few of these hold conversation content despite the role, and are admitted
+    to conversation scope by name through
+    :data:`~agentgrep.records.CONVERSATION_CONTENT_STORES` rather than by
+    reclassifying the row.
+    """
+
     CACHE = "cache"
+    """Derived data the agent can regenerate: model caches, cloned repos, overflow output."""
+
     SOURCE_TREE = "source_tree"
+    """Working copies of the user's code the agent kept — worktrees and file snapshots.
+
+    Catalogued so an adapter does not index source code as history; searching
+    one returns the user's files, not their conversations.
+    """
+
     UNKNOWN = "unknown"
+    """A store whose purpose has not been classified.
+
+    Records a location before anyone has decided what it holds. No search
+    policy keys off it.
+    """
 
 
 class StoreCoverage(enum.StrEnum):
-    """How agentgrep treats a known store at runtime.
-
-    ``DEFAULT_SEARCH`` stores are opened by normal search and find flows.
-    ``INSPECTABLE`` stores are hidden from the default prompt scope but are
-    opt-in searchable: ``--scope conversations`` and ``--scope all`` open them,
-    and inventory tools list them. ``CATALOG_ONLY`` stores are never searched at
-    any scope — inventory tools list them and ``find`` enumerates the ones that
-    carry discovery specs, but their payloads are config, logs, caches, or
-    undecodable bytes rather than recall content. ``PRIVATE`` stores are
-    documented in the catalogue but intentionally not enumerated from disk.
-    """
+    """How agentgrep treats a known store at runtime."""
 
     DEFAULT_SEARCH = "default_search"
+    """Opened by normal search and find flows."""
+
     INSPECTABLE = "inspectable"
+    """Hidden from the default prompt scope, but opt-in searchable.
+
+    ``--scope conversations`` and ``--scope all`` open these, and inventory
+    tools list them.
+    """
+
     CATALOG_ONLY = "catalog_only"
+    """Never searched at any scope.
+
+    Inventory tools list them and ``find`` enumerates the ones that carry
+    discovery specs, but their payloads are config, logs, caches, or
+    undecodable bytes rather than recall content.
+    """
+
     PRIVATE = "private"
+    """Documented in the catalogue but intentionally not enumerated from disk."""
 
 
 class VersionDetectionStrategy(enum.StrEnum):
     """How agentgrep detected a concrete source's app or data version."""
 
     VERSION_CHECK = "version_check"
+    """A local version file supplied the app version, without spawning the agent's CLI."""
+
     EMBEDDED_METADATA = "embedded_metadata"
+    """The source carried a version field of its own, such as a session metadata record."""
+
     SHAPE_INFERENCE = "shape_inference"
+    """The file name, record keys, table names, or SQLite suffix identified the shape."""
+
     CATALOG_OBSERVATION = "catalog_observation"
+    """No evidence came from the source, so the row's ``observed_version`` stands in.
+
+    The fallback detection, always reported at
+    :attr:`VersionDetectionConfidence.LOW`.
+    """
 
 
 class VersionDetectionConfidence(enum.StrEnum):
     """Confidence level for a detected source version."""
 
     HIGH = "high"
+    """The source pinned itself: a version field it carries, or a key set unique to one shape."""
+
     MEDIUM = "medium"
+    """The source parsed as its expected kind, but nothing in it named a version.
+
+    The catalogue's shape is the best match rather than a proven one.
+    """
+
     LOW = "low"
+    """Nothing in the source spoke to its version; the catalogue stamp is all there is."""
 
 
 AgentName = t.Literal[
@@ -136,6 +245,7 @@ class DiscoverySpec(pydantic.BaseModel):
     """
 
     model_config = pydantic.ConfigDict(frozen=True)
+    """Pydantic settings. Frozen: a spec is fixed once the catalogue is built."""
 
     store: str
     """Runtime store key (e.g. ``"claude.projects"``)."""
@@ -188,6 +298,7 @@ class StoreDescriptor(pydantic.BaseModel):
     """
 
     model_config = pydantic.ConfigDict(frozen=True)
+    """Pydantic settings. Frozen: a descriptor is fixed once the catalogue is built."""
 
     agent: AgentName
     """The CLI agent that owns this store."""
@@ -288,6 +399,7 @@ class StoreCatalog(pydantic.BaseModel):
     """Versioned registry of every store agentgrep knows about."""
 
     model_config = pydantic.ConfigDict(frozen=True)
+    """Pydantic settings. Frozen: the registry is fixed once it is built."""
 
     catalog_version: int = 1
     """Bump on PRs that change descriptor shape or add/remove entries."""
@@ -296,6 +408,11 @@ class StoreCatalog(pydantic.BaseModel):
     """Date the catalogue snapshot was taken."""
 
     stores: tuple[StoreDescriptor, ...]
+    """Every descriptor in the registry, grouped by owning agent.
+
+    Lookups scan it in order; :meth:`by_id` and :meth:`for_agent` are the
+    intended accessors.
+    """
 
     def by_id(self, store_id: str) -> StoreDescriptor:
         """Return the descriptor with the given ``store_id``.

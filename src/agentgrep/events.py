@@ -68,6 +68,13 @@ class _BaseEvent(pydantic.BaseModel):
         extra="forbid",
         arbitrary_types_allowed=True,
     )
+    """Pydantic settings shared by every event.
+
+    Frozen so a fan-out subscriber cannot mutate what the next subscriber
+    receives, extra fields rejected so a typo is a validation error rather than
+    a silently ignored keyword, and arbitrary types allowed so events can embed
+    agentgrep's record dataclasses without a pydantic copy.
+    """
 
 
 class SearchStarted(_BaseEvent):
@@ -76,6 +83,16 @@ class SearchStarted(_BaseEvent):
     Emitted exactly once per :func:`agentgrep.iter_search_events` call,
     immediately after :func:`agentgrep.discover_sources` returns and
     before the first :class:`SourceStarted` event.
+
+    Attributes
+    ----------
+    type : t.Literal["search_started"]
+        Discriminator tag marking the event as the head of a search stream.
+        :data:`SearchEvent` validates and narrows the union on it.
+    source_count : int
+        Sources the planner kept for this run, after discovery and query-level
+        pruning. Zero means the stream ends without a single
+        :class:`SourceStarted`.
     """
 
     type: t.Literal["search_started"] = "search_started"
@@ -85,11 +102,20 @@ class SearchStarted(_BaseEvent):
 class SourceStarted(_BaseEvent):
     """One source has been picked up and is about to be scanned.
 
-    ``index`` is 1-based; ``total`` matches the ``source_count`` from
-    the preceding :class:`SearchStarted` event. ``adapter_id`` uniquely
-    identifies the source (e.g. ``codex.sessions_jsonl.v1``); the full
-    path is on the :class:`SourceFinished` event's ``records_seen`` /
-    ``matches_seen`` tally if a consumer wants per-source detail.
+    Attributes
+    ----------
+    type : t.Literal["source_started"]
+        Discriminator tag marking the start of one source's scan.
+        :data:`SearchEvent` validates and narrows the union on it.
+    adapter_id : str
+        Adapter reading this source, e.g. ``codex.sessions_jsonl.v1``. It names
+        the parse shape rather than the individual file, so every file a
+        discovery glob matched shares one value.
+    index : int
+        Position of this source in the scan, counting from one.
+    total : int
+        Sources this scan covers, matching the preceding
+        :class:`SearchStarted` event's ``source_count``.
     """
 
     type: t.Literal["source_started"] = "source_started"
@@ -110,6 +136,16 @@ class RecordEmitted(_BaseEvent):
     unmodified, so transport-layer consumers should serialise the
     record via :class:`agentgrep.mcp.models.SearchRecordModel` at the
     boundary.
+
+    Attributes
+    ----------
+    type : t.Literal["record_emitted"]
+        Discriminator tag marking the one event that carries a search result.
+        :data:`SearchEvent` validates and narrows the union on it, and it is
+        what a consumer filters on to ignore progress traffic.
+    record : SearchRecord
+        The accepted record, already deduped against the ones emitted before
+        it. No other event in the stream carries a result.
     """
 
     type: t.Literal["record_emitted"] = "record_emitted"
@@ -119,11 +155,20 @@ class RecordEmitted(_BaseEvent):
 class SourceFinished(_BaseEvent):
     """One source finished scanning. Carries per-source counters.
 
-    ``records_seen`` is every record the adapter parsed from this source;
-    ``matches_seen`` is the subset that matched the query (pre-dedup).
-    The dedup decision happens later in the engine, so a
-    :class:`RecordEmitted` event may fire for fewer records than
-    ``matches_seen`` reports.
+    Attributes
+    ----------
+    type : t.Literal["source_finished"]
+        Discriminator tag marking the end of one source's scan.
+        :data:`SearchEvent` validates and narrows the union on it.
+    adapter_id : str
+        Adapter that read this source, matching the :class:`SourceStarted`
+        event that opened it.
+    records_seen : int
+        Records the adapter parsed out of this source, matched or not.
+    matches_seen : int
+        Records that matched the query, before dedup. Dedup happens later in
+        the engine, so fewer :class:`RecordEmitted` events may fire than this
+        counts.
     """
 
     type: t.Literal["source_finished"] = "source_finished"
@@ -135,10 +180,20 @@ class SourceFinished(_BaseEvent):
 class SearchFinished(_BaseEvent):
     """Scan complete. Emitted exactly once per stream.
 
-    ``match_count`` is the total of unique, included records — every
-    :class:`RecordEmitted` that fired earlier counts once. Always the
-    last event in a stream that ran to completion. A stream that
+    Always the last event in a stream that ran to completion. A stream that
     raised an exception mid-scan will skip this event.
+
+    Attributes
+    ----------
+    type : t.Literal["search_finished"]
+        Discriminator tag marking the tail of a search stream.
+        :data:`SearchEvent` validates and narrows the union on it.
+    match_count : int
+        Unique, included records for the whole search — every
+        :class:`RecordEmitted` that fired earlier counts once.
+    elapsed_seconds : float
+        Monotonic seconds the search took, counted from before discovery, so
+        it covers planning as well as scanning.
     """
 
     type: t.Literal["search_finished"] = "search_finished"
@@ -167,6 +222,15 @@ class FindStarted(_BaseEvent):
     Emitted exactly once per :func:`agentgrep.iter_find_events` call.
     Unlike search, find has no per-source scan loop, so there is no
     ``SourceStarted`` / ``SourceFinished`` event pair.
+
+    Attributes
+    ----------
+    type : t.Literal["find_started"]
+        Discriminator tag marking the head of a find stream.
+        :data:`FindEvent` validates and narrows the union on it.
+    source_count : int
+        Sources discovery returned, before the pattern and predicate filters
+        run. It is the ceiling on the records that follow, not their count.
     """
 
     type: t.Literal["find_started"] = "find_started"
@@ -180,6 +244,15 @@ class FindRecordEmitted(_BaseEvent):
     ``arbitrary_types_allowed`` trade-off as :class:`RecordEmitted`:
     consumers get the dataclass directly; transport-layer consumers
     convert via :class:`agentgrep.mcp.models.FindRecordModel`.
+
+    Attributes
+    ----------
+    type : t.Literal["find_record_emitted"]
+        Discriminator tag marking the one event that carries a discovered
+        source. :data:`FindEvent` validates and narrows the union on it.
+    record : FindRecord
+        The discovered source, one per enumerated file. Find never opens the
+        file, so the record describes the location rather than its contents.
     """
 
     type: t.Literal["find_record_emitted"] = "find_record_emitted"
@@ -187,7 +260,19 @@ class FindRecordEmitted(_BaseEvent):
 
 
 class FindFinished(_BaseEvent):
-    """Enumeration complete. ``match_count`` totals the emitted records."""
+    """Enumeration complete.
+
+    Attributes
+    ----------
+    type : t.Literal["find_finished"]
+        Discriminator tag marking the tail of a find stream.
+        :data:`FindEvent` validates and narrows the union on it.
+    match_count : int
+        Records emitted, one per source that passed the filters. Stops at the
+        caller's limit when one was set.
+    elapsed_seconds : float
+        Monotonic seconds the enumeration took, counted from before discovery.
+    """
 
     type: t.Literal["find_finished"] = "find_finished"
     match_count: int

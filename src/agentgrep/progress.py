@@ -263,6 +263,11 @@ class ConsoleSearchProgress:
     """Human progress reporter for potentially long searches."""
 
     _SPINNER_FRAMES: t.ClassVar[str] = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    """Braille frames the TTY loop cycles, one per refresh interval.
+
+    Each frame is one cell wide, so the progress line's width budget does not
+    change as the spinner turns.
+    """
 
     def __init__(
         self,
@@ -869,6 +874,12 @@ class StreamingSearchProgress:
     """
 
     _FLUSH_INTERVAL_SECONDS: t.ClassVar[float] = 0.05
+    """Batching window between automatic buffer flushes.
+
+    :meth:`record_added` releases the buffer once this much time has passed
+    since the last flush, so a fast search emits batches instead of one event
+    per record. Terminal events and explicit :meth:`flush` calls ignore it.
+    """
 
     def __init__(self, emit: cabc.Callable[[object], None]) -> None:
         self._emit = emit
