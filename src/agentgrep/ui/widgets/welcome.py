@@ -37,8 +37,10 @@ def _welcome_wordmark(offset: int = 0) -> Content:
         *(
             (
                 character,
-                "bold $ag-brand-shine-"
-                f"{_WELCOME_BRAND_SHINE[(index + offset) % len(_WELCOME_BRAND_SHINE)]}",
+                (
+                    "bold $ag-brand-shine-"
+                    f"{_WELCOME_BRAND_SHINE[(index + offset) % len(_WELCOME_BRAND_SHINE)]}"
+                ),
             )
             for index, character in enumerate("agentgrep")
         ),
