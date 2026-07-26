@@ -13,6 +13,7 @@ from textual.geometry import Offset
 from textual.selection import Selection
 
 from agentgrep.ui import _runtime, _streaming, theme as ui_theme
+from agentgrep.ui._detail_render import apply_filter_highlight
 from agentgrep.ui.layouts._hud_detail import (
     _DetailCacheKey as _DetailCacheKey,
     _HudDetailBase,
@@ -439,7 +440,11 @@ class _HudDetailInteractionBase(_HudDetailBase):
                 case_sensitive=self.search_query.case_sensitive,
                 style=self._match_style("search"),
             )
-        self._apply_filter_highlight(text)
+        apply_filter_highlight(
+            text,
+            terms=self._filter_terms,
+            style=self._match_style("filter"),
+        )
         self._detail_find_base = text
         self._detail_find_base_key = key
         return text

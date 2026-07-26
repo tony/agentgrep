@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import functools
-import json
 import pathlib
 import typing as t
 from collections import abc as cabc
 
-from rich.console import Console as _RichConsole
-from rich.markdown import Markdown as _RichMarkdown
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
 
@@ -18,44 +14,27 @@ from agentgrep._text import (
     DETAIL_BODY_MAX_CHARS,
     DETAIL_BODY_MAX_LINES,
     detect_content_format,
-    find_first_match_line,
     format_compact_path,
     format_display_path,
     looks_like_code,
-    looks_like_markup,
     truncate_lines,
 )
 from agentgrep._types import StreamingAppLike
 from agentgrep.records import SearchRecord
-from agentgrep.ui import _runtime, _streaming, theme as ui_theme
+from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._detail_render import (
+    DetailRenderRequest,
+    DetailRenderResult,
+    build_detail_body,
+)
 from agentgrep.ui.format import scroll_percent
-from agentgrep.ui.highlighter import MarkupHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
 from agentgrep.ui.widgets import DetailScrollChanged
-
-
-class _DetailMatchStyles(t.NamedTuple):
-    """Rich styles resolved on the pump before optional detail offload."""
-
-    search: str
-    filter: str
-
 
 # The trailing ``int`` is the body render width: markdown is baked to a styled
 # ``Text`` at a fixed pane width off-thread, so a resize-then-revisit must miss
 # the LRU rather than return a stale-width render.
 _DetailCacheKey = tuple[int, tuple[str, ...], bool, bool, tuple[str, ...], int]
-# ``(renderable, source_for_find, rendered_plain)``: the paint renderable, the
-# text find scans/scrolls against, and the flattened text ``Y`` copies.
-_DetailBody = tuple[object, str, str]
-_DETAIL_RICH_FORMAT_MAX_CHARS = 2048
-
-#: Bytes of a body sampled for the off-pump Pygments language guess.
-_CODE_GUESS_SAMPLE_BYTES = 4096
-
-#: Minimum Pygments ``analyse_text`` confidence to syntax-highlight a body as
-#: code. Real code scores near 1.0; prose scores ~0.01, so this rejects prose.
-_CODE_GUESS_MIN_CONFIDENCE = 0.3
 _RichSyntaxType = _RichSyntax
 
 
@@ -215,10 +194,8 @@ class _HudDetailBase(LayoutScreen):
         self._detail_rendered_plain = body_truncated
         self._detail_find_source = ""
         self._detail_find_json_syntax = False
-        match_styles = _DetailMatchStyles(
-            search=self._match_style("search"),
-            filter=self._match_style("filter"),
-        )
+        search_style = self._match_style("search")
+        filter_style = self._match_style("filter")
         syntax_theme = ui_theme.detail_syntax_theme(
             dark=self.app.current_theme.dark,
             theme_name=self.app.theme,
@@ -245,20 +222,23 @@ class _HudDetailBase(LayoutScreen):
             and len(body_truncated) <= self._DETAIL_ASYNC_BODY_THRESHOLD
             and not looks_like_code(body_truncated)
         )
+        render_request = DetailRenderRequest(
+            body_text=body_truncated,
+            query_terms=query_terms,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            filter_terms=filter_terms,
+            search_style=search_style,
+            filter_style=filter_style,
+            syntax_theme=syntax_theme,
+            render_width=width,
+            guess_code=not inline_ok,
+        )
         if inline_ok:
             self._present_detail(
                 record,
                 header,
-                self._build_detail_body(
-                    body_truncated,
-                    query_terms,
-                    match_styles,
-                    case_sensitive=case_sensitive,
-                    regex=regex,
-                    filter_terms=filter_terms,
-                    syntax_theme=syntax_theme,
-                    render_width=width,
-                ),
+                build_detail_body(render_request),
                 query_terms,
                 generation=detail_generation,
                 cache_key=cache_key,
@@ -278,16 +258,10 @@ class _HudDetailBase(LayoutScreen):
                 self._build_detail_in_thread,
                 record,
                 header,
-                body_truncated,
+                render_request,
                 query_terms,
-                match_styles,
-                syntax_theme,
                 detail_generation,
                 cache_key,
-                case_sensitive,
-                regex,
-                filter_terms,
-                width,
             ),
             name="detail",
             group="detail",
@@ -306,7 +280,7 @@ class _HudDetailBase(LayoutScreen):
         self,
         record: SearchRecord,
         cache_key: _DetailCacheKey | None,
-    ) -> _DetailBody | None:
+    ) -> DetailRenderResult | None:
         """Return a retained-record cache hit, rejecting a reused object id."""
         if cache_key is None:
             return None
@@ -318,23 +292,17 @@ class _HudDetailBase(LayoutScreen):
             del self._detail_body_cache[cache_key]
             return None
         self._detail_body_cache.move_to_end(cache_key)
-        return renderable, source, rendered_plain
+        return DetailRenderResult(renderable, source, rendered_plain)
 
     @_runtime.offload
     def _build_detail_in_thread(
         self,
         record: SearchRecord,
         header: object,
-        body_truncated: str,
+        render_request: DetailRenderRequest,
         query_terms: cabc.Sequence[str],
-        match_styles: _DetailMatchStyles,
-        syntax_theme: str,
         generation: int,
         cache_key: _DetailCacheKey | None,
-        case_sensitive: bool,
-        regex: bool,
-        filter_terms: tuple[str, ...],
-        render_width: int,
     ) -> None:
         """Build the detail body off the UI thread, then apply it on the loop.
 
@@ -342,17 +310,7 @@ class _HudDetailBase(LayoutScreen):
         pretty-print both run here (off the pump), so a full-document render
         can never blow the frame budget (ADR 0011 NB-2).
         """
-        body = self._build_detail_body(
-            body_truncated,
-            query_terms,
-            match_styles,
-            case_sensitive=case_sensitive,
-            regex=regex,
-            filter_terms=filter_terms,
-            syntax_theme=syntax_theme,
-            render_width=render_width,
-            guess_code=True,
-        )
+        body = build_detail_body(render_request)
         self.app.call_from_thread(
             functools.partial(
                 self._present_detail,
@@ -370,7 +328,7 @@ class _HudDetailBase(LayoutScreen):
         self,
         record: SearchRecord,
         header: object,
-        body: _DetailBody,
+        body: DetailRenderResult,
         query_terms: cabc.Sequence[str],
         *,
         generation: int | None = None,
@@ -389,7 +347,9 @@ class _HudDetailBase(LayoutScreen):
             or (generation is not None and generation != self._detail_build_generation)
         ):
             return
-        body_renderable, body_for_scroll, rendered_plain = body
+        body_renderable = body.renderable
+        body_for_scroll = body.find_source
+        rendered_plain = body.rendered_plain
         if cache_key is not None:
             self._detail_body_cache[cache_key] = (
                 record,
@@ -551,281 +511,6 @@ class _HudDetailBase(LayoutScreen):
         if background and foreground:
             return f"bold {foreground} on {background}"
         return "bold black on cyan"
-
-    def _apply_filter_highlight(
-        self,
-        text: t.Any,
-        style: str | None = None,
-        *,
-        terms: cabc.Sequence[str] | None = None,
-    ) -> None:
-        """Overlay the filter's literal terms onto ``text`` in a distinct color.
-
-        Applied after the search-term highlight so filter matches stand out
-        separately. Filter matching is case-insensitive, so the highlight is
-        too; field predicates contribute no literal terms.
-        """
-        style = style if style is not None else self._match_style("filter")
-        source = str(getattr(text, "plain", ""))
-        _streaming._apply_bounded_literal_highlights(
-            text,
-            source,
-            self._filter_terms if terms is None else terms,
-            case_sensitive=False,
-            style=style,
-        )
-
-    def _build_detail_body(
-        self,
-        body_text: str,
-        query_terms: cabc.Sequence[str],
-        match_styles: _DetailMatchStyles | None = None,
-        *,
-        case_sensitive: bool | None = None,
-        regex: bool | None = None,
-        filter_terms: cabc.Sequence[str] | None = None,
-        syntax_theme: str = "ansi_dark",
-        render_width: int = 80,
-        guess_code: bool = False,
-    ) -> _DetailBody:
-        """Return ``(renderable, find_source, rendered_plain)`` for ``body_text``.
-
-        ``find_source`` is whatever text the caller's ``find_first_match_line``
-        should scan (pretty JSON for JSON, the raw body otherwise) so line
-        indices line up with what the user sees. ``rendered_plain`` is the
-        flattened text the ``Y`` copy command emits.
-
-        Markdown is rendered off-thread to a styled ``rich.text.Text`` at
-        ``render_width`` — cheap to paint, mouse-selectable, and flattened via
-        ``.plain``. The ``rich.markdown.Markdown`` flatten is the pump-blocking
-        work the caller offloads (ADR 0011); this method never runs it inline.
-        """
-        effective_case_sensitive = (
-            self.search_query.case_sensitive if case_sensitive is None else case_sensitive
-        )
-        effective_regex = self.search_query.regex if regex is None else regex
-        safe_query_terms = (
-            ()
-            if effective_regex
-            else _streaming._bounded_literal_terms(
-                query_terms,
-                case_sensitive=effective_case_sensitive,
-            )
-        )
-        fmt = detect_content_format(body_text)
-        result: _DetailBody
-        # Code takes precedence over the JSON/markdown heuristic: a source file
-        # with a ``# comment`` line would otherwise trip the ATX-heading rule.
-        # The guess is off the pump (only the offload worker sets guess_code).
-        code_body: Text | None = None
-        if guess_code and looks_like_code(body_text):
-            lexer = self._guess_code_lexer(body_text)
-            if lexer is not None:
-                code_body = self._flatten_syntax(
-                    body_text,
-                    render_width=render_width,
-                    lexer=lexer,
-                    theme=syntax_theme,
-                )
-        if code_body is not None:
-            _streaming._apply_bounded_literal_highlights(
-                code_body,
-                code_body.plain,
-                safe_query_terms,
-                case_sensitive=effective_case_sensitive,
-                style=match_styles.search if match_styles else self._match_style("search"),
-            )
-            self._apply_filter_highlight(
-                code_body,
-                match_styles.filter if match_styles else None,
-                terms=filter_terms,
-            )
-            result = (code_body, body_text, code_body.plain)
-        elif fmt == "json":
-            formatted = body_text
-            if _streaming._json_pretty_print_is_bounded(body_text):
-                with contextlib.suppress(RecursionError, ValueError):
-                    formatted = json.dumps(
-                        json.loads(body_text),
-                        indent=2,
-                        ensure_ascii=False,
-                    )
-            formatted = truncate_lines(
-                formatted,
-                DETAIL_BODY_MAX_LINES,
-                max_chars=DETAIL_BODY_MAX_CHARS,
-            )
-            match_line = find_first_match_line(
-                formatted,
-                safe_query_terms,
-                case_sensitive=effective_case_sensitive,
-                regex=False,
-            )
-            highlight_lines = {match_line + 1} if match_line is not None else None
-            if len(formatted) <= _DETAIL_RICH_FORMAT_MAX_CHARS:
-                renderable: object = _RichSyntax(
-                    formatted,
-                    "json",
-                    theme=syntax_theme,
-                    word_wrap=True,
-                    highlight_lines=highlight_lines,
-                )
-            else:
-                plain = Text(formatted, no_wrap=False)
-                _streaming._apply_bounded_literal_highlights(
-                    plain,
-                    formatted,
-                    safe_query_terms,
-                    case_sensitive=effective_case_sensitive,
-                    style=match_styles.search if match_styles else self._match_style("search"),
-                )
-                self._apply_filter_highlight(
-                    plain,
-                    match_styles.filter if match_styles else None,
-                    terms=filter_terms,
-                )
-                renderable = plain
-            result = (renderable, formatted, formatted)
-        elif fmt == "markdown":
-            # Uncapped: the Markdown -> styled Text flatten runs off-thread
-            # (this branch is only reached via the offload worker), so
-            # ``_DETAIL_RICH_FORMAT_MAX_CHARS`` no longer gates markdown.
-            styled = self._flatten_markdown(
-                body_text,
-                render_width=render_width,
-                code_theme=syntax_theme,
-            )
-            _streaming._apply_bounded_literal_highlights(
-                styled,
-                styled.plain,
-                safe_query_terms,
-                case_sensitive=effective_case_sensitive,
-                style=match_styles.search if match_styles else self._match_style("search"),
-            )
-            self._apply_filter_highlight(
-                styled,
-                match_styles.filter if match_styles else None,
-                terms=filter_terms,
-            )
-            result = (styled, body_text, styled.plain)
-        else:
-            highlighted = Text(body_text, no_wrap=False)
-            _streaming._apply_bounded_literal_highlights(
-                highlighted,
-                body_text,
-                safe_query_terms,
-                case_sensitive=effective_case_sensitive,
-                style=match_styles.search if match_styles else self._match_style("search"),
-            )
-            self._apply_filter_highlight(
-                highlighted,
-                match_styles.filter if match_styles else None,
-                terms=filter_terms,
-            )
-            # Structural-tag overlay for markup-shaped prompt bodies
-            # (``<EPHEMERAL_MESSAGE>`` reminders and the like). Gated on a
-            # paired-tag structural test so generics/comparisons in prose stay
-            # plain, and applied by offset so ``highlighted.plain`` is unchanged.
-            # This runs in the offload worker; the lexer is one bounded pass.
-            if looks_like_markup(body_text):
-                MarkupHighlighter(dark=syntax_theme != "ansi_light").highlight(highlighted)
-            result = (highlighted, body_text, body_text)
-        return result
-
-    @staticmethod
-    def _guess_code_lexer(body_text: str) -> str | None:
-        """Return a Pygments lexer alias when ``body_text`` is confidently code.
-
-        Runs only in the offload worker: ``guess_lexer`` scans every lexer's
-        ``analyse_text`` (bounded but not pump-cheap). A leading sample drives
-        the guess, and the confidence gate rejects prose (~0.01) while keeping
-        real code (near 1.0). ``None`` means "render as plain text".
-        """
-        from pygments.lexers import guess_lexer
-        from pygments.lexers.special import TextLexer
-        from pygments.util import ClassNotFound
-
-        sample = body_text[:_CODE_GUESS_SAMPLE_BYTES]
-        with contextlib.suppress(ClassNotFound):
-            lexer = guess_lexer(sample)
-            if (
-                not isinstance(lexer, TextLexer)
-                and lexer.aliases
-                and lexer.analyse_text(sample) >= _CODE_GUESS_MIN_CONFIDENCE
-            ):
-                return lexer.aliases[0]
-        return None
-
-    @staticmethod
-    def _flatten_syntax(
-        body_text: str,
-        *,
-        render_width: int,
-        lexer: str,
-        theme: str,
-    ) -> Text:
-        """Render code to a styled ``Text`` via a headless Rich ``Console``.
-
-        Mirrors :meth:`_flatten_markdown` for a ``rich.syntax.Syntax``: the
-        result paints cheaply, stays mouse-selectable, and ``.plain`` yields the
-        visible source. Runs off the pump (offload worker only).
-        """
-        console = _RichConsole(
-            width=max(1, render_width),
-            color_system="truecolor",
-            force_terminal=False,
-            highlight=False,
-            markup=False,
-            emoji=False,
-        )
-        syntax = _RichSyntax(
-            body_text,
-            lexer,
-            theme=theme,
-            word_wrap=True,
-            background_color="default",
-        )
-        styled = Text(no_wrap=False)
-        for line in console.render_lines(syntax, pad=False):
-            for segment in line:
-                if segment.control or not segment.text:
-                    continue
-                styled.append(segment.text, segment.style)
-            styled.append("\n")
-        return styled
-
-    @staticmethod
-    def _flatten_markdown(
-        body_text: str,
-        *,
-        render_width: int,
-        code_theme: str,
-    ) -> Text:
-        """Render markdown to a styled ``Text`` via a headless Rich ``Console``.
-
-        Rebuilds a ``Text`` from the rendered segments (text + style per
-        segment, one newline per line) at ``render_width``. The result paints
-        cheaply, is mouse-selectable once mounted, and flattens to ``.plain``
-        for copy-rendered. Runs off the pump (called only from the offload
-        worker), so no ``active_app`` context is required.
-        """
-        console = _RichConsole(
-            width=max(1, render_width),
-            color_system="truecolor",
-            force_terminal=False,
-            highlight=False,
-            markup=False,
-            emoji=False,
-        )
-        markdown = _RichMarkdown(body_text, code_theme=code_theme)
-        styled = Text(no_wrap=False)
-        for line in console.render_lines(markdown, pad=False):
-            for segment in line:
-                if segment.control or not segment.text:
-                    continue
-                styled.append(segment.text, segment.style)
-            styled.append("\n")
-        return styled
 
     def _restore_detail_scroll(self, record: SearchRecord) -> None:
         """Open ``record`` at its remembered scroll, or at the top if new.
