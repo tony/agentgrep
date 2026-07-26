@@ -298,6 +298,10 @@ convention = "numpy"
 # return it as `error_message` with its exception type, not to fail the tool
 # call, which means the handler has to accept every exception a reader raises.
 "src/agentgrep/mcp/tools/catalog_tools.py" = ["BLE001"]
+# Theme persistence is best-effort background bookkeeping on a writer thread:
+# it already narrows the expected OSError internally, and a preferences file
+# the user cannot write must never take the TUI down with it.
+"src/agentgrep/ui/_shell.py" = ["BLE001"]
 
 [tool.pytest.ini_options]
 addopts = [
