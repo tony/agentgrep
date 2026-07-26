@@ -291,6 +291,11 @@ convention = "numpy"
 "src/agentgrep/_engine/search.py" = ["BLE001"]
 "src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414", "BLE001"]
 "src/agentgrep/ui/layouts/greplog.py" = ["BLE001"]
+# Catalog inspection walks whatever an adapter can parse out of a real store,
+# so any reader failure is data the client asked about. The MCP contract is to
+# return it as `error_message` with its exception type, not to fail the tool
+# call, which means the handler has to accept every exception a reader raises.
+"src/agentgrep/mcp/tools/catalog_tools.py" = ["BLE001"]
 
 [tool.pytest.ini_options]
 addopts = [
