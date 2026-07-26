@@ -288,7 +288,8 @@ convention = "numpy"
 # re-export form: drop the alias and F401 flags the import instead, since
 # neither module uses the name itself. BLE001 covers the wrap-aware scroll
 # helper, which reaches into Rich's private line divider: any breakage there
-# falls back to the logical-line estimate rather than raising on the pump.
+# falls back to the logical-line estimate rather than raising on the pump. The
+# alias chain continues in `_hud_search.py`, listed under the next note.
 "src/agentgrep/ui/layouts/_hud_detail_interaction.py" = ["PLC0414", "BLE001"]
 # A scan worker runs on its own thread, where an escaping exception dies
 # silently and leaves the consumer waiting. These handlers catch BaseException
