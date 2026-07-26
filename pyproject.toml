@@ -278,6 +278,12 @@ convention = "numpy"
 # docs; `exec` of a compiled example in an isolated namespace is its whole
 # job, not an untrusted-input hazard.
 "src/pytest_documentation/evaluators.py" = ["S102"]
+# The HUD layout is a chain of base classes, and each link re-exports the
+# detail cache/find key aliases the next one needs. `X as X` is the explicit
+# re-export form: drop the alias and F401 flags the import instead, since
+# neither module uses the name itself.
+"src/agentgrep/ui/layouts/_hud_detail_interaction.py" = ["PLC0414"]
+"src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414"]
 
 [tool.pytest.ini_options]
 addopts = [
