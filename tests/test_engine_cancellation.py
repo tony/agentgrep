@@ -9,7 +9,7 @@ import threading
 
 import pytest
 
-import agentgrep._engine.scanning as scanning
+from agentgrep._engine import scanning
 from agentgrep._engine.planning import SourceTask
 from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery, SearchRecord, SourceHandle
