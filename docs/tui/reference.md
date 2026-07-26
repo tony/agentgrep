@@ -29,7 +29,6 @@ use {func}`agentgrep.run_ui` without reaching into
 ```{eval-rst}
 .. autoclass:: agentgrep.UIArgs
    :members:
-   :no-undoc-members:
 ```
 
 ## Entry points

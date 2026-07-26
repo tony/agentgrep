@@ -15,31 +15,24 @@ every surface (CLI, TUI, MCP).
 
 .. autoclass:: agentgrep.BackendSelection
    :members:
-   :no-undoc-members:
 
 .. autoclass:: agentgrep.SearchQuery
    :members:
-   :no-undoc-members:
 
 .. autoclass:: agentgrep.RecordOrigin
    :members:
-   :no-undoc-members:
 
 .. autoclass:: agentgrep.SourceHandle
    :members:
-   :no-undoc-members:
 
 .. autoclass:: agentgrep.SearchRecord
    :members:
-   :no-undoc-members:
 
 .. autoclass:: agentgrep.FindRecord
    :members:
-   :no-undoc-members:
 
 .. autoclass:: agentgrep.ProjectContext
    :members:
-   :no-undoc-members:
 
 .. autofunction:: agentgrep.detect_project_context
 ```
@@ -61,14 +54,12 @@ every surface (CLI, TUI, MCP).
 
 .. autoclass:: agentgrep.SearchRuntime
    :members:
-   :no-undoc-members:
 
 .. autoclass:: agentgrep.SourceScanCache
    :members:
 
 .. autoclass:: agentgrep.SourceScanCacheStats
    :members:
-   :no-undoc-members:
 ```
 
 ## Event streams

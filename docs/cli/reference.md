@@ -9,7 +9,6 @@ CLI argument types, serialization helpers, and command entry points.
 ```{eval-rst}
 .. autoclass:: agentgrep.FindArgs
    :members:
-   :no-undoc-members:
 ```
 
 ## Serialization
