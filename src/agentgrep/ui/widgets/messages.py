@@ -130,8 +130,13 @@ class ResultsScrollChanged(Message):
 
 
 class DetailScrollChanged(Message):
-    """Posted by :class:`DetailScroll` when the detail-pane scrolls."""
+    """Posted when detail scroll moves.
 
-    def __init__(self, percent: int) -> None:
+    ``record_token`` identifies the widget-owned active record so the layout
+    can reject a queued snapshot after the selection changes.
+    """
+
+    def __init__(self, record_token: int | None, percent: int) -> None:
         super().__init__()
+        self.record_token = record_token
         self.percent = percent

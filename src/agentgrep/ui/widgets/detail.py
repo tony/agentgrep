@@ -6,12 +6,14 @@ bindings. Imported from inside the app factory (and the tests), never eagerly.
 
 from __future__ import annotations
 
+import collections
 import typing as t
 
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.containers import VerticalScroll
 
+from agentgrep.ui import _runtime
 from agentgrep.ui.format import scroll_percent
 from agentgrep.ui.widgets.messages import DetailFocusRequested, DetailScrollChanged
 
@@ -24,7 +26,9 @@ class DetailScroll(VerticalScroll, can_focus=True):
     Adds vim-style bindings: ``h`` / left-arrow releases focus back to the
     results list, and ``j`` / ``k`` mirror the stock ``down`` / ``up``
     scroll bindings so navigation stays consistent with
-    :class:`SearchResultsList`. ``can_focus=True`` is set via the
+    :class:`SearchResultsList`. The widget also owns bounded per-record scroll
+    memory, restoring the last offset whenever the layout activates a record.
+    ``can_focus=True`` is set via the
     class-keyword form — Textual reads it during ``__init_subclass__``,
     so the plain class-attribute form silently fails to enroll the widget
     in the focus chain.
@@ -52,6 +56,68 @@ class DetailScroll(VerticalScroll, can_focus=True):
         Binding("Y", "copy_rendered", "Copy rendered", id="detail.copy_rendered"),
     ]
 
+    _SCROLL_MEMORY_MAX: t.ClassVar[int] = 1_024
+
+    def __init__(
+        self,
+        *,
+        id: str | None = None,  # noqa: A002 -- forwarded to Textual's ``id`` kwarg
+    ) -> None:
+        """Initialize empty, bounded per-record scroll memory.
+
+        Parameters
+        ----------
+        id : str | None
+            Optional Textual DOM identifier.
+        """
+        self._active_record_token: int | None = None
+        self._record_scroll_positions: collections.OrderedDict[int, float] = (
+            collections.OrderedDict()
+        )
+        super().__init__(id=id)
+
+    @_runtime.pump_only
+    def activate_record(self, record_token: int) -> None:
+        """Remember the outgoing record and restore the incoming record.
+
+        Parameters
+        ----------
+        record_token : int
+            Opaque identity supplied by the owning layout.
+        """
+        active_token = self._active_record_token
+        if active_token is not None:
+            self._store_scroll_position(
+                active_token,
+                float(getattr(self, "scroll_y", 0.0) or 0.0),
+            )
+        self._active_record_token = record_token
+        remembered = self._record_scroll_positions.get(record_token, 0.0)
+        self._store_scroll_position(record_token, remembered)
+        self.scroll_to(y=remembered, animate=False)
+
+    @_runtime.pump_only
+    def clear_record_memory(self) -> None:
+        """Forget every record offset before a fresh search."""
+        self._active_record_token = None
+        self._record_scroll_positions.clear()
+
+    def _store_scroll_position(self, record_token: int, scroll_y: float) -> None:
+        """Store one offset and enforce the record-memory LRU bound.
+
+        Parameters
+        ----------
+        record_token : int
+            Opaque record identity.
+        scroll_y : float
+            Vertical offset to retain.
+        """
+        self._record_scroll_positions[record_token] = scroll_y
+        self._record_scroll_positions.move_to_end(record_token)
+        if len(self._record_scroll_positions) > self._SCROLL_MEMORY_MAX:
+            self._record_scroll_positions.popitem(last=False)
+
+    @_runtime.pump_only
     def on_key(self, event: events.Key) -> None:
         """Intercept keys for tmux-style visual select before the scroll bindings.
 
@@ -111,13 +177,18 @@ class DetailScroll(VerticalScroll, can_focus=True):
         half = max(1, self.size.height // 2)
         self.scroll_relative(y=-half, animate=True)
 
+    @_runtime.pump_only
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Re-render the detail status line on scroll."""
         base = getattr(super(), "watch_scroll_y", None)
         if callable(base):
             base(old_value, new_value)
+        record_token = self._active_record_token
+        if record_token is not None:
+            self._store_scroll_position(record_token, float(new_value or 0))
         self.post_message(
             DetailScrollChanged(
+                record_token=record_token,
                 percent=scroll_percent(
                     float(new_value or 0),
                     float(getattr(self, "max_scroll_y", 0) or 0),
