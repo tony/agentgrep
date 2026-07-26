@@ -274,6 +274,10 @@ convention = "numpy"
 # more naturally as one line than wrapped.
 "scripts/benchmark.py" = ["B008", "E501"]
 "scripts/mcp_swap.py" = ["T201"]
+# The documentation harness exists to run the Python examples embedded in the
+# docs; `exec` of a compiled example in an isolated namespace is its whole
+# job, not an untrusted-input hazard.
+"src/pytest_documentation/evaluators.py" = ["S102"]
 
 [tool.pytest.ini_options]
 addopts = [
