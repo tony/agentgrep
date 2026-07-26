@@ -41,10 +41,13 @@ _RichSyntaxType = _RichSyntax
 class _HudDetailBase(LayoutScreen):
     """Detail rendering base for the HUD layout."""
 
+    @_runtime.pump_only
     def on_detail_scroll_changed(self, message: DetailScrollChanged) -> None:
-        """Re-render the detail status line and remember the scroll position."""
+        """Re-render status for the current record's scroll snapshot."""
+        record = self._current_detail_record
+        if record is None or message.record_token != id(record):
+            return
         self._refresh_detail_statusline(message.percent)
-        self._remember_detail_scroll()
 
     def _refresh_detail_statusline(self, percent: int | None = None) -> None:
         """Update the detail status line with the current record path and scroll %."""
@@ -96,8 +99,8 @@ class _HudDetailBase(LayoutScreen):
           highlighting so search-term matches stay responsive.
 
         A record opened for the first time lands at the top; a record
-        viewed before restores the scroll position the user left it at (see
-        :meth:`_restore_detail_scroll`).
+        viewed before restores the scroll position the user left through
+        ``DetailScroll.activate_record``.
         """
         if self._detail_body is None:
             return
@@ -396,7 +399,8 @@ class _HudDetailBase(LayoutScreen):
             self._detail_find_base_key = None
         self._detail_meta.update(t.cast("t.Any", header))
         self._paint_detail_body()
-        self._restore_detail_scroll(record)
+        if self._detail_scroll is not None:
+            self._detail_scroll.activate_record(id(record))
         self._refresh_detail_statusline()
         if self._detail_find_active:
             # A same-record re-render (e.g. a theme switch re-renders the
@@ -511,32 +515,3 @@ class _HudDetailBase(LayoutScreen):
         if background and foreground:
             return f"bold {foreground} on {background}"
         return "bold black on cyan"
-
-    def _restore_detail_scroll(self, record: SearchRecord) -> None:
-        """Open ``record`` at its remembered scroll, or at the top if new.
-
-        A record viewed before restores the position the user left it at; a
-        record opened for the first time opens at the top (and is recorded
-        at 0 so the next visit is a no-op until the user scrolls).
-        """
-        if self._detail_scroll is None:
-            return
-        scroll: t.Any = self._detail_scroll
-        key = id(record)
-        remembered = self._detail_scroll_positions.get(key)
-        scroll.scroll_to(y=remembered if remembered is not None else 0, animate=False)
-        if remembered is None:
-            self._detail_scroll_positions[key] = 0.0
-            self._detail_scroll_positions.move_to_end(key)
-            if len(self._detail_scroll_positions) > self._DETAIL_CACHE_MAX:
-                self._detail_scroll_positions.popitem(last=False)
-
-    def _remember_detail_scroll(self) -> None:
-        """Save the current detail scroll position for the on-screen record."""
-        if self._detail_scroll is None or self._current_detail_record is None:
-            return
-        key = id(self._current_detail_record)
-        self._detail_scroll_positions[key] = float(
-            getattr(self._detail_scroll, "scroll_y", 0.0) or 0.0,
-        )
-        self._detail_scroll_positions.move_to_end(key)

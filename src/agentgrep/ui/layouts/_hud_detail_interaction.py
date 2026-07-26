@@ -545,16 +545,13 @@ class _HudDetailInteractionBase(_HudDetailBase):
         the detail scroll.
         """
         self._remember_detail_find()
-        # Keep the find's scroll position as the record's remembered scroll
-        # so the non-find re-render below doesn't jump away from the match.
-        self._remember_detail_scroll()
         self._reset_detail_find_state()
         record = self._current_detail_record
         if record is not None:
             # Re-render via show_detail so a large uncached body offloads to a
             # worker instead of building inline on the pump (ADR 0011 NB-9),
-            # and the match-style snapshot contract is honored. The scroll
-            # was just remembered, so show_detail's restore won't jump.
+            # and the match-style snapshot contract is honored. DetailScroll
+            # owns the active record offset, so the repaint does not jump.
             self.show_detail(record)
         self._focus_widget_by_id("detail-scroll")
         self._update_pane_focus()

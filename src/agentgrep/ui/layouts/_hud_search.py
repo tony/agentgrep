@@ -97,7 +97,8 @@ class _HudSearchBase(_HudDetailInteractionBase):
         clear_haystack_cache()
         self._detail_body_cache.clear()
         self._presented_detail_cache_key = None
-        self._detail_scroll_positions.clear()
+        if self._detail_scroll is not None:
+            self._detail_scroll.clear_record_memory()
         self._detail_find_state.clear()
         # A fresh search wipes the detail; close any open find bar and cancel
         # any in-flight visual select.

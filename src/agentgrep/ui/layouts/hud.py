@@ -178,7 +178,7 @@ class HudLayout(_HudSearchBase):
         self._records_generation = 0
         self._resize_debounce_timer: object | None = None
         self._current_detail_record: SearchRecord | None = None
-        self._detail_scroll: t.Any = None
+        self._detail_scroll: DetailScroll | None = None
         self._body: t.Any = None
         self._detail_column: t.Any = None
         self._filter_header: t.Any = None
@@ -206,12 +206,6 @@ class HudLayout(_HudSearchBase):
         ] = collections.OrderedDict()
         self._presented_detail_cache_key: _DetailCacheKey | None = None
         self._detail_build_generation = 0
-        # Per-record detail scroll memory: id(record) -> scroll_y. A
-        # revisited record restores its position; a record opened for the
-        # first time opens at the top. Bounded like the body cache.
-        self._detail_scroll_positions: collections.OrderedDict[int, float] = (
-            collections.OrderedDict()
-        )
         # Find-in-detail state. The find bar is a third input (separate from
         # #search and #filter), shown only when a detail record is loaded.
         self._detail_find_input: t.Any = None
@@ -254,7 +248,7 @@ class HudLayout(_HudSearchBase):
         # other renderables are converted once per highlight state, then copied.
         self._detail_find_base: Text | None = None
         self._detail_find_base_key: _DetailFindBaseKey | None = None
-        # Per-record find memory, mirroring _detail_scroll_positions:
+        # Per-record find memory, parallel to DetailScroll's owned memory:
         # id(record) -> (query, match_index, input_cursor_pos). Bounded LRU.
         self._detail_find_state: collections.OrderedDict[
             int,
@@ -423,7 +417,10 @@ class HudLayout(_HudSearchBase):
             "StaticLike",
             streaming.query_one("#detail-body", Static),
         )
-        self._detail_scroll = streaming.query_one("#detail-scroll")
+        self._detail_scroll = t.cast(
+            "DetailScroll",
+            streaming.query_one("#detail-scroll", DetailScroll),
+        )
         self._body = streaming.query_one("#body")
         self._detail_column = streaming.query_one("#detail-column")
         self._filter_header = t.cast(
