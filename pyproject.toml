@@ -276,8 +276,10 @@ convention = "numpy"
 "scripts/mcp_swap.py" = ["T201"]
 # The documentation harness exists to run the Python examples embedded in the
 # docs; `exec` of a compiled example in an isolated namespace is its whole
-# job, not an untrusted-input hazard.
-"src/pytest_documentation/evaluators.py" = ["S102"]
+# job, not an untrusted-input hazard. Whatever an example raises is the result
+# the harness reports, so it catches BaseException and turns it into a redacted
+# EvaluationResult rather than letting one bad example abort collection.
+"src/pytest_documentation/evaluators.py" = ["S102", "BLE001"]
 # The HUD layout is a chain of base classes, and each link re-exports the
 # detail cache/find key aliases the next one needs. `X as X` is the explicit
 # re-export form: drop the alias and F401 flags the import instead, since
