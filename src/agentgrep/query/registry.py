@@ -44,7 +44,31 @@ any file is opened. ``record`` predicates filter parsed
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class FieldSpec:
-    """Schema entry describing one queryable field."""
+    """Schema entry describing one queryable field.
+
+    Attributes
+    ----------
+    name : str
+        Canonical field name users type before the colon.
+    kind : FieldKind
+        Value type the field accepts: substring string, enum membership, date literal, or
+        path glob.
+    layer : FieldLayer
+        Where the predicate evaluates: ``"source"`` prunes handles before a file is
+        opened, ``"record"`` filters parsed records.
+    enum_values : tuple[str, ...]
+        Values an ``"enum"`` field accepts; anything else is a compile error. Empty for
+        every other kind.
+    aliases : tuple[str, ...]
+        Alternate names resolving to this spec, e.g. ``date`` for ``timestamp``. Empty
+        when the field has none.
+    supports_comparison : bool
+        Whether ``>``, ``<``, ``>=``, and ``<=`` are accepted. Comparing a field that does
+        not support them is a compile error.
+    supports_range : bool
+        Whether ``[lo TO hi]`` ranges are accepted. Ranging a field that does not support
+        them is a compile error.
+    """
 
     name: str
     kind: FieldKind
@@ -66,6 +90,12 @@ class FieldRegistry:
     Registries are tiny (the default ships ~10 fields) so
     :meth:`get` does a linear scan rather than caching a dict — the
     cost is negligible and the type-checker friendliness wins.
+
+    Attributes
+    ----------
+    specs : tuple[FieldSpec, ...]
+        Registered field specs, in the order help output and lookups walk them. A name or
+        alias repeated across two specs is rejected at construction.
     """
 
     specs: tuple[FieldSpec, ...]

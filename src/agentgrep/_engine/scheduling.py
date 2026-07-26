@@ -34,7 +34,19 @@ if t.TYPE_CHECKING:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExecutionSourceStarted:
-    """Internal event emitted before scanning one planned source task."""
+    """Internal event emitted before scanning one planned source task.
+
+    Attributes
+    ----------
+    index : int
+        One-based position of this source among the eligible tasks.
+    total : int
+        Number of eligible tasks in the run, so a consumer can render progress.
+    source : SourceHandle
+        Source about to be scanned.
+    task : SourceTask
+        Planned task naming the strategy the scan runs under.
+    """
 
     index: int
     total: int
@@ -44,7 +56,16 @@ class ExecutionSourceStarted:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExecutionRecordEmitted:
-    """Internal event emitted after dedupe admits one matching record."""
+    """Internal event emitted after dedupe admits one matching record.
+
+    Attributes
+    ----------
+    record : SearchRecord
+        Record admitted after dedupe and any cross-store authority resolution.
+    result_count : int
+        Results accepted so far, counting this one, so a frontend can drive a live total
+        without recounting.
+    """
 
     record: SearchRecord
     result_count: int
@@ -52,7 +73,26 @@ class ExecutionRecordEmitted:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExecutionSourceFinished:
-    """Internal event emitted after scanning one planned source task."""
+    """Internal event emitted after scanning one planned source task.
+
+    Attributes
+    ----------
+    index : int
+        One-based position of this source among the eligible tasks, pairing the event with
+        its :class:`ExecutionSourceStarted`.
+    total : int
+        Number of eligible tasks in the run, so a consumer can render progress.
+    source : SourceHandle
+        Source that was scanned.
+    task : SourceTask
+        Planned task naming the strategy the scan ran under.
+    records_seen : int
+        Records parsed from the source, matching or not. ``0`` for a source cancelled
+        before it reported any progress.
+    matches_seen : int
+        Records from the source that satisfied the matcher. ``0`` for a source cancelled
+        before it reported any progress.
+    """
 
     index: int
     total: int
@@ -64,7 +104,17 @@ class ExecutionSourceFinished:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExecutionDriverConfig:
-    """Execution-driver tuning for bounded source scheduling."""
+    """Execution-driver tuning for bounded source scheduling.
+
+    Attributes
+    ----------
+    max_workers : int
+        Requested worker threads for source-level scheduling. ``1`` keeps every scan on
+        the owner thread; values below one are normalized by :attr:`worker_count`.
+    use_source_batches : bool
+        Whether the frontier driver consumes incremental source batches instead of whole
+        source scan results, which lets it cancel lower-priority sources mid-scan.
+    """
 
     max_workers: int = 1
     use_source_batches: bool = False

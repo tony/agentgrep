@@ -9,7 +9,14 @@ from agentgrep._engine.scanning import SourceScanCache
 
 @dataclasses.dataclass(slots=True)
 class SearchRuntime:
-    """Reusable, explicit runtime state for one search frontend/session."""
+    """Reusable, explicit runtime state for one search frontend/session.
+
+    Attributes
+    ----------
+    source_scan_cache : SourceScanCache | None
+        Bounded cache of completed source scans, reused across the searches one session
+        runs. ``None`` disables reuse, so every search rescans every planned source.
+    """
 
     source_scan_cache: SourceScanCache | None = None
 

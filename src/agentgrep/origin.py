@@ -160,7 +160,26 @@ _CONTEXT_FIELD_VALUES: dict[str, tuple[str, ...]] = {
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class OriginPredicate:
-    """One compiled origin predicate against a record's origin fields."""
+    """One compiled origin predicate against a record's origin fields.
+
+    Attributes
+    ----------
+    fields : tuple[str, ...]
+        Origin field names read from a record; the predicate holds when any of them yields
+        a matching value. A query field widens to the record fields that can stand in for
+        it, so ``repo:`` also consults ``worktree`` and ``cwd``.
+    value : str
+        Filter value as written, kept verbatim for string comparison and for reporting.
+    kind : _OriginMatchKind
+        ``"path"`` compares directories, where a match also admits descendants;
+        ``"string"`` compares whole values.
+    variants : tuple[str, ...]
+        Spellings of ``value`` a match may accept — the raw text plus home-expanded and
+        glob-suffixed forms. String predicates carry ``value`` alone.
+    is_glob : bool
+        Whether ``variants`` carry shell wildcards. ``True`` matches with
+        :func:`fnmatch.fnmatchcase`; ``False`` matches by path containment or equality.
+    """
 
     fields: tuple[str, ...]
     value: str
@@ -244,7 +263,15 @@ class OriginPredicate:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class OriginMatcher:
-    """Compiled matcher for origin fields and origin-context boosts."""
+    """Compiled matcher for origin fields and origin-context boosts.
+
+    Attributes
+    ----------
+    predicates : tuple[OriginPredicate, ...]
+        Predicates a record must satisfy in full. Empty when the field or value could not
+        be compiled, in which case :meth:`matches` never holds while
+        :meth:`evaluate_summary` rules nothing out.
+    """
 
     predicates: tuple[OriginPredicate, ...]
 

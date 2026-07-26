@@ -878,7 +878,14 @@ def looks_like_markup(text: str) -> bool:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AnsiColors:
-    """Semantic ANSI colors for terminal status output."""
+    """Semantic ANSI colors for terminal status output.
+
+    Attributes
+    ----------
+    enabled : bool
+        Whether :meth:`colorize` wraps text in escape codes. ``False`` returns text
+        unchanged, which is how ``--color never`` and non-TTY streams render plain output.
+    """
 
     enabled: bool
 

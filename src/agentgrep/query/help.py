@@ -22,7 +22,28 @@ from agentgrep.query.registry import FieldRegistry, default_registry
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class FieldDoc:
-    """One queryable field, rendered from its :class:`FieldSpec`."""
+    """One queryable field, rendered from its :class:`FieldSpec`.
+
+    Attributes
+    ----------
+    name : str
+        Canonical field name as typed before the colon, e.g. ``timestamp``.
+    kind : str
+        Value type the field accepts, from
+        :data:`~agentgrep.query.registry.FieldKind`.
+    layer : str
+        Engine layer the predicate filters at: ``source`` prunes candidates before a file
+        is opened, ``record`` filters parsed records.
+    aliases : tuple[str, ...]
+        Alternate names accepted for the field, e.g. ``date`` for ``timestamp``. Empty
+        when the field has none.
+    enum_values : tuple[str, ...]
+        Accepted values for an enum field. Empty for every other kind.
+    supports_comparison : bool
+        Whether ``>``, ``<``, ``>=``, and ``<=`` are accepted.
+    supports_range : bool
+        Whether ``[a TO b]`` and ``{a TO b}`` ranges are accepted.
+    """
 
     name: str
     kind: str
@@ -35,7 +56,17 @@ class FieldDoc:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class OperatorDoc:
-    """One query-language operator with a copy-pasteable example."""
+    """One query-language operator with a copy-pasteable example.
+
+    Attributes
+    ----------
+    syntax : str
+        Operator form as written in a query, e.g. ``field:[a TO b]``.
+    description : str
+        One sentence naming what the operator does.
+    example : str
+        Query fragment using the operator, meant to be pasted as-is.
+    """
 
     syntax: str
     description: str

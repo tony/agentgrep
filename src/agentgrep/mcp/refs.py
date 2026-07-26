@@ -58,7 +58,22 @@ class _FindCursorPayload(t.TypedDict):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ParsedRecordRef:
-    """Decoded record reference."""
+    """Decoded record reference.
+
+    Attributes
+    ----------
+    kind : t.Literal["search", "find"]
+        Tool the ref came from, which decides whether ``fingerprint`` is a search or a
+        find fingerprint.
+    adapter_id : str
+        Adapter identity of the referenced record, unique across the merged registry.
+    path : pathlib.Path
+        Source file the record came from, re-expanded from the token's display path
+        against the caller's home directory.
+    fingerprint : str
+        Hex SHA-256 over the record's identifying metadata, used to confirm a re-read
+        landed on the same record. Carries no prompt text.
+    """
 
     kind: t.Literal["search", "find"]
     adapter_id: str
@@ -68,7 +83,36 @@ class ParsedRecordRef:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SearchCursor:
-    """Decoded search page cursor."""
+    """Decoded search page cursor.
+
+    Replaying the same search with these values and skipping ``offset`` records yields
+    the next page, so every field the first call narrowed on is carried along.
+
+    Attributes
+    ----------
+    offset : int
+        Records already returned, which the next page skips. Non-negative.
+    terms : list[str]
+        Search terms of the original call. Empty only when an origin filter drives the
+        search on its own.
+    agent : AgentSelector
+        Agent the original call selected, or the selector meaning every agent.
+    scope : SearchScopeName
+        Stores the original call opened: prompts, conversations, or all.
+    case_sensitive : bool
+        Whether the original call matched case-sensitively.
+    limit : int
+        Page size to repeat, at least 1.
+    cwd : str | None
+        Recorded working directory the original call filtered on. ``None`` applied no
+        cwd filter.
+    repo : str | None
+        Recorded repository root the original call filtered on. ``None`` applied no repo
+        filter.
+    branch : str | None
+        Recorded git branch the original call filtered on. ``None`` applied no branch
+        filter.
+    """
 
     offset: int
     terms: list[str]
@@ -83,7 +127,19 @@ class SearchCursor:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FindCursor:
-    """Decoded find page cursor."""
+    """Decoded find page cursor.
+
+    Attributes
+    ----------
+    offset : int
+        Source records already returned, which the next page skips. Non-negative.
+    pattern : str | None
+        Pattern of the original call. ``None`` when it listed every discovered source.
+    agent : AgentSelector
+        Agent the original call selected, or the selector meaning every agent.
+    limit : int
+        Page size to repeat, at least 1.
+    """
 
     offset: int
     pattern: str | None

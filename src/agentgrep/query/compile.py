@@ -65,6 +65,23 @@ class CompiledQuery:
     the query is pure text — the engine routes through the legacy
     fast path in that case. ``text_terms`` is always populated so
     the rg prefilter and matches_text path see the right input.
+
+    Attributes
+    ----------
+    source_predicate : t.Callable[[SourceHandle], bool] | None
+        Conservative source-level filter, returning ``False`` only when the AST cannot
+        match given source facts alone. ``None`` for a pure-text query, which prunes no
+        sources at this layer.
+    record_predicate : t.Callable[[SearchRecord], bool] | None
+        Exact per-record filter evaluating the AST against a parsed record, including its
+        AND/OR/NOT structure. ``None`` for a pure-text query.
+    text_terms : tuple[str, ...]
+        Bare terms collected from the AST in source order, plus the values of ``text:``
+        predicates. Populated for field queries too, so the grep prefilter still has
+        needles.
+    is_pure_text : bool
+        Whether the query was only bare terms under AND. ``True`` implies both predicates
+        are ``None``.
     """
 
     source_predicate: t.Callable[[SourceHandle], bool] | None
@@ -273,6 +290,15 @@ class QueryBuildResult:
     ``error`` is ``None`` (success), or ``query`` is ``None`` and
     ``error`` carries a user-facing message (parse / compile failure).
     Frozen so consumers can pass the result across thread boundaries.
+
+    Attributes
+    ----------
+    query : SearchQuery | None
+        Rebuilt query carrying the new terms and any compiled predicates. ``None`` when
+        the input failed to parse or compile.
+    error : str | None
+        Message to show the user, taken from the parse or compile error. ``None`` on
+        success.
     """
 
     query: SearchQuery | None

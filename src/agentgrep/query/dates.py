@@ -72,6 +72,15 @@ class DateBound:
     only date precision (no hour / minute) — the compiler uses this
     to decide whether an equality match should expand to the full
     day or to the exact instant.
+
+    Attributes
+    ----------
+    value : datetime.datetime
+        The parsed instant, normalized to UTC. A naive ISO literal is read as UTC; an
+        offset literal is converted.
+    day_resolution : bool
+        Whether the literal carried only date precision, so an equality match expands to
+        the whole day, month, or year the literal named.
     """
 
     value: dt.datetime
@@ -237,6 +246,19 @@ class DateRange:
 
     Either bound may be ``None`` for "unbounded on this side" —
     written as ``*`` in source (`timestamp:[* TO 2026-05-22]`).
+
+    Attributes
+    ----------
+    lo : datetime.datetime | None
+        Lower bound in UTC. ``None`` is unbounded, written ``*`` in a range literal.
+    hi : datetime.datetime | None
+        Upper bound in UTC. ``None`` is unbounded.
+    inclusive_lo : bool
+        Whether ``lo`` itself matches.
+    inclusive_hi : bool
+        Whether ``hi`` itself matches. ``False`` gives the half-open interval a bare-day
+        equality expands to; ``True`` is what an exact-instant literal produces, where
+        both bounds are the same moment.
     """
 
     lo: dt.datetime | None
