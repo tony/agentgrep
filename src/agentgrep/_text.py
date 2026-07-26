@@ -459,7 +459,7 @@ GREP_DESCRIPTION = build_description(
 class PrivatePath(PrivatePathBase):
     """Path subclass that hides the user's home directory in textual output."""
 
-    def __new__(cls, *args: t.Any, **kwargs: t.Any) -> PrivatePath:
+    def __new__(cls, *args: t.Any, **kwargs: t.Any) -> t.Self:
         """Create a privacy-aware path."""
         return super().__new__(cls, *args, **kwargs)
 
