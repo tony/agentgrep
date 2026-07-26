@@ -283,7 +283,14 @@ convention = "numpy"
 # re-export form: drop the alias and F401 flags the import instead, since
 # neither module uses the name itself.
 "src/agentgrep/ui/layouts/_hud_detail_interaction.py" = ["PLC0414"]
-"src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414"]
+# A scan worker runs on its own thread, where an escaping exception dies
+# silently and leaves the consumer waiting. These handlers catch BaseException
+# so the failure is forwarded as a queued failure item or an error event and
+# re-raised (engine) or reported (TUI) on the consuming side.
+"src/agentgrep/_engine/scheduling.py" = ["BLE001"]
+"src/agentgrep/_engine/search.py" = ["BLE001"]
+"src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414", "BLE001"]
+"src/agentgrep/ui/layouts/greplog.py" = ["BLE001"]
 
 [tool.pytest.ini_options]
 addopts = [
