@@ -35,6 +35,7 @@ if t.TYPE_CHECKING:
 
     from agentgrep._types import SearchColors
     from agentgrep.records import ColorMode, SearchQuery, SourceHandle
+    from agentgrep.results import RunSummary
 
 __all__ = [
     "AnswerNowInputListener",
@@ -71,14 +72,24 @@ class SearchControl:
 
     def __init__(self) -> None:
         self._answer_now = threading.Event()
+        self._stop_reason: str | None = None
+        self._reason_lock = threading.Lock()
 
-    def request_answer_now(self) -> None:
-        """Request that search return the results collected so far."""
-        self._answer_now.set()
+    def request_answer_now(self, *, reason: str = "answer_now") -> None:
+        """Request that search stop, retaining the first stable reason."""
+        with self._reason_lock:
+            if self._stop_reason is None:
+                self._stop_reason = reason
+                self._answer_now.set()
 
     def answer_now_requested(self) -> bool:
         """Return whether search should stop and answer with partial results."""
         return self._answer_now.is_set()
+
+    def stop_reason(self) -> str | None:
+        """Return the stable reason for stopping, if one was requested."""
+        with self._reason_lock:
+            return self._stop_reason
 
 
 class AnswerNowInputListener:
@@ -797,12 +808,16 @@ class StreamingSearchFinished:
     error : BaseException | None
         Exception that ended the search when ``outcome`` is ``"error"``; ``None``
         otherwise.
+    summary : RunSummary | None
+        Engine-owned terminal evidence when the primary event-stream path
+        produced this event. ``None`` on legacy and exception paths.
     """
 
     outcome: t.Literal["complete", "interrupted", "error"]
     total: int
     elapsed: float
     error: BaseException | None = None
+    summary: RunSummary | None = None
 
 
 class RecordsAppendedPayload(pydantic.BaseModel):
@@ -1003,6 +1018,19 @@ class StreamingSearchProgress:
                 "interrupted",
                 total=result_count,
                 elapsed=self._elapsed(),
+            ),
+        )
+
+    def summary_finished(self, summary: RunSummary) -> None:
+        """Flush records and emit one terminal event carrying engine evidence."""
+        self.flush()
+        interrupted = summary.status.state == "cancelled" or summary.status.reason == "answer_now"
+        self._emit(
+            StreamingSearchFinished(
+                "interrupted" if interrupted else "complete",
+                total=summary.match_count,
+                elapsed=summary.elapsed_seconds,
+                summary=summary,
             ),
         )
 
