@@ -54,6 +54,7 @@ OPTIONS_FLAG_ONLY: frozenset[str] = frozenset(
         "-h",
         "--help",
         "--case-sensitive",
+        "--exhaustive",
         "--json",
         "--ndjson",
         "--ui",
