@@ -8,6 +8,15 @@ every surface (CLI, TUI, MCP).
 ## Core data
 
 ```{eval-rst}
+.. autodata:: agentgrep.SearchEffort
+   :no-value:
+
+.. autodata:: agentgrep.SearchScopeProvenance
+   :no-value:
+
+.. autodata:: agentgrep.SourceScanOutcome
+   :no-value:
+
 .. autoclass:: agentgrep.PrivatePath
    :members:
 
@@ -71,7 +80,66 @@ every surface (CLI, TUI, MCP).
    :no-undoc-members:
 ```
 
+## Search result contract
+
+Use {func}`~agentgrep.run_search_result` when completion semantics matter. Its
+{class}`~agentgrep.RunSummary` owns the normalized request, requested and
+completed effort, primary status and conditions, outcome, coverage,
+diagnostics, and next actions. Structured serializers place counts and timing
+in `stats`; they do not read a `RunSummary.statistics` attribute.
+
+```{eval-rst}
+.. autodata:: agentgrep.RunState
+   :no-value:
+
+.. autodata:: agentgrep.SearchOutcome
+   :no-value:
+
+.. autodata:: agentgrep.results.DiagnosticSeverity
+   :no-value:
+
+.. autoclass:: agentgrep.NormalizedSearchRequest
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.RunStatus
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.RunCoverage
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.RunDiagnostic
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.SearchRequestPatch
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.NextAction
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.RunSummary
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.SearchResult
+   :members:
+   :no-undoc-members:
+
+.. autofunction:: agentgrep.apply_search_request_patch
+```
+
 ## Event streams
+
+{func}`~agentgrep.iter_search_events` is the synchronous producer.
+{func}`~agentgrep.aiter_search_events` delivers the same events through a
+bounded async queue. A consumer that may stop before `SearchFinished` must
+explicitly close the async generator, for example with
+{func}`contextlib.aclosing`.
 
 ```{eval-rst}
 .. autoclass:: agentgrep.events.SearchStarted
@@ -116,6 +184,7 @@ every surface (CLI, TUI, MCP).
 ```{eval-rst}
 .. autofunction:: agentgrep.select_backends
 .. autofunction:: agentgrep.discover_sources
+.. autofunction:: agentgrep.run_search_result
 .. autofunction:: agentgrep.run_search_query
 .. autofunction:: agentgrep.search_sources
 .. autofunction:: agentgrep.run_find_query

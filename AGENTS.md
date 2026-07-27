@@ -616,6 +616,19 @@ actually work offline.
 PosixPath('.../codex/...')
 ```
 
+### Synchronization
+
+Coordinate by publishing and subscribing — a callback, queue, `Event`, future,
+or progress sink — not by waiting out a duration. A non-zero `time.sleep` is a
+defect to refactor, not a constant to tune; the pump audit already lists it as
+blocking.
+
+Not sleeps: `time.sleep(0)` and `await asyncio.sleep(0)` yield the scheduler,
+which is how a long scan lets the UI thread render. Blocking on a signal with a
+generous timeout is a deadlock failsafe, provided expiry is treated as failure.
+
+When the event you need is not published yet, publish it.
+
 ### Logging Standards
 
 These rules guide future logging changes; existing code may not yet conform.

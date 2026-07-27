@@ -13,12 +13,11 @@ from agentgrep.mcp._library import (
     AgentSelector,
     FindRecordLike,
     SearchRecordLike,
-    SearchScopeName,
     agentgrep,
 )
 
 _REF_PREFIX = "agref1:"
-_CURSOR_PREFIX = "agcur1:"
+_FIND_CURSOR_PREFIX = "agcur1:"
 
 
 class McpTokenError(ValueError):
@@ -31,20 +30,6 @@ class _RecordRefPayload(t.TypedDict):
     adapter_id: str
     path: str
     fingerprint: str
-
-
-class _SearchCursorPayload(t.TypedDict):
-    v: int
-    tool: t.Literal["search"]
-    offset: int
-    terms: list[str]
-    agent: AgentSelector
-    scope: SearchScopeName
-    case_sensitive: bool
-    limit: int
-    cwd: str | None
-    repo: str | None
-    branch: str | None
 
 
 class _FindCursorPayload(t.TypedDict):
@@ -79,50 +64,6 @@ class ParsedRecordRef:
     adapter_id: str
     path: pathlib.Path
     fingerprint: str
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class SearchCursor:
-    """Decoded search page cursor.
-
-    Replaying the same search with these values and skipping ``offset`` records yields
-    the next page, so every field the first call narrowed on is carried along.
-
-    Attributes
-    ----------
-    offset : int
-        Records already returned, which the next page skips. Non-negative.
-    terms : list[str]
-        Search terms of the original call. Empty only when an origin filter drives the
-        search on its own.
-    agent : AgentSelector
-        Agent the original call selected, or the selector meaning every agent.
-    scope : SearchScopeName
-        Stores the original call opened: prompts, conversations, or all.
-    case_sensitive : bool
-        Whether the original call matched case-sensitively.
-    limit : int
-        Page size to repeat, at least 1.
-    cwd : str | None
-        Recorded working directory the original call filtered on. ``None`` applied no
-        cwd filter.
-    repo : str | None
-        Recorded repository root the original call filtered on. ``None`` applied no repo
-        filter.
-    branch : str | None
-        Recorded git branch the original call filtered on. ``None`` applied no branch
-        filter.
-    """
-
-    offset: int
-    terms: list[str]
-    agent: AgentSelector
-    scope: SearchScopeName
-    case_sensitive: bool
-    limit: int
-    cwd: str | None = None
-    repo: str | None = None
-    branch: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -290,98 +231,6 @@ def parse_record_ref(ref: str, *, home: pathlib.Path) -> ParsedRecordRef:
     )
 
 
-def make_search_cursor(
-    *,
-    offset: int,
-    terms: list[str],
-    agent: AgentSelector,
-    scope: SearchScopeName,
-    case_sensitive: bool,
-    limit: int,
-    cwd: str | None = None,
-    repo: str | None = None,
-    branch: str | None = None,
-) -> str:
-    """Build an opaque cursor for the next search page."""
-    return _encode_token(
-        _CURSOR_PREFIX,
-        t.cast(
-            "dict[str, object]",
-            _SearchCursorPayload(
-                v=1,
-                tool="search",
-                offset=offset,
-                terms=terms,
-                agent=agent,
-                scope=scope,
-                case_sensitive=case_sensitive,
-                limit=limit,
-                cwd=cwd,
-                repo=repo,
-                branch=branch,
-            ),
-        ),
-    )
-
-
-def parse_search_cursor(cursor: str) -> SearchCursor:
-    """Parse an opaque search page cursor."""
-    payload = _decode_token(_CURSOR_PREFIX, cursor)
-    if payload.get("v") != 1 or payload.get("tool") != "search":
-        msg = "cursor is not a search cursor"
-        raise McpTokenError(msg)
-    offset = payload.get("offset")
-    terms = payload.get("terms")
-    agent = payload.get("agent")
-    scope = payload.get("scope")
-    case_sensitive = payload.get("case_sensitive")
-    limit = payload.get("limit")
-    cwd = payload.get("cwd")
-    repo = payload.get("repo")
-    branch = payload.get("branch")
-    if not isinstance(offset, int) or offset < 0:
-        msg = "cursor offset must be non-negative"
-        raise McpTokenError(msg)
-    if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
-        msg = "cursor terms must be a list of strings"
-        raise McpTokenError(msg)
-    if not terms and not any(isinstance(value, str) and value for value in (cwd, repo, branch)):
-        msg = "cursor terms must be a non-empty list of strings unless an origin filter is present"
-        raise McpTokenError(msg)
-    if agent not in t.get_args(AgentSelector):
-        msg = "cursor agent is invalid"
-        raise McpTokenError(msg)
-    if scope not in t.get_args(SearchScopeName):
-        msg = "cursor scope is invalid"
-        raise McpTokenError(msg)
-    if not isinstance(case_sensitive, bool):
-        msg = "cursor case_sensitive must be a boolean"
-        raise McpTokenError(msg)
-    if not isinstance(limit, int) or limit < 1:
-        msg = "cursor limit must be positive"
-        raise McpTokenError(msg)
-    if cwd is not None and not isinstance(cwd, str):
-        msg = "cursor cwd must be a string or null"
-        raise McpTokenError(msg)
-    if repo is not None and not isinstance(repo, str):
-        msg = "cursor repo must be a string or null"
-        raise McpTokenError(msg)
-    if branch is not None and not isinstance(branch, str):
-        msg = "cursor branch must be a string or null"
-        raise McpTokenError(msg)
-    return SearchCursor(
-        offset=offset,
-        terms=t.cast("list[str]", terms),
-        agent=t.cast("AgentSelector", agent),
-        scope=t.cast("SearchScopeName", scope),
-        case_sensitive=case_sensitive,
-        limit=limit,
-        cwd=cwd,
-        repo=repo,
-        branch=branch,
-    )
-
-
 def make_find_cursor(
     *,
     offset: int,
@@ -391,7 +240,7 @@ def make_find_cursor(
 ) -> str:
     """Build an opaque cursor for the next find page."""
     return _encode_token(
-        _CURSOR_PREFIX,
+        _FIND_CURSOR_PREFIX,
         t.cast(
             "dict[str, object]",
             _FindCursorPayload(
@@ -408,7 +257,7 @@ def make_find_cursor(
 
 def parse_find_cursor(cursor: str) -> FindCursor:
     """Parse an opaque find page cursor."""
-    payload = _decode_token(_CURSOR_PREFIX, cursor)
+    payload = _decode_token(_FIND_CURSOR_PREFIX, cursor)
     if payload.get("v") != 1 or payload.get("tool") != "find":
         msg = "cursor is not a find cursor"
         raise McpTokenError(msg)

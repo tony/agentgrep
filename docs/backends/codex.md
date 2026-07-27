@@ -2,10 +2,13 @@
 
 # Codex
 
-Codex stores prompt recall, JSONL session transcripts, rollout summaries, and
-optional SQLite state under one home directory. agentgrep searches prompt and
-session records by default, then leaves metadata caches and database state for
-explicit inventory or sample inspection.
+Codex stores a prompt-recall log, JSONL session transcripts, rollout
+summaries, and optional SQLite state. Normal search reads the prompt-recall
+log. Targeted search can resolve a history record's session UUID to one
+verified rollout; `--exhaustive` also projects prompts from every eligible
+session transcript. Metadata caches remain inventory or sample-only. The state
+database is searchable only under explicit `conversations` and `all` scopes,
+not through targeted prompt routing.
 
 Base path: `~/.codex` (env override: `CODEX_HOME`).
 SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
@@ -15,12 +18,11 @@ SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
 
 ## Stores
 
-Coverage is not the same as default search. `default` stores are
-searched normally; `inspectable` stores are discoverable only when an
-inventory caller opts in; `catalog` stores are documented but not
-searched by default; `private` stores are intentionally not
-enumerated. Some catalog stores have safe sample parsers for
-`inspect_record_sample`, but they do not join normal search.
+Default-search coverage marks eligibility, not an unconditional read.
+Fast prompt effort opens only prompt-history roles; exhaustive effort and
+broad scopes may add searchable chat stores. Catalog-only stores remain
+outside search, and private stores are not enumerated. Some catalog stores
+have safe sample parsers for `inspect_record_sample`.
 
 ```{storage:agent} codex
 ```

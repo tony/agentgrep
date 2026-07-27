@@ -87,12 +87,23 @@ Canonical shared options:
 - `--agent`: selected agent or `all`.
 - `--scope`: selected record scope, such as `all`, `prompts`, or
   `conversations`.
+- `--deep`: targeted effort over a bounded, request-local set of
+  conversations selected from prompt evidence.
+- `--exhaustive`: exhaustive effort over every readable conversation source.
+- `--conversation-limit`: targeted conversation-attempt bound; invalid without
+  `--deep`.
 - `--limit`: primary result limit name across CLI, JSON, and MCP.
 - `--format`: output format where a command exposes more than one sink.
 
 Compatibility aliases are allowed when they match a familiar tool shape. For
 example, `grep -m` and `grep --max-count` may remain aliases for `--limit`.
 Aliases must normalize into the canonical request model before planning.
+MCP search uses the corresponding `effort` values `prompt`, `targeted`, and
+`exhaustive`, plus `conversation_limit`; it does not expose a second boolean
+depth vocabulary. {ref}`ADR 0020 <adr-progressive-deep-search>` owns how each
+frontend normalizes effort with scope. {ref}`ADR 0021
+<adr-prompt-guided-conversation-routing>` owns which prompt evidence may select
+a conversation and how the independent conversation bound is consumed.
 
 Future case handling should prefer a single explicit option such as
 `--case {smart,ignore,respect}`. Existing compatibility flags may remain as
@@ -138,8 +149,8 @@ strings alone. A source or source-family response should include:
 - page info and diagnostics when discovery is paginated or partial.
 
 Display paths may be rendered for humans, but MCP clients should use stable
-identifiers, result cursors, and `RecordRef` handles rather than local paths
-as primary inputs.
+identifiers, supported continuation cursors, and `RecordRef` handles rather
+than local paths as primary inputs.
 
 ### MCP loop
 
@@ -148,17 +159,21 @@ MCP tools should support this loop:
 1. Discover capabilities, query fields, and source coverage.
 2. Explain or validate the intended query when needed.
 3. Search with an explicit scope, limit, and output expectation.
-4. Read the result payload's stats, run status, diagnostics, and
-   `next_cursor`.
-5. Request the next page when `next_cursor` is present.
+4. Read the result payload's stats, coverage, run status, diagnostics, and next
+   actions.
+5. Request the next page only when that tool's response exposes
+   `next_cursor`; search is cursorless, while find supports continuation.
 6. Inspect a result through `RecordRef` when the user needs more context.
 7. Refine the query using diagnostics and next actions rather than guessing at
    backend-specific flags or file paths.
 
 MCP responses should include concise next-action hints only when they are
-grounded in result state, such as "request next page", "narrow by agent",
+grounded in result state, such as targeted or exhaustive follow-ups from a
+completed prompt search, exhaustive follow-up from a completed targeted
+search, "request next page" for a cursor-bearing tool, "narrow by agent",
 "inspect this record", or "enable non-default source coverage". Next actions
-must not include prompt text, secret values, raw argv, or local absolute paths.
+must not include prompt text, secret values, raw argv, local absolute paths,
+or private conversation locators.
 
 ### Result payloads
 
@@ -211,8 +226,9 @@ actions.
 ADR 0001 owns storage-version evidence and source compatibility. ADR 0004 owns
 planning, execution, events, result payloads, run status, pagination,
 diagnostics, and record references. ADR 0005 owns local insights reports and
-model-backed enrichment. This ADR owns how those names appear in public CLI and
-MCP surfaces.
+model-backed enrichment. ADR 0020 owns progressive effort and ADR 0021 owns
+targeted routing. This ADR owns how those names appear in public CLI and MCP
+surfaces.
 
 ## Final position
 

@@ -7,6 +7,10 @@ The Cursor desktop application, modelled as its own backend
 stores chat history in VS Code-style `state.vscdb` SQLite databases
 under the platform user-data directory.
 
+Cursor IDE has no dedicated fast prompt-history backend. Pass `--exhaustive`
+to project prompt records from these databases. Targeted effort cannot route
+this backend.
+
 ## Stores
 
 ```{storage:agent} cursor-ide

@@ -22,6 +22,7 @@ from agentgrep.records import (
     SourceVersionDetection,
     SourceVersionDetectionPayload,
 )
+from agentgrep.results import RunSummary
 
 
 def serialize_search_record(record: SearchRecord) -> SearchRecordPayload:
@@ -92,6 +93,84 @@ def serialize_source_version_detection(
         "strategy": detection.strategy,
         "confidence": detection.confidence,
         "evidence": detection.evidence,
+    }
+
+
+def serialize_run_summary(summary: RunSummary) -> dict[str, object]:
+    """Serialize engine-owned lifecycle evidence without re-deriving semantics."""
+    request = summary.request
+    coverage = summary.coverage
+    return {
+        "request": {
+            "terms": list(request.terms),
+            "scope": request.scope,
+            "scope_provenance": request.scope_provenance,
+            "effort": request.effort,
+            "agents": list(request.agents),
+            "limit": request.limit,
+            "conversation_limit": request.conversation_limit,
+            "dedupe": request.dedupe,
+            "case_sensitive": request.case_sensitive,
+            "order": request.order,
+            "match_surface": request.match_surface,
+        },
+        "effort": {
+            "requested": summary.requested_effort,
+            "completed": summary.completed_effort,
+        },
+        "status": {
+            "state": summary.status.state,
+            "reason": summary.status.reason,
+            "conditions": list(summary.status.conditions),
+        },
+        "outcome": summary.outcome,
+        "coverage": {
+            "sources_discovered": coverage.sources_discovered,
+            "sources_eligible": coverage.sources_eligible,
+            "sources_planned": coverage.sources_planned,
+            "sources_attempted": coverage.sources_attempted,
+            "sources_completed": coverage.sources_completed,
+            "sources_bounded": coverage.sources_bounded,
+            "sources_skipped": coverage.sources_skipped,
+            "sources_unsupported": coverage.sources_unsupported,
+            "sources_failed": coverage.sources_failed,
+            "sources_cancelled": coverage.sources_cancelled,
+            "records_seen": coverage.records_seen,
+            "matches_seen": coverage.matches_seen,
+            "conversations_eligible": coverage.conversations_eligible,
+            "conversations_selected": coverage.conversations_selected,
+            "conversations_completed": coverage.conversations_completed,
+            "source_stop_reasons": list(coverage.source_stop_reasons),
+        },
+        "stats": {
+            "matched": summary.match_count,
+            "elapsed_seconds": summary.elapsed_seconds,
+            "applied_order": summary.applied_order,
+            "limit": summary.limit,
+        },
+        "diagnostics": [
+            {
+                "code": item.code,
+                "message": item.message,
+                "severity": item.severity,
+            }
+            for item in summary.diagnostics
+        ],
+        "next_actions": [
+            {
+                "action_id": action.action_id,
+                "kind": action.kind,
+                "label": action.label,
+                "reason": action.reason,
+                "requires_confirmation": action.requires_confirmation,
+                "patch": {
+                    "effort": action.patch.effort,
+                    "scope": action.patch.scope,
+                    "conversation_limit": action.patch.conversation_limit,
+                },
+            }
+            for action in summary.next_actions
+        ],
     }
 
 
@@ -222,6 +301,7 @@ __all__ = (
     "serialize_grep_end",
     "serialize_grep_match_line",
     "serialize_grep_record",
+    "serialize_run_summary",
     "serialize_search_record",
     "serialize_source_handle",
     "serialize_source_version_detection",

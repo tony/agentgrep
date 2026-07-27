@@ -1,11 +1,13 @@
 """Relevance scoring and session grouping.
 
-The search subcommand collects all engine matches eagerly, then passes
-them through the two-stage pipeline exposed here:
+The engine uses :func:`rank_search_records` to own relevance ordering and
+limiting. Frontends use :func:`score_search_records` to annotate that ordered
+set without changing it:
 
-1. :func:`rank_search_records` — score each record against the query
-   text with rapidfuzz WRatio, filter by threshold, sort best-first.
-2. :func:`group_by_session` — bucket the ranked records by
+1. :func:`score_search_records` — score each record against the query text
+   with rapidfuzz WRatio while preserving input order.
+2. :func:`rank_search_records` — filter by threshold and sort best-first.
+3. :func:`group_by_session` — bucket the ranked records by
    ``session_id``, preserving score order within each group.
 
 Repeated record text is dropped by the engine's per-session dedupe
@@ -26,7 +28,49 @@ if t.TYPE_CHECKING:
 __all__ = [
     "group_by_session",
     "rank_search_records",
+    "score_search_records",
 ]
+
+
+def score_search_records(
+    records: list[SearchRecord],
+    query_text: str,
+    *,
+    threshold: int = 0,
+    origin_boost: RecordOrigin | None = None,
+) -> list[tuple[SearchRecord, float]]:
+    """Score records by relevance without changing their order.
+
+    Parameters
+    ----------
+    records : list[SearchRecord]
+        Engine-matched records in discovery order.
+    query_text : str
+        The space-joined search terms for WRatio scoring.
+    threshold : int
+        Minimum unboosted fuzzy score (0-100). Records below are dropped while
+        the surviving input order remains unchanged.
+    origin_boost : RecordOrigin | None
+        Optional same-project context. Matching records receive a small
+        additive boost.
+
+    Returns
+    -------
+    list[tuple[SearchRecord, float]]
+        ``(record, score)`` pairs in input order.
+    """
+    import rapidfuzz.fuzz
+
+    scored: list[tuple[SearchRecord, float]] = []
+    origin_matcher = OriginMatcher.from_origin(origin_boost)
+    for record in records:
+        score = float(rapidfuzz.fuzz.WRatio(query_text, record.text))
+        if threshold > 0 and score < threshold:
+            continue
+        if origin_matcher.matches(record):
+            score += 10.0
+        scored.append((record, score))
+    return scored
 
 
 def rank_search_records(
@@ -41,7 +85,7 @@ def rank_search_records(
     Parameters
     ----------
     records : list[SearchRecord]
-        Engine-matched records in discovery order.
+        Engine-matched records in newest-first tiebreak order.
     query_text : str
         The space-joined search terms for WRatio scoring.
     threshold : int
@@ -55,17 +99,12 @@ def rank_search_records(
     list[tuple[SearchRecord, float]]
         ``(record, score)`` pairs sorted by descending score.
     """
-    import rapidfuzz.fuzz
-
-    scored: list[tuple[SearchRecord, float]] = []
-    origin_matcher = OriginMatcher.from_origin(origin_boost)
-    for record in records:
-        score = float(rapidfuzz.fuzz.WRatio(query_text, record.text))
-        if threshold > 0 and score < threshold:
-            continue
-        if origin_matcher.matches(record):
-            score += 10.0
-        scored.append((record, score))
+    scored = score_search_records(
+        records,
+        query_text,
+        threshold=threshold,
+        origin_boost=origin_boost,
+    )
     scored.sort(key=lambda pair: pair[1], reverse=True)
     return scored
 

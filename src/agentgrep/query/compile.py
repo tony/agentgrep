@@ -36,6 +36,7 @@ from agentgrep.origin import (
     ORIGIN_PATH_QUERY_FIELDS,
     ORIGIN_QUERY_FIELDS,
     OriginMatcher,
+    record_origin_field_values,
 )
 from agentgrep.query.ast import (
     AndNode,
@@ -54,7 +55,13 @@ from agentgrep.query.evaluate import _evaluate_record, _evaluate_source
 from agentgrep.query.parser import QueryParseError, parse_query
 from agentgrep.query.pathmatch import _compile_path_patterns, _CompiledPathPattern
 from agentgrep.query.registry import FieldRegistry
-from agentgrep.records import SearchQuery, SearchRecord, SearchScope, SourceHandle
+from agentgrep.records import (
+    SearchEffort,
+    SearchQuery,
+    SearchRecord,
+    SearchScope,
+    SourceHandle,
+)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -79,6 +86,16 @@ class CompiledQuery:
         Bare terms collected from the AST in source order, plus the values of ``text:``
         predicates. Populated for field queries too, so the grep prefilter still has
         needles.
+    routing_terms : tuple[str, ...]
+        Positive bare/text-field terms safe to use as prompt-routing clues. Terms below
+        a negation are omitted because absence is not positive conversation evidence.
+    routing_predicate : t.Callable[[SearchRecord], bool] | None
+        Conservative conversation-invariant metadata filter for prompt routing. It
+        returns ``False`` only when known prompt metadata proves that the containing
+        conversation cannot match.
+    has_positive_routing_metadata : bool
+        Whether a positive conversation-invariant metadata clause can initiate routing
+        without a text clue.
     is_pure_text : bool
         Whether the query was only bare terms under AND. ``True`` implies both predicates
         are ``None``.
@@ -87,6 +104,9 @@ class CompiledQuery:
     source_predicate: t.Callable[[SourceHandle], bool] | None
     record_predicate: t.Callable[[SearchRecord], bool] | None
     text_terms: tuple[str, ...]
+    routing_terms: tuple[str, ...]
+    routing_predicate: t.Callable[[SearchRecord], bool] | None
+    has_positive_routing_metadata: bool
     is_pure_text: bool
 
 
@@ -117,11 +137,15 @@ def compile_query(
             source_predicate=None,
             record_predicate=None,
             text_terms=tuple(terms),
+            routing_terms=tuple(terms),
+            routing_predicate=None,
+            has_positive_routing_metadata=False,
             is_pure_text=True,
         )
 
     _validate_ast(ast, registry)
     text_terms = tuple(_collect_text_terms(ast))
+    routing_terms = tuple(_collect_positive_text_terms(ast))
     path_fields = frozenset(spec.name for spec in registry.specs if spec.kind == "path")
     path_patterns = _compile_path_patterns(ast, path_fields=path_fields)
     origin_matchers = _compile_origin_matchers(ast, registry, path_patterns)
@@ -139,12 +163,142 @@ def compile_query(
             case_sensitive=case_sensitive,
         )
 
+    routing_predicate = None
+    if _has_routing_metadata(ast, registry):
+
+        def routing_predicate(record: SearchRecord) -> bool:
+            return (
+                _evaluate_routing_metadata(
+                    ast,
+                    record,
+                    registry,
+                    path_patterns,
+                    origin_matchers,
+                    case_sensitive=case_sensitive,
+                )
+                != "F"
+            )
+
     return CompiledQuery(
         source_predicate=source_predicate,
         record_predicate=record_predicate,
         text_terms=text_terms,
+        routing_terms=routing_terms,
+        routing_predicate=routing_predicate,
+        has_positive_routing_metadata=_has_positive_routing_metadata(ast, registry),
         is_pure_text=False,
     )
+
+
+type _RoutingMetadataState = t.Literal["T", "F", "U"]
+_ROUTING_INVARIANT_FIELDS = frozenset({"agent"}) | ORIGIN_QUERY_FIELDS
+
+
+def _evaluate_routing_metadata(
+    node: QueryNode,
+    record: SearchRecord,
+    registry: FieldRegistry,
+    path_patterns: dict[tuple[str, str], _CompiledPathPattern],
+    origin_matchers: dict[tuple[str, str], OriginMatcher],
+    *,
+    case_sensitive: bool,
+) -> _RoutingMetadataState:
+    """Conservatively evaluate conversation-invariant prompt metadata."""
+    if isinstance(node, FieldExistsNode | FieldEqNode | FieldCmpNode | FieldRangeNode):
+        spec = registry.get(node.field)
+        if spec is None or spec.name not in _ROUTING_INVARIANT_FIELDS:
+            return "U"
+        if spec.name in ORIGIN_QUERY_FIELDS and not record_origin_field_values(
+            record,
+            spec.name,
+        ):
+            return "U"
+        matched = _evaluate_record(
+            node,
+            record,
+            registry,
+            path_patterns,
+            origin_matchers,
+            case_sensitive=case_sensitive,
+        )
+        return "T" if matched else "F"
+    if isinstance(node, NotNode):
+        state = _evaluate_routing_metadata(
+            node.child,
+            record,
+            registry,
+            path_patterns,
+            origin_matchers,
+            case_sensitive=case_sensitive,
+        )
+        return "F" if state == "T" else "T" if state == "F" else "U"
+    if isinstance(node, AndNode):
+        states = tuple(
+            _evaluate_routing_metadata(
+                child,
+                record,
+                registry,
+                path_patterns,
+                origin_matchers,
+                case_sensitive=case_sensitive,
+            )
+            for child in node.children
+        )
+        return "F" if "F" in states else "U" if "U" in states else "T"
+    if isinstance(node, OrNode):
+        states = tuple(
+            _evaluate_routing_metadata(
+                child,
+                record,
+                registry,
+                path_patterns,
+                origin_matchers,
+                case_sensitive=case_sensitive,
+            )
+            for child in node.children
+        )
+        return "T" if "T" in states else "U" if "U" in states else "F"
+    return "U"
+
+
+def _has_routing_metadata(node: QueryNode, registry: FieldRegistry) -> bool:
+    """Return whether ``node`` contains conversation-invariant metadata."""
+    if isinstance(node, FieldExistsNode | FieldEqNode | FieldCmpNode | FieldRangeNode):
+        spec = registry.get(node.field)
+        return spec is not None and spec.name in _ROUTING_INVARIANT_FIELDS
+    if isinstance(node, NotNode):
+        return _has_routing_metadata(node.child, registry)
+    if isinstance(node, AndNode | OrNode):
+        return any(_has_routing_metadata(child, registry) for child in node.children)
+    return False
+
+
+def _has_positive_routing_metadata(
+    node: QueryNode,
+    registry: FieldRegistry,
+    *,
+    negated: bool = False,
+) -> bool:
+    """Return whether positive invariant metadata can initiate routing."""
+    if isinstance(node, FieldExistsNode | FieldEqNode | FieldCmpNode | FieldRangeNode):
+        spec = registry.get(node.field)
+        return not negated and spec is not None and spec.name in _ROUTING_INVARIANT_FIELDS
+    if isinstance(node, NotNode):
+        return _has_positive_routing_metadata(
+            node.child,
+            registry,
+            negated=not negated,
+        )
+    if isinstance(node, AndNode | OrNode):
+        return any(
+            _has_positive_routing_metadata(
+                child,
+                registry,
+                negated=negated,
+            )
+            for child in node.children
+        )
+    return False
 
 
 def _compile_origin_matchers(
@@ -321,10 +475,10 @@ def build_query_from_input(
       compiled query through ``SearchQuery.compiled`` so source and
       record predicates apply on the next search.
 
-    Inherits ``scope``, ``any_term``, ``regex``,
+    Inherits ``scope``, ``effort``, ``any_term``, ``regex``,
     ``case_sensitive``, ``agents``, ``limit``, and ``dedupe`` from
     ``base_query`` so the search bar lives on top of the existing
-    filter scope rather than resetting it.
+    filter scope and read policy rather than resetting them.
 
     Returns a :class:`QueryBuildResult`. On parse/compile failure,
     the caller can surface ``result.error`` in a status line and
@@ -357,12 +511,20 @@ def build_query_from_input(
     # A ``scope:`` predicate filters records, but the coarse discovery scope
     # decides which stores are opened at all. Widen discovery to "all" when
     scope = scope_widened_for_ast(ast, base_query.scope)
+    effort: SearchEffort = (
+        base_query.effort
+        if base_query.effort in {"targeted", "exhaustive"}
+        else "exhaustive"
+        if scope != "prompts"
+        else "prompt"
+    )
     return QueryBuildResult(
         query=_rebuild(
             base_query,
             terms=compiled.text_terms,
             compiled=result_compiled,
             scope=scope,
+            effort=effort,
         ),
         error=None,
     )
@@ -458,11 +620,13 @@ def _rebuild(
     terms: tuple[str, ...],
     compiled: CompiledQuery | None,
     scope: SearchScope | None = None,
+    effort: SearchEffort | None = None,
 ) -> SearchQuery:
     """Clone ``base`` with new ``terms`` / ``compiled``; carry the rest forward.
 
     ``scope`` overrides the discovery scope when a ``scope:`` predicate
-    widened it; ``None`` keeps ``base.scope``.
+    changed it; ``None`` keeps ``base.scope``. ``effort`` similarly
+    overrides the read policy when that scope needs transcript stores.
     """
     return SearchQuery(
         terms=terms,
@@ -476,6 +640,10 @@ def _rebuild(
         compiled=compiled,
         match_surface=base.match_surface,
         origin_filter=base.origin_filter,
+        effort=base.effort if effort is None else effort,
+        order=base.order,
+        scope_provenance=base.scope_provenance,
+        conversation_limit=base.conversation_limit,
     )
 
 
@@ -501,16 +669,63 @@ def fields_in_ast(node: QueryNode) -> set[str]:
 
 
 def scope_widened_for_ast(ast: QueryNode | None, scope: SearchScope) -> SearchScope:
-    """Return ``all`` when ``ast`` carries a ``scope:`` predicate.
+    """Return the narrowest discovery scope that can satisfy ``ast``.
 
-    A ``scope:`` predicate filters records, so discovery must open both
-    prompt and conversation stores for it to act — otherwise
-    ``scope:conversations`` against a prompts-scoped query would open no
-    conversation stores and match nothing.
+    A query without a ``scope:`` predicate keeps ``scope``. Otherwise,
+    boolean scope predicates are reduced to the prompt/conversation
+    record kinds they can admit. This keeps ``scope:prompts`` on prompt
+    stores while still widening mixed expressions that may match either
+    kind.
     """
-    if ast is not None and "scope" in fields_in_ast(ast):
-        return "all"
-    return scope
+    if ast is None or "scope" not in fields_in_ast(ast):
+        return scope
+    possible = _possible_record_scopes(ast)
+    if possible == {"prompts"} or not possible:
+        return "prompts"
+    if possible == {"conversations"}:
+        return "conversations"
+    return "all"
+
+
+_ALL_RECORD_SCOPES = frozenset(("prompts", "conversations"))
+
+
+def _possible_record_scopes(node: QueryNode) -> frozenset[str]:
+    """Return record kinds that may satisfy the scope clauses in ``node``."""
+    return frozenset(
+        record_scope
+        for record_scope in _ALL_RECORD_SCOPES
+        if _scope_truth(node, record_scope) != "F"
+    )
+
+
+def _scope_truth(
+    node: QueryNode,
+    record_scope: str,
+) -> t.Literal["T", "F", "U"]:
+    """Project ``node`` onto one record kind with conservative unknowns."""
+    if isinstance(node, FieldEqNode) and node.field == "scope":
+        return "T" if node.value in {record_scope, "all"} else "F"
+    if isinstance(node, FieldExistsNode) and node.field == "scope":
+        return "T"
+    if isinstance(node, NotNode):
+        child = _scope_truth(node.child, record_scope)
+        if child == "T":
+            return "F"
+        if child == "F":
+            return "T"
+        return "U"
+    if isinstance(node, AndNode):
+        states = tuple(_scope_truth(child, record_scope) for child in node.children)
+        if "F" in states:
+            return "F"
+        return "U" if "U" in states else "T"
+    if isinstance(node, OrNode):
+        states = tuple(_scope_truth(child, record_scope) for child in node.children)
+        if "T" in states:
+            return "T"
+        return "U" if "U" in states else "F"
+    return "U"
 
 
 _FIND_BOOLEAN_TEXT_REASON = (
@@ -596,4 +811,23 @@ def _collect_text_terms(node: QueryNode) -> list[str]:
         return out
     if isinstance(node, NotNode):
         return _collect_text_terms(node.child)
+    return []
+
+
+def _collect_positive_text_terms(node: QueryNode) -> list[str]:
+    """Collect text terms that are not beneath a negation.
+
+    Targeted routing may relax boolean composition to an OR over positive
+    clues, but a negative term can never establish which conversation should
+    be opened.
+    """
+    if isinstance(node, TermNode):
+        return [node.value]
+    if isinstance(node, FieldEqNode) and node.field == "text":
+        return [node.value]
+    if isinstance(node, AndNode | OrNode):
+        out: list[str] = []
+        for child in node.children:
+            out.extend(_collect_positive_text_terms(child))
+        return out
     return []

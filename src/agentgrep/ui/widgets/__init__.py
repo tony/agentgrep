@@ -16,6 +16,7 @@ from agentgrep.ui.widgets.dropdown import CompletionDropdown
 from agentgrep.ui.widgets.history import HistoryRecall
 from agentgrep.ui.widgets.inputs import DetailFindInput, FilterInput, SearchInput
 from agentgrep.ui.widgets.messages import (
+    DepthOfferSelected,
     DetailFindRequested,
     DetailFocusRequested,
     DetailScrollChanged,
@@ -36,13 +37,21 @@ from agentgrep.ui.widgets.status import (
     SlowSourceDiagnosticsRow,
     SpinnerWidget,
 )
-from agentgrep.ui.widgets.welcome import WELCOME_QUERY_INDEX_META, WelcomeExamples
+from agentgrep.ui.widgets.welcome import (
+    DEPTH_OFFER_ACTION_META,
+    WELCOME_QUERY_INDEX_META,
+    DepthOffer,
+    WelcomeExamples,
+)
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
+    "DEPTH_OFFER_ACTION_META",
     "WELCOME_QUERY_INDEX_META",
     "CompletionDropdown",
+    "DepthOffer",
+    "DepthOfferSelected",
     "DetailFindInput",
     "DetailFindRequested",
     "DetailFocusRequested",

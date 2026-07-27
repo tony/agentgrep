@@ -3,10 +3,17 @@
 # MCP
 
 agentgrep's MCP server exposes a read-only search surface over stdio.
-Search defaults to prompt scope; full conversation records are an
-explicit `scope="conversations"` opt-in. The server does not mutate
-local agent stores, open SQLite in write mode, or execute arbitrary
-shell commands.
+Search opens fast prompt-history stores by default. Set
+`effort="targeted"` to search a bounded set of conversations selected
+from prompt evidence, or `effort="exhaustive"` to search every readable
+conversation. `scope` separately controls returned record kinds. The
+server does not mutate local agent stores, open SQLite in write mode, or
+execute arbitrary shell commands.
+
+With targeted or exhaustive effort and omitted scope, MCP infers
+`scope="all"`. It does not broaden an explicit prompt scope: targeted effort
+with `scope="prompts"` is rejected. Search is cursorless and keeps its
+omitted-result-limit default of 20.
 
 ## Install
 

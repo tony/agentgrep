@@ -19,11 +19,11 @@ in the CLI.
 
 The event stream solves both:
 
-- **Per-record liveness.** Each match emits as
-  {class}`~agentgrep.events.RecordEmitted` the moment the engine
-  decides "unique-and-included." The CLI grep / find text paths
-  consume the stream and print + flush per record; users see the
-  first matches within milliseconds.
+- **Per-record delivery.** Scan-ordered grep can emit
+  {class}`~agentgrep.events.RecordEmitted` as the collector accepts each
+  match. Relevance and global-newest requests may buffer records until the
+  global frontier is known; their ordering guarantee takes priority over early
+  display.
 - **Single source of truth.** Search progress (which source is
   active, how many records seen / matched) and the matches
   themselves are the same event stream, not two parallel side
@@ -90,10 +90,10 @@ flowchart TD
 
 ### Sync producer
 
-The engine is a synchronous generator. Async consumers wrap it in
-{func}`asyncio.to_thread` with one line; sync consumers iterate
-directly. Tests exercise the producer without an event loop, which
-keeps the test surface small.
+The engine is a synchronous generator. Sync consumers iterate
+{func}`~agentgrep.iter_search_events` directly. Async consumers use
+{func}`~agentgrep.aiter_search_events`, which runs the producer in a worker
+thread and transfers events through a bounded queue.
 
 ### Pydantic events
 
@@ -122,42 +122,53 @@ The {data}`~agentgrep.events.SearchEvent` union has five members.
 Their guaranteed sequence:
 
 ::::{mermaid}
-:caption: Search events always open and close an envelope around each source.
-:alt: search event order from started through per-source records to finished
+:caption: Search starts once, pairs attempted sources, and finishes once.
+:alt: search event partial order with source pairs and ordered record delivery
 :name: search-event-sequence
 :responsive: fit
 
 flowchart TD
     search_started["SearchStarted"]:::cmd
-    source_started["SourceStarted"]:::cmd
+    source_started["SourceStarted (each attempted source)"]:::cmd
     record_emitted["RecordEmitted"]:::cmd
     source_finished["SourceFinished"]:::cmd
     search_finished["SearchFinished"]:::cmd
 
     search_started --> source_started
-    source_started -->|match| record_emitted
-    source_started -->|zero matches| source_finished
+    source_started --> source_finished
+    source_started -. scan-order release while active .-> record_emitted
+    source_finished -. ranked/newest release after finish .-> record_emitted
     record_emitted -->|next match| record_emitted
-    record_emitted --> source_finished
-    source_finished -->|next source| source_started
     source_finished --> search_finished
+    record_emitted --> search_finished
 ::::
+
+The graph is a partial order, not a serial source timeline:
+
+- `SearchStarted` is first and `SearchFinished` is last.
+- Every attempted source has one `SourceStarted` / `SourceFinished` pair;
+  pairs can overlap and do not establish a global source sequence.
+- Scan-ordered records can arrive while their source is active. Relevance and
+  newest records can arrive after that source finishes.
 
 - {class}`~agentgrep.events.SearchStarted` — exactly once at the
   head. Carries `source_count` (the number of candidate sources
   after prefiltering).
-- {class}`~agentgrep.events.SourceStarted` — once per source, in
-  source-discovery order (mtime descending). Carries `adapter_id`,
-  `index`, `total`.
+- {class}`~agentgrep.events.SourceStarted` — once per attempted source, in
+  planned source priority. Carries `adapter_id`, `index`, `total`.
 - {class}`~agentgrep.events.RecordEmitted` — the hot-path event.
-  Fires only after the per-session dedup decided unique-and-included.
+  Fires only after deduplication and the requested ordering contract permit
+  release. An ordered record need not appear inside the start/finish pair for
+  the source that produced it.
 - {class}`~agentgrep.events.SourceFinished` — once per source,
   paired with its `SourceStarted`. Carries `records_seen` (every
   record parsed) and `matches_seen` (the subset that matched
   before dedup).
 - {class}`~agentgrep.events.SearchFinished` — exactly once at the
   tail. Carries `match_count` (total emitted) and
-  `elapsed_seconds`.
+  `elapsed_seconds` plus the engine-owned {class}`~agentgrep.RunSummary`.
+  The summary records the normalized effort, status, distinguishable empty
+  outcome, source and conversation coverage, diagnostics, and next actions.
 
 Even on empty input the `Started` / `Finished` envelope fires so
 cleanup code is uniform.
@@ -211,41 +222,62 @@ def stream_to_stdout(home, query) -> int:
     return 0 if count > 0 else 1
 ```
 
-### Collect to a list (the MCP / TUI snapshot pattern)
+### Collect records and terminal evidence
 
 ```python
+import agentgrep
+
+
+def collect_search(home, query):
+    result = agentgrep.run_search_result(home, query)
+    return result.records, result.summary
+```
+
+Consumers must retain the terminal summary. An empty record tuple alone cannot
+say whether prompt search found nothing, targeted routing selected no
+conversation, selected conversations contained no match, exhaustive coverage
+found nothing, or the run ended incompletely.
+
+The summary is the completion evidence: `requested_effort` and
+`completed_effort`, `outcome`, `coverage`, diagnostics, and engine-authored
+next actions all describe facts that records cannot. Its primary status follows
+the precedence `failed`, `cancelled`, `truncated`, `approximate`, `bounded`,
+then `complete`; `status.conditions` retains every independent condition rather
+than discarding lower-precedence facts. Apply a next-action patch only after
+checking `requires_confirmation`.
+
+Structured sinks serialize this evidence as `request`, `effort`, `status`,
+`outcome`, `coverage`, `stats`, diagnostics, and next actions. The serialized
+`stats` object contains matched count, elapsed time, applied order, and limit;
+`RunSummary` has no `statistics` attribute.
+
+### Consume events asynchronously
+
+```python
+import contextlib
 import agentgrep
 from agentgrep import events
 
 
-def collect_records(home, query):
-    return [
-        event.record
-        for event in agentgrep.iter_search_events(home, query)
-        if isinstance(event, events.RecordEmitted)
-    ]
+async def collect_events(home, query) -> list[events.SearchEvent]:
+    events_seen = []
+    async with contextlib.aclosing(agentgrep.aiter_search_events(home, query)) as stream:
+        async for event in stream:
+            events_seen.append(event)
+    return events_seen
 ```
 
-### Update a UI as events arrive (the Textual TUI pattern)
+The async wrapper applies queue backpressure. If a consumer may stop before
+`SearchFinished`, `aclosing` requests cooperative cancellation and waits for
+the worker to stop.
 
-```python
-import asyncio
-import agentgrep
-from agentgrep import events
-
-
-async def update_ui(home, query, render_record):
-    def _drain() -> list[events.SearchEvent]:
-        return list(agentgrep.iter_search_events(home, query))
-
-    for event in await asyncio.to_thread(_drain):
-        if isinstance(event, events.RecordEmitted):
-            render_record(event.record)
-```
-
-For finer-grained live updates inside Textual, run the generator
-on a `@work(thread=True)`-decorated method and post a message per
-event rather than draining first.
+This is not a Textual rendering recipe. The explorer runs search work in a
+threaded, exclusive worker in its stable `search` group and gives it a shared
+{class}`~agentgrep.SearchControl` for cooperative stopping. The worker returns
+events through a generation-gated `call_from_thread` callback; the pump drops
+stale generations and applies record batches in bounded chunks. Keep parsing,
+collection, and bulk rendering off the pump rather than putting an async event
+loop directly in a handler.
 
 ### Cancel mid-scan
 
@@ -260,25 +292,22 @@ control = agentgrep.SearchControl()
 control.request_answer_now()
 ```
 
-The generator still emits `SearchFinished` so cleanup runs.
+The generator still emits `SearchFinished` so cleanup runs. The CLI exposes
+answer-now for `search` text output, including globally newest-first `--no-rank`,
+when progress is active and both stdin and stderr are TTYs. Grep uses scan
+order and its result limit instead.
 
-## Slice boundaries
+## Async delivery and source scheduling
 
-This page documents Slice 1 — the sync iterator surface used by the
-CLI's live streaming. Two follow-up slices are planned:
+{func}`~agentgrep.aiter_search_events` is the public async API. It uses a
+bounded {class}`asyncio.Queue` between the synchronous worker and async
+consumer. Closing it signals the shared {class}`~agentgrep.SearchControl`,
+stops delivery, and joins the worker.
 
-- **Slice 2**: an {func}`~agentgrep.aiter_search_events` async wrapper
-  that bridges the sync producer via a bounded {class}`asyncio.Queue`
-  and a thread-backed producer task. Cancellation propagates through
-  `CancelledError`. The TUI moves to the async surface; the CLI
-  keeps using the sync iterator.
-- **Slice 3**: source-level parallelism via {class}`asyncio.TaskGroup`
-  over {func}`asyncio.to_thread` ``(parse_source, src)``. Each source's
-  events merge into a single output stream via the queue. Cancellation
-  propagates through task cancel.
-
-Both slices preserve the public event surface — consumers written
-today continue to work without changes.
+Source scans may use OS threads, but the collector owns final emission.
+Relevance and newest order drain enough work to prove the global frontier.
+Scan order serializes source priority so a faster lower-priority worker cannot
+overtake the requested sequence.
 
 ## Reference
 

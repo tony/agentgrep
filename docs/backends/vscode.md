@@ -4,8 +4,9 @@
 
 VS Code's built-in GitHub Copilot Chat persists readable transcript snapshots
 and mutations under the workbench user-data directory. agentgrep treats those
-files as a JSON-transcript backend, with prompt records in the default scope
-and full conversation records behind the conversation scope.
+files as a JSON-transcript backend, with prompt records available under
+`--exhaustive` and full conversation records behind the conversation scope.
+Targeted effort cannot route this backend.
 
 Base path: `~/.config/Code/User` on Linux
 (`~/Library/Application Support/Code/User` on macOS,
@@ -50,7 +51,7 @@ drive both shapes:
 The assistant reply is reconstructed from the bare `MarkdownString`
 response parts (shape `{value, supportHtml, supportThemeIcons}`, no
 `kind`); tool-invocation, inline-reference, progress, and warning parts
-are skipped. User prompts participate in the default prompt scope;
+are skipped. User prompts participate in prompt scope under `--exhaustive`;
 assistant text requires `--scope conversations` or `--scope all`. VS Code
 does not publish a formal schema, so agentgrep's parser is the reference
 implementation; a forward-compatible `markdownContent` response kind and a

@@ -7,6 +7,7 @@ share one fixture layout.
 
 from __future__ import annotations
 
+import json
 import pathlib
 
 import pytest
@@ -66,3 +67,52 @@ def fixture_path(store_id: str, name: str) -> pathlib.Path:
     if not path.is_file():
         raise FileNotFoundError(path)
     return path
+
+
+@pytest.fixture
+def codex_transcript_home(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Return an isolated home containing one transcript-only Codex prompt."""
+    session_path = (
+        tmp_path
+        / ".codex"
+        / "sessions"
+        / "2026"
+        / "05"
+        / "17"
+        / "rollout-2026-05-17T12-00-00-example.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "00000000-0000-0000-0000-000000000200",
+                            "timestamp": "2026-05-17T12:00:00Z",
+                            "cwd": "/work/example",
+                        },
+                    },
+                ),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": "deep-only prompt",
+                                },
+                            ],
+                            "timestamp": "2026-05-17T12:00:01Z",
+                        },
+                    },
+                ),
+            ),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return tmp_path

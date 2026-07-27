@@ -10,8 +10,11 @@ from agentgrep._engine.runtime import SearchRuntime
 from agentgrep.mcp._library import SERVER_VERSION
 from agentgrep.mcp.instructions import _build_instructions
 from agentgrep.mcp.middleware import (
+    AgentgrepArgumentPresenceMiddleware,
     AgentgrepAuditMiddleware,
     AgentgrepResponseLimitingMiddleware,
+    AgentgrepValidationErrorMiddleware,
+    _install_fastmcp_validation_log_redaction,
 )
 from agentgrep.mcp.prompts import register_prompts
 from agentgrep.mcp.resources import register_resources
@@ -25,6 +28,7 @@ DEFAULT_RESPONSE_LIMIT_BYTES = 512 * 1024
 
 def build_mcp_server() -> FastMCP:
     """Build and return the FastMCP server instance."""
+    _install_fastmcp_validation_log_redaction()
     mcp = FastMCP(
         name="agentgrep",
         version=SERVER_VERSION,
@@ -34,13 +38,20 @@ def build_mcp_server() -> FastMCP:
         #      timing captures middleware cost too.
         #   2. ErrorHandlingMiddleware — transforms exceptions into proper MCP
         #      errors after Audit records the original failure type.
-        #   3. AgentgrepAuditMiddleware — wraps response limiting so truncated
-        #      ToolResult errors are audit-visible as outcome=error.
-        #   4. AgentgrepResponseLimitingMiddleware — bounds successful tool
-        #      output before the result returns through Audit.
+        #   3. ValidationErrorMiddleware — maps FastMCP argument failures to
+        #      concise invalid-params errors before generic transformation.
+        #   4. ArgumentPresenceMiddleware — retains raw presence before
+        #      FastMCP injects tool defaults.
+        #   5. AgentgrepAuditMiddleware — wraps response limiting so semantic
+        #      search truncation stays successful and fallback errors are
+        #      audit-visible as outcome=error.
+        #   6. AgentgrepResponseLimitingMiddleware — bounds tool output before
+        #      the result returns through Audit.
         middleware=[
             TimingMiddleware(),
             ErrorHandlingMiddleware(transform_errors=True),
+            AgentgrepValidationErrorMiddleware(),
+            AgentgrepArgumentPresenceMiddleware(),
             AgentgrepAuditMiddleware(),
             AgentgrepResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
         ],

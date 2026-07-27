@@ -42,7 +42,7 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
             "diagnostic `errorMessage` string in place of `content`); "
             "`compaction`/`branch_summary` carry a `summary`; `session_info` "
             "carries a user-set `name`. No separate prompt-history log or "
-            "SQLite index exists."
+            "SQLite index backs ordinary sessions."
         ),
         sample_record=(
             '{"type":"message","id":"...","parentId":"...",'
@@ -52,10 +52,10 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         ),
         search_by_default=True,
         search_notes=(
-            "The sole searchable pi store. User turns surface as prompts and "
-            "assistant/tool turns as history via the shared role->kind mapping; "
-            "compaction/branch summaries and session names are included as "
-            "history text."
+            "The sole ordinary-session and deep-prompt pi store. User turns "
+            "surface as prompts and assistant/tool turns as history via the "
+            "shared role->kind mapping; compaction/branch summaries and session "
+            "names are included as history text."
         ),
         discovery=(
             DiscoverySpec(

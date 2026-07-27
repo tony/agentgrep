@@ -50,7 +50,8 @@ import typing as t
 
 import pydantic
 
-from agentgrep.records import FindRecord, SearchRecord
+from agentgrep.records import FindRecord, SearchRecord, SourceScanOutcome
+from agentgrep.results import RunSummary
 
 
 class _BaseEvent(pydantic.BaseModel):
@@ -123,13 +124,17 @@ class SourceFinished(_BaseEvent):
     ``matches_seen`` is the subset that matched the query (pre-dedup).
     The dedup decision happens later in the engine, so a
     :class:`RecordEmitted` event may fire for fewer records than
-    ``matches_seen`` reports.
+    ``matches_seen`` reports. ``outcome`` and ``stop_reason`` distinguish
+    clean completion from a declared bound, unsupported adapter, failure,
+    or cancellation without exposing exception text.
     """
 
     type: t.Literal["source_finished"] = "source_finished"
     adapter_id: str
     records_seen: int
     matches_seen: int
+    outcome: SourceScanOutcome
+    stop_reason: str | None
 
 
 class SearchFinished(_BaseEvent):
@@ -137,13 +142,15 @@ class SearchFinished(_BaseEvent):
 
     ``match_count`` is the total of unique, included records — every
     :class:`RecordEmitted` that fired earlier counts once. Always the
-    last event in a stream that ran to completion. A stream that
-    raised an exception mid-scan will skip this event.
+    last event in every ordinarily terminalized stream, including source
+    failures represented by the engine summary. Process-level
+    :class:`BaseException` values still propagate.
     """
 
     type: t.Literal["search_finished"] = "search_finished"
     match_count: int
     elapsed_seconds: float
+    summary: RunSummary
 
 
 SearchEvent = t.Annotated[

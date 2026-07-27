@@ -42,6 +42,69 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Breaking changes
+
+#### MCP search cursors are removed (#143)
+
+MCP {tooliconl}`search` returns one ordered response capped by `limit`, with no
+continuation cursor. The `agcur1` search cursors shipped in agentgrep 0.1.0a22
+are no longer accepted — rerun without `cursor`, then refine the query or raise
+`limit`. MCP {tooliconl}`find` pagination is unchanged.
+
+#### Transcript-only agents leave the default search (#143)
+
+Cursor IDE, OpenCode, and Pi expose prompts only through their chat
+transcripts, so they no longer contribute to a default `search`, `grep`, or
+`ui` request. Reach them with `--exhaustive`, or with `--scope conversations`
+or `--scope all`.
+
+#### Search events and the MCP response carry run outcomes (#143)
+
+{class}`~agentgrep.events.SourceFinished` and
+{class}`~agentgrep.events.SearchFinished` gained required fields, and the MCP
+{tooliconl}`search` response now reports effort, outcome, coverage, and
+suggested next actions. Library consumers that construct or re-validate these
+events must supply the new fields.
+
+### What's new
+
+#### Choose how deep a search reads (#143)
+
+`search` and `grep` read fast prompt history by default. `--deep` adds a
+bounded set of conversations selected from matching prompt evidence, and
+`--exhaustive` reads every eligible conversation backend. MCP
+{tooliconl}`search` and the Textual explorer offer the same three levels.
+See {ref}`cli-search` for details.
+
+#### Reach a deeper search from inside the explorer (#143)
+
+The idle canvas lists the depth choices the engine offers for the query you
+have typed, selectable by mouse or keyboard, so reaching conversations no
+longer costs a shallow search first. `/deep` and `/exhaustive` also work with
+no prior search, and `/deep 50` bounds one request. See
+{ref}`tui-depth-discoverability`.
+
+#### Results say how complete they are (#143)
+
+Every search reports whether its answer is exact, bounded, or approximate,
+which sources it covered, and what to run next to widen it. An empty result
+names the surface it actually read, so a shallow miss reads as one rung's miss
+rather than an empty corpus.
+
+### Fixes
+
+#### `--limit` no longer discards the best results (#113)
+
+A capped search stopped reading once it had seen enough records in scan order,
+so the newest or highest-scoring matches could be cut before ranking ever ran.
+Ordered requests now consider the full candidate set before applying the cap.
+
+#### A replaced search stops promptly in the explorer (#143)
+
+Starting a search while one was still running could leave the first scanning to
+completion in the background, competing for I/O with the search you actually
+asked for. A replaced run is now always signalled.
+
 ### Development
 
 #### Lint floor moved to ruff 0.16 (#149)

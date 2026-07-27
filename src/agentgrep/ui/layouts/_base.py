@@ -9,6 +9,7 @@ bindings, and presentation; they reach the engine only through
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import io
 import typing as t
@@ -18,9 +19,12 @@ from rich.segment import Segment, Segments
 from textual.app import generate_datetime_filename
 from textual.screen import Screen
 
+from agentgrep.results import apply_search_request_patch, offered_depth_actions
 from agentgrep.ui import _runtime, commands, theme as ui_theme
 
 if t.TYPE_CHECKING:
+    from agentgrep.records import SearchQuery
+    from agentgrep.results import NextAction, RunSummary
     from agentgrep.ui._context import UiContext
     from agentgrep.ui.workflows import Workflow
 
@@ -126,8 +130,15 @@ class LayoutScreen(_SCREEN_BASE):
         self._ctx = ctx
         self._workflow = workflow
         self._command_matches: tuple[commands.SlashCommand, ...] = ()
+        self._dispatching_command = False
         self._enum_dropdown: t.Any = None
         self._screenshot_generation: int = 0
+        self._run_summary: RunSummary | None = None
+        self._active_search_text = (
+            ctx.initial_search_text
+            if ctx.initial_search_text is not None
+            else " ".join(ctx.query.terms)
+        )
 
     @property
     def context(self) -> UiContext:
@@ -160,6 +171,32 @@ class LayoutScreen(_SCREEN_BASE):
         self._workflow = workflow
         self._workflow.on_attach(t.cast("t.Any", self))
 
+    def _resolve_slash_line(self, text: str) -> tuple[commands.SlashCommand, str] | None:
+        """Resolve one command line into its command and argument remainder.
+
+        ``None`` means ``text`` is not dispatchable and retains literal search
+        behavior — which is exactly what makes a ``/``-prefixed path query such
+        as ``/usr/local`` searchable.
+
+        Parameters
+        ----------
+        text : str
+            Trimmed primary-input text.
+
+        Returns
+        -------
+        tuple[commands.SlashCommand, str] | None
+            The resolved command and its trimmed remainder, or ``None`` when
+            ``text`` is not a command line this layout dispatches.
+        """
+        if not text.startswith("/"):
+            return None
+        token, args = commands.parse_command(text)
+        command = commands.resolve_command(token, self.slash_commands)
+        if command is None or (args and not command.accepts_args):
+            return None
+        return command, args
+
     @_runtime.pump_only
     def _dispatch_slash_text(self, text: str) -> bool | None:
         """Run one recognized exact slash command.
@@ -168,15 +205,25 @@ class LayoutScreen(_SCREEN_BASE):
         search behavior. A handler's ``False`` result means the command was
         recognized but invalid, so callers must not route it to search.
         """
-        if not text.startswith("/"):
+        resolved = self._resolve_slash_line(text)
+        if resolved is None:
             return None
-        token, args = commands.parse_command(text)
-        command = commands.resolve_command(token, self.slash_commands)
-        if command is None or (args and not command.accepts_args):
-            return None
-        succeeded = command.run(self, args)
-        if succeeded:
-            self._clear_command_input()
+        command, args = resolved
+        # A running handler is the one condition under which the primary input
+        # is known to hold a command line rather than the query being
+        # escalated: the command menu dispatches a completed ``/deep`` while
+        # the box still holds the partial ``/de`` the user typed.
+        self._dispatching_command = True
+        try:
+            succeeded = command.run(self, args)
+        finally:
+            self._dispatching_command = False
+        if command.clears_input:
+            if succeeded:
+                self._clear_command_input()
+        else:
+            self._restore_active_search_input()
+        if succeeded or not command.clears_input:
             self._hide_command_completion()
         return succeeded
 
@@ -195,9 +242,216 @@ class LayoutScreen(_SCREEN_BASE):
             self._enum_dropdown.display = False
         self._command_matches = ()
 
+    def _restore_active_search_input(self) -> None:
+        """Restore the query that an action command is escalating."""
+        search_input = getattr(self, "_search_input", None)
+        if search_input is None:
+            return
+        search_input.load_query(self._active_search_text)
+        search_input.focus()
+
+    def _remember_active_search_text(self, text: str) -> None:
+        """Retain the query a slash command escalates while ``/`` occupies the input."""
+        self._active_search_text = text
+
+    def pending_depth_actions(self) -> tuple[NextAction, ...]:
+        """Return the engine's depth offer for the request not yet submitted.
+
+        The offer is derived from the layout's *launch* policy through
+        ``build_query``, not from a previous run, so it never carries a
+        widened effort forward. It describes what a run would read; it
+        asserts nothing about coverage.
+        """
+        return offered_depth_actions(self._pending_depth_query())
+
+    def _pending_depth_query(self) -> SearchQuery:
+        """Return the request the primary input would submit right now."""
+        return t.cast("t.Any", self).build_query(self._pending_search_text())
+
+    def _pending_search_text(self) -> str:
+        """Return live input text, ignoring a command line occupying the box.
+
+        An emptied box means the user cleared the query, so it escalates
+        nothing. The box falls back to the retained draft only when it is
+        genuinely holding a command — while a handler runs, or when its text
+        resolves to one — so escalation reads exactly the text Enter would
+        search. An unresolved ``/`` token such as ``/usr/local`` searches as a
+        literal, so it escalates as that same literal.
+        """
+        if self._dispatching_command:
+            return self._active_search_text.strip()
+        search_input = getattr(self, "_search_input", None)
+        value = "" if search_input is None else str(getattr(search_input, "value", "") or "")
+        text = value.strip()
+        if self._resolve_slash_line(text) is not None:
+            return self._active_search_text.strip()
+        return text
+
+    @_runtime.pump_only
+    def run_next_action(self, action_id: str, argument: str = "") -> bool:
+        """Apply one engine-authored depth action to the active request.
+
+        After a run the action set comes from that run's ``RunSummary``. Before
+        any run it comes from :func:`~agentgrep.results.offered_depth_actions`
+        for the query the primary input currently holds, so the ladder is
+        reachable from a cold session. Both paths apply the engine's own
+        :class:`~agentgrep.results.SearchRequestPatch` and neither makes the
+        escalated effort sticky.
+
+        Parameters
+        ----------
+        action_id : str
+            Engine action naming the rung, such as ``search.targeted``.
+        argument : str
+            Raw slash remainder. A positive integer bounds this request's
+            targeted conversation attempts (``/deep 50``); an empty remainder
+            keeps the cap the engine's own patch carries. Anything else, and
+            any argument to a rung that reads every conversation, is refused.
+
+        Returns
+        -------
+        bool
+            Whether a search was started.
+        """
+        bound = argument.strip()
+        if bound and not self._accepts_depth_bound(action_id, bound):
+            return False
+        summary = self._run_summary
+        base_query = (
+            t.cast("t.Any", self).search_query
+            if summary is not None
+            else self._pending_depth_query()
+        )
+        actions = summary.next_actions if summary is not None else offered_depth_actions(base_query)
+        action = next(
+            (candidate for candidate in actions if candidate.action_id == action_id),
+            None,
+        )
+        if action is None:
+            self.notify(
+                "The engine offers no deeper coverage for this request.",
+                title="Search depth",
+                severity="warning",
+            )
+            return False
+        if action.requires_confirmation:
+            self.notify(
+                "Change the explicit scope to all before searching conversations.",
+                title="Search depth",
+                severity="warning",
+            )
+            return False
+        if summary is None and not self._has_searchable_request(base_query):
+            self.notify(
+                "Type a query before choosing its conversation coverage.",
+                title="Search depth",
+                severity="warning",
+            )
+            return False
+        query = apply_search_request_patch(base_query, action.patch)
+        if bound:
+            # The engine still authors the escalation; the user only replaces
+            # the cap it declared, exactly as ``--deep N`` does at launch.
+            query = dataclasses.replace(query, conversation_limit=int(bound))
+        self._run_summary = None
+        host = t.cast("t.Any", self)
+        # An escalation replaces the active search, so it owes the same
+        # lifecycle a submitted query gets in ``SearchWorkflow.on_query``:
+        # signal the in-flight run before ``run_search`` swaps in a fresh
+        # ``SearchControl`` the old worker can never see. A post-run
+        # escalation re-runs text the history already holds from its
+        # submission; a pre-run one submits a draft for the first time.
+        host.request_cancel()
+        if summary is None:
+            escalated_text = self._pending_search_text()
+            self._remember_active_search_text(escalated_text)
+            host.record_history(escalated_text)
+        host.run_search(query)
+        return True
+
+    def _accepts_depth_bound(self, action_id: str, bound: str) -> bool:
+        """Report whether ``bound`` is a conversation cap this rung can honor.
+
+        Warns about the refusal it reports, so a mistyped count never silently
+        starts a search at a different depth than the user asked for.
+
+        Parameters
+        ----------
+        action_id : str
+            Engine action naming the rung the bound was typed for.
+        bound : str
+            Non-empty slash remainder, already trimmed.
+
+        Returns
+        -------
+        bool
+            Whether ``bound`` is a positive integer on a rung that reads a
+            bounded set of conversations.
+        """
+        if action_id != "search.targeted":
+            self.notify(
+                "Searching all conversations reads every one of them, so it takes no count.",
+                title="Search depth",
+                severity="warning",
+            )
+            return False
+        # isdecimal, not isdigit: superscripts satisfy isdigit but raise in int().
+        if not bound.isdecimal() or int(bound) < 1:
+            self.notify(
+                "Deep search takes an optional conversation count, such as /deep 50.",
+                title="Search depth",
+                severity="warning",
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _has_searchable_request(query: SearchQuery) -> bool:
+        """Report whether ``query`` asks for anything (mirrors ``SearchWorkflow``)."""
+        origin_filter = query.origin_filter
+        return bool(
+            query.terms
+            or query.compiled is not None
+            or (origin_filter is not None and not origin_filter.is_empty()),
+        )
+
+    def _is_command_draft(self, value: str) -> bool:
+        """Report whether ``value`` is a command line the user is still typing.
+
+        Prefix matching, not resolution: ``/de`` is a draft of ``/deep`` even
+        though it dispatches nothing yet, while ``/usr/local`` completes to no
+        command and is therefore a query — the same query Enter would search.
+
+        Parameters
+        ----------
+        value : str
+            Raw primary-input text.
+
+        Returns
+        -------
+        bool
+            Whether the command menu owns ``value``.
+        """
+        text = value.lstrip()
+        if not text.startswith("/"):
+            return False
+        token, _args = commands.parse_command(text)
+        return bool(commands.command_matches(token, self.slash_commands))
+
     def _update_command_completion(self, value: str) -> bool:
-        """Update slash-command completion and report whether it owns ``value``."""
-        if not value.lstrip().startswith("/"):
+        """Update slash-command completion and report whether it owns ``value``.
+
+        A non-command edit doubles as the record of what a later depth command
+        escalates. Typing ``/deep`` means emptying the box first, so a query
+        retained only on submit would already be gone by the time the command
+        runs. Retention is verbatim and deliberately not prefix-aware among
+        queries: the last non-empty one wins, so narrowing ``deployment`` to
+        ``deploy`` escalates ``deploy``.
+        """
+        if not self._is_command_draft(value):
+            text = value.strip()
+            if text:
+                self._remember_active_search_text(text)
             self._command_matches = ()
             if self._enum_dropdown is not None:
                 self._enum_dropdown.remove_class("-commands")

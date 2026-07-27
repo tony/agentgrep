@@ -17,7 +17,12 @@ if t.TYPE_CHECKING:
     import pathlib
 
     from agentgrep.progress import SearchControl
-    from agentgrep.records import SearchQuery, SearchScope
+    from agentgrep.records import (
+        SearchEffort,
+        SearchQuery,
+        SearchScope,
+        SearchScopeProvenance,
+    )
     from agentgrep.ui._history import HistoryEntry
     from agentgrep.ui._seams import SearchInvoker
 
@@ -44,6 +49,16 @@ class UiContext:
         Discovery scope that an interactive query without a ``scope:``
         predicate returns to. This can differ from the launch query's
         effective scope.
+    base_effort : SearchEffort
+        Read policy that an interactive query without a derived broad scope
+        returns to. This preserves explicit deep authorization without making
+        an inline scope predicate sticky.
+    base_scope_provenance : SearchScopeProvenance
+        Provenance restored with ``base_scope`` after an inline scope
+        predicate is replaced.
+    base_conversation_limit : int | None
+        Targeted conversation bound restored with ``base_effort``. Non-targeted
+        launch policies use ``None``.
     initial_search_text : str | None, optional
         Initial value of a layout's primary input. ``None`` defaults to the
         space-joined ``query.terms``.
@@ -58,6 +73,9 @@ class UiContext:
     query: SearchQuery
     control: SearchControl
     base_scope: SearchScope
+    base_effort: SearchEffort
+    base_scope_provenance: SearchScopeProvenance = "inferred"
+    base_conversation_limit: int | None = None
     initial_search_text: str | None = None
     history: tuple[HistoryEntry, ...] = ()
     history_disabled: bool = False

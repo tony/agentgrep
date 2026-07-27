@@ -2,9 +2,10 @@
 
 # agentgrep grep
 
-The `agentgrep grep` command searches normalized prompt records by
-default, with explicit scope controls for conversation records. It
-uses the flag grammar and output behavior of `ripgrep` and
+The `agentgrep grep` command searches normalized prompt-history records by
+default. `--deep` opens a bounded set of conversations selected from prompt
+matches; `--exhaustive` opens every readable conversation backend. It uses
+the flag grammar and output behavior of `ripgrep` and
 `the_silver_searcher`. If you already reach for `rg -i` or `ag -F`
 without thinking, the same flags work here against your AI prompts.
 
@@ -39,7 +40,13 @@ Search full conversation records with a literal substring:
 $ agentgrep grep -F --scope conversations 'v1.2.3'
 ```
 
-Stream an rg-style event stream as JSON:
+Search selected conversations related to prompt matches:
+
+```console
+$ agentgrep grep --deep 'v1.2.3'
+```
+
+Emit one rg-shaped JSON event document:
 
 ```console
 $ agentgrep grep --json design
@@ -100,16 +107,23 @@ only the deduplicated paths. `-c` emits `path:N` per matching
 record with the count of matching lines (or just `N` when exactly
 one record matched), matching `rg -c`.
 
+The terminal reducers `-c`, `-l`, and the supported `-v -c` form replace the
+match-event stream with counts or paths. You cannot combine them with `--json`
+or `--ndjson`; choose structured events or reducer text output.
+
 ## Live streaming
 
-`grep` consumes the {ref}`library-event-stream` directly — text and
-NDJSON output emit each match as the engine finds it, then flush so
-your terminal sees rows live. On a slow store the first matches
-appear within milliseconds, not after the whole scan finishes.
+`grep` consumes the {ref}`library-event-stream` directly. Text and NDJSON use
+scan order, so each match can emit as the engine accepts it and a result limit
+can stop lower-priority sources. Worker completion order does not change source
+priority. Direct terminal output flushes each accepted match because stdout is
+a TTY. A pipe is block-buffered; set `PYTHONUNBUFFERED=1` when a downstream
+process must observe each NDJSON event immediately.
 
 The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
 because their output shape needs the final tally or cross-record
-deduplication.
+deduplication. Ranked relevance and global-newest search also buffer when the
+engine must establish a global frontier.
 
 ## Result limits
 
@@ -118,17 +132,48 @@ Use `--limit N` to stop after N matching records. The `-m N` and
 but `--limit` is the canonical agentgrep spelling because the cap is
 applied to the normalized result stream.
 
-## Search scope
+## Search depth and result scope
 
-`grep` searches `--scope prompts` by default. That includes dedicated
-prompt-history logs and user turns projected from transcript-only
-stores. Pass `--scope conversations` for full conversation, session,
-assistant, tool, and event records, or `--scope all` to search both
-surfaces together:
+`grep` opens only dedicated prompt-history stores by default. Pass
+`--deep` to use matching prompt evidence to select and search up to 25
+conversations:
 
 ```console
-$ agentgrep grep tmux --scope all
+$ agentgrep grep tmux --deep
 ```
+
+Change the request-local conversation-attempt bound when needed:
+
+```console
+$ agentgrep grep tmux --deep --conversation-limit 10
+```
+
+The default of 25 is an unmeasured conversation-attempt policy, independent of
+the result limit. Unresolved selected conversations consume an attempt and are
+not backfilled. Targeted routing is currently proof-bound for Codex, Claude
+Code, Grok, and Antigravity CLI; use exhaustive effort for other conversation
+backends.
+
+Targeted results are approximate and report separate eligible, selected, and
+completed conversation counts. Pass `--exhaustive` to search every readable
+conversation backend:
+
+```console
+$ agentgrep grep tmux --exhaustive
+```
+
+Depth controls which backends may be read. `--scope` separately controls
+returned record kinds. Pass `--scope conversations` for full
+conversation, session, assistant, tool, and event records, or combine
+deep reads with `--scope all` to search both surfaces:
+
+```console
+$ agentgrep grep tmux --exhaustive --scope all
+```
+
+For compatibility, explicit conversation and all scopes already imply
+the exhaustive reads those records require. A prompt-only scope cannot be
+combined with `--deep`.
 
 ## Progress
 
@@ -230,7 +275,7 @@ $ agentgrep grep --no-dedupe foo
 
 ## JSON output
 
-Pass `--json` to emit an rg-shaped per-line event stream:
+Pass `--json` to emit one rg-shaped JSON event document:
 
 ```console
 $ agentgrep grep --json deploy
@@ -239,7 +284,8 @@ $ agentgrep grep --json deploy
 The output is a JSON document whose `events` array carries one
 `begin` event opening each matching record, one `match` event per
 matching line within that record, an `end` event closing the
-record, and a final `summary` event with the total match count.
+record, and a final `summary` event with the total match count and the
+engine-owned terminal run summary.
 
 Each `match` event mirrors `rg`'s per-line shape:
 
@@ -260,11 +306,12 @@ JSON contract can consume agentgrep's stream with the same parser.
 Pass `--ndjson` for one event per line:
 
 ```console
-$ agentgrep grep --ndjson foo | jq 'select(.type == "match") | .data.lines.text'
+$ PYTHONUNBUFFERED=1 agentgrep grep --ndjson foo | jq 'select(.type == "match") | .data.lines.text'
 ```
 
 This mode is the right pick when piping into another CLI, into `jq`,
-or into a non-MCP agent that consumes results incrementally.
+or into a non-MCP agent that consumes results incrementally. Its final
+`summary` event carries the same terminal run summary as JSON output.
 
 ## Interactive UI
 

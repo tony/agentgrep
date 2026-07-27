@@ -15,8 +15,7 @@ import pathlib
 import sys
 
 from agentgrep import run_ui
-from agentgrep._engine import iter_find_events, iter_search_events
-from agentgrep._engine.orchestration import run_search_query
+from agentgrep._engine import iter_find_events, iter_search_events, run_search_result
 from agentgrep._text import AnsiColors, format_display_path
 from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
@@ -40,6 +39,7 @@ from agentgrep.cli.serializers import (
     build_envelope,
     serialize_find_record,
     serialize_grep_record,
+    serialize_run_summary,
     serialize_search_record,
     serialize_source_handle,
 )
@@ -50,7 +50,16 @@ from agentgrep.progress import (
     SearchProgress,
     noop_search_progress,
 )
-from agentgrep.records import AGENT_CHOICES, FindRecord, SearchQuery, SearchRecord, SearchScope
+from agentgrep.records import (
+    AGENT_CHOICES,
+    FindRecord,
+    SearchEffort,
+    SearchQuery,
+    SearchRecord,
+    SearchScope,
+    SearchScopeProvenance,
+)
+from agentgrep.results import RunSummary
 
 __all__ = [
     "GrepSummary",
@@ -85,6 +94,8 @@ def _launch_ui(
     *,
     initial_search_text: str | None = None,
     base_scope: SearchScope | None = None,
+    base_effort: SearchEffort | None = None,
+    base_scope_provenance: SearchScopeProvenance | None = None,
 ) -> None:
     """Launch the UI and translate factory validation into a CLI diagnostic."""
     from agentgrep.ui.app import UiQueryTooLongError
@@ -96,6 +107,8 @@ def _launch_ui(
             control=SearchControl(),
             initial_search_text=initial_search_text,
             base_scope=base_scope,
+            base_effort=base_effort,
+            base_scope_provenance=base_scope_provenance,
         )
     except UiQueryTooLongError as error:
         raise SystemExit(str(error)) from None
@@ -230,6 +243,8 @@ def run_find_command(args: FindArgs) -> int:
             query,
             initial_search_text=args.raw_query or None,
             base_scope="all",
+            base_effort="exhaustive",
+            base_scope_provenance="inferred",
         )
         return 0
 
@@ -287,6 +302,8 @@ def run_ui_command(args: UIArgs) -> int:
         query,
         initial_search_text=args.initial_query or None,
         base_scope="prompts",
+        base_effort="prompt",
+        base_scope_provenance="inferred",
     )
     return 0
 
@@ -308,6 +325,8 @@ def run_search_command(args: SearchArgs) -> int:
     ):
         msg = "search requires at least one term unless --ui is used"
         raise SystemExit(msg)
+    relevance_order = not args.no_rank and args.output_mode != "ui"
+    query_text = " ".join(args.terms)
     query = SearchQuery(
         terms=args.terms,
         scope=args.scope,
@@ -318,12 +337,20 @@ def run_search_command(args: SearchArgs) -> int:
         limit=args.limit,
         compiled=args.compiled,
         origin_filter=args.origin_filter,
+        effort=args.effort,
+        order="relevance" if relevance_order else "newest",
+        scope_provenance=args.scope_provenance,
+        conversation_limit=args.conversation_limit,
+        relevance_threshold=args.threshold if query_text else 0,
+        origin_boost=args.origin_boost,
     )
     if args.output_mode == "ui":
         _launch_ui(
             query,
             initial_search_text=args.raw_query or None,
             base_scope=args.base_scope,
+            base_effort=args.base_effort,
+            base_scope_provenance=args.base_scope_provenance,
         )
         return 0
     if args.output_mode in ("json", "ndjson"):
@@ -352,7 +379,7 @@ def run_search_command(args: SearchArgs) -> int:
     if listener is not None:
         listener.start()
     try:
-        records = run_search_query(
+        run = run_search_result(
             pathlib.Path.home(),
             query,
             progress=progress,
@@ -362,13 +389,18 @@ def run_search_command(args: SearchArgs) -> int:
         if listener is not None:
             listener.stop()
     answered_early = control.answer_now_requested()
-    scored = _score_search_records(records, args, answered_early=answered_early)
-    if args.limit is not None:
-        scored = scored[: args.limit]
+    scored = _score_search_records(
+        list(run.records),
+        args,
+        answered_early=answered_early,
+    )
     from agentgrep.ranking import group_by_session
 
     grouped = group_by_session([(r, s, 0) for r, s in scored])
     _print_search_text(grouped, args)
+    if not scored:
+        print(_empty_search_message(run.summary), file=sys.stderr)
+    _print_search_depth_hint(run.summary)
     return 0 if scored else 1
 
 
@@ -405,6 +437,55 @@ def _print_search_text(
             print()
 
 
+def _empty_search_message(
+    summary: RunSummary | None,
+    *,
+    displayed_matches: int = 0,
+) -> str:
+    """Return human empty-result copy grounded in engine terminal evidence."""
+    if summary is None:
+        return "No matches found."
+    if displayed_matches == 0 and summary.match_count > 0:
+        return "No matches met the output filters."
+    return {
+        "no_prompt_match": "No prompt matches found.",
+        "no_candidate_conversation": "No candidate conversations found.",
+        "no_selected_conversation_match": ("No matches found in selected conversations."),
+        "no_exhaustive_match": "No matches found in readable conversations.",
+        "undetermined": "Search incomplete; coverage could not be determined.",
+    }.get(summary.outcome, "No matches found.")
+
+
+def _print_search_depth_hint(summary: RunSummary | None) -> None:
+    """Write one interactive hint for engine-authored conversation follow-ups."""
+    if summary is None or not bool(getattr(sys.stderr, "isatty", lambda: False)()):
+        return
+    actions = {action.action_id: action for action in summary.next_actions}
+    if targeted_action := actions.get("search.targeted"):
+        if targeted_action.requires_confirmation:
+            print(
+                "Searched prompts only. Change the explicit scope to all "
+                "before using --deep or --exhaustive.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Searched prompts only. Use --deep to search selected "
+                "conversations, or --exhaustive to search all readable "
+                "conversations.",
+                file=sys.stderr,
+            )
+    elif "search.exhaustive" in actions:
+        coverage = summary.coverage
+        print(
+            "Targeted search read "
+            f"{coverage.conversations_completed}/"
+            f"{coverage.conversations_selected} selected conversations. "
+            "Use --exhaustive to search all readable conversations.",
+            file=sys.stderr,
+        )
+
+
 def _score_search_records(
     records: list[SearchRecord],
     args: SearchArgs,
@@ -416,12 +497,11 @@ def _score_search_records(
     if args.no_rank or answered_early or (not query_text and args.origin_boost is None):
         return [(r, 0.0) for r in records]
 
-    from agentgrep.ranking import rank_search_records
+    from agentgrep.ranking import score_search_records
 
-    return rank_search_records(
+    return score_search_records(
         records,
         query_text,
-        threshold=args.threshold if query_text else 0,
         origin_boost=args.origin_boost,
     )
 
@@ -429,15 +509,13 @@ def _score_search_records(
 def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
     """Eager search for JSON/NDJSON output with ranking but no pairwise dedup."""
     control = SearchControl()
-    records = run_search_query(
+    run = run_search_result(
         pathlib.Path.home(),
         query,
-        progress=noop_search_progress(),
         control=control,
     )
+    records = list(run.records)
     scored = _score_search_records(records, args)
-    if args.limit is not None:
-        scored = scored[: args.limit]
     from agentgrep.ranking import group_by_session
 
     grouped = group_by_session([(r, s, 0) for r, s in scored])
@@ -456,12 +534,26 @@ def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
             "threshold": args.threshold,
             "no_rank": args.no_rank,
             "no_group": args.no_group,
+            "scope": args.scope,
+            "effort": args.effort,
         }
-        payload = build_envelope("search", query_data, results)
+        payload = {
+            **build_envelope("search", query_data, results),
+            "summary": serialize_run_summary(run.summary),
+        }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         for result in results:
             print(json.dumps(result, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "type": "summary",
+                    "data": serialize_run_summary(run.summary),
+                },
+                ensure_ascii=False,
+            ),
+        )
     return 0 if results else 1
 
 
@@ -498,10 +590,19 @@ def build_grep_query(args: GrepArgs) -> SearchQuery:
         dedupe=not args.no_dedupe,
         compiled=args.compiled,
         match_surface="text",
+        effort=args.effort,
+        order="scan",
+        scope_provenance=args.scope_provenance,
+        conversation_limit=args.conversation_limit,
     )
 
 
-def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
+def print_grep_results(
+    records: list[SearchRecord],
+    args: GrepArgs,
+    *,
+    run_summary: RunSummary | None = None,
+) -> int:
     """Emit grep results and return the rg-style exit code."""
     if args.invert_match:
         if args.count_only:
@@ -518,7 +619,10 @@ def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
     if args.output_mode == "json":
         json_events = list(_iter_grep_json_events(records, args))
         total_match_count = sum(1 for event in json_events if event.get("type") == "match")
-        json_events.append({"type": "summary", "data": {"matches": total_match_count}})
+        summary_data: dict[str, object] = {"matches": total_match_count}
+        if run_summary is not None:
+            summary_data["run"] = serialize_run_summary(run_summary)
+        json_events.append({"type": "summary", "data": summary_data})
         print(json.dumps({"command": "grep", "events": json_events}, ensure_ascii=False, indent=2))
         return 0 if total_match_count > 0 else 1
     if args.output_mode == "ndjson":
@@ -554,7 +658,8 @@ def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
 
     if not records:
         if args.output_mode == "text":
-            print("No matches found.", file=sys.stderr)
+            print(_empty_search_message(run_summary), file=sys.stderr)
+            _print_search_depth_hint(run_summary)
         return 1
     for record in records:
         print(format_grep_record(record, args))
@@ -562,6 +667,8 @@ def print_grep_results(records: list[SearchRecord], args: GrepArgs) -> int:
             args.heading is True or (args.heading is None and sys.stdout.isatty())
         ):
             print()
+    if args.output_mode == "text":
+        _print_search_depth_hint(run_summary)
     return 0
 
 
@@ -604,6 +711,7 @@ def stream_grep_results(args: GrepArgs) -> int:
     match_count = 0
     pretty = args.style == "pretty"
     summary = GrepSummary() if pretty else None
+    run_summary = None
     for event in iter_search_events(
         pathlib.Path.home(),
         query,
@@ -627,14 +735,34 @@ def stream_grep_results(args: GrepArgs) -> int:
                     summary.add(event.record)
             if is_tty:
                 sys.stdout.flush()
-        elif isinstance(event, events.SearchFinished) and summary is not None:
-            summary.elapsed = event.elapsed_seconds
+        elif isinstance(event, events.SearchFinished):
+            run_summary = event.summary
+            if summary is not None:
+                summary.elapsed = event.elapsed_seconds
+    if args.output_mode == "ndjson":
+        if run_summary is None:
+            msg = "search event stream ended without SearchFinished"
+            raise RuntimeError(msg)
+        print(
+            json.dumps(
+                {
+                    "type": "summary",
+                    "data": {
+                        "matches": match_count,
+                        "run": serialize_run_summary(run_summary),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        )
     if is_tty and summary is not None and summary.total > 0:
         footer = summary.format(colors=AnsiColors.for_stream(args.color_mode, sys.stderr))
         if footer:
             print(footer, file=sys.stderr)
     if match_count == 0 and args.output_mode == "text":
-        print("No matches found.", file=sys.stderr)
+        print(_empty_search_message(run_summary), file=sys.stderr)
+    if args.output_mode == "text":
+        _print_search_depth_hint(run_summary)
     return 0 if match_count > 0 else 1
 
 
@@ -655,6 +783,8 @@ def run_grep_command(args: GrepArgs) -> int:
             query,
             initial_search_text=args.raw_query or None,
             base_scope=args.base_scope,
+            base_effort=args.base_effort,
+            base_scope_provenance=args.base_scope_provenance,
         )
         return 0
     if not _grep_path_is_eager(args):
@@ -673,10 +803,25 @@ def run_grep_command(args: GrepArgs) -> int:
             color_mode=args.color_mode,
             answer_now_hint=False,
         )
-    records = run_search_query(
+    if args.output_mode == "json":
+        run = run_search_result(
+            pathlib.Path.home(),
+            query,
+            control=control,
+        )
+        return print_grep_results(
+            list(run.records),
+            args,
+            run_summary=run.summary,
+        )
+    run = run_search_result(
         pathlib.Path.home(),
         query,
         progress=progress,
         control=control,
     )
-    return print_grep_results(records, args)
+    return print_grep_results(
+        list(run.records),
+        args,
+        run_summary=run.summary,
+    )

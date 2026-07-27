@@ -20,6 +20,7 @@ from agentgrep.mcp import (
     SearchScopeName,
     SearchToolResponse,
 )
+from agentgrep.mcp._library import SearchEffortName
 from agentgrep.mcp.models import (
     DiscoverySummaryResponse,
     InspectResultResponse,
@@ -50,8 +51,28 @@ async def search(
     ] = "all",
     scope: t.Annotated[
         SearchScopeName,
-        Field(description="Search prompts, conversations, or both."),
+        Field(description="Return prompts, conversations, or both."),
     ] = "prompts",
+    effort: t.Annotated[
+        SearchEffortName | None,
+        Field(
+            default=None,
+            description=(
+                "Read policy: prompt (default), targeted, or exhaustive. "
+                "Targeted and exhaustive infer scope=all when scope is omitted."
+            ),
+        ),
+    ] = None,
+    conversation_limit: t.Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Maximum distinct conversations attempted by targeted effort (default: 25)."
+            ),
+        ),
+    ] = None,
     case_sensitive: t.Annotated[
         bool,
         Field(description="Perform case-sensitive matching."),
@@ -64,13 +85,6 @@ async def search(
             description="Maximum number of search results to return.",
         ),
     ] = 20,
-    cursor: t.Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="Opaque page cursor returned by a previous search response.",
-        ),
-    ] = None,
     cwd: t.Annotated[
         str | None,
         Field(
@@ -93,10 +107,13 @@ async def search(
         ),
     ] = None,
 ) -> SearchToolResponse:
-    """Search normalized prompts by default; opt into conversations with scope.
+    """Search fast prompt-history stores by default.
 
-    Terms accept agentgrep's query language (field predicates, booleans,
-    phrases, and wildcards); see agentgrep://query-language.
+    Use ``effort="targeted"`` for a bounded set of conversations selected from
+    prompt matches, or ``effort="exhaustive"`` for every readable conversation.
+    ``scope`` controls returned record kinds. Terms accept agentgrep's query
+    language (field predicates, booleans, phrases, and wildcards); see
+    agentgrep://query-language.
     """
     raise NotImplementedError(DOCS_ONLY_MESSAGE)
 
@@ -170,7 +187,7 @@ async def list_stores(
         bool,
         Field(
             default=False,
-            description="Return only stores that are searched by default.",
+            description="Return only stores in the default-search eligibility tier.",
         ),
     ] = False,
 ) -> ListStoresResponse:

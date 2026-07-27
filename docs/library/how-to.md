@@ -33,10 +33,13 @@ $ uv run agentgrep grep "migration" --limit 5
 
 ## Answer before the scan finishes
 
-Interactive text searches show a progress line. Press Enter on a blank line to stop scanning and print the matches collected so far.
+`search` text output, including globally newest-first `--no-rank`, shows a progress
+line. Press Enter on a blank line to return the matches collected so far when
+progress is active and both stdin and stderr are TTYs. This answer-now control
+does not apply to `grep`, which uses scan order and its result limit.
 
 ```console
-$ uv run agentgrep grep "bliss"
+$ uv run agentgrep search "bliss"
 ```
 
 ## Keep scripts quiet

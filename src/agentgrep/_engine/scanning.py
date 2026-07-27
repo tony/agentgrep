@@ -27,7 +27,13 @@ from agentgrep.progress import (
     noop_search_progress,
 )
 from agentgrep.readers import _record_engine_profile_sample
-from agentgrep.records import SearchQuery, SearchRecord, SourceHandle
+from agentgrep.records import (
+    ITER_SOURCE_RECORD_ADAPTERS,
+    SearchQuery,
+    SearchRecord,
+    SourceHandle,
+    SourceScanOutcome,
+)
 
 _SOURCE_SCAN_CACHE_MAX_ENTRIES = 512
 
@@ -196,6 +202,12 @@ class SourceScanResult:
     cache_hit : bool
         Whether the runtime source-scan cache answered this task instead of the source
         being read.
+    outcome : SourceScanOutcome
+        How execution of the planned source task ended.
+    stop_reason : str | None
+        Stable reason code when the outcome was not ``"completed"``.
+    error : Exception | None
+        Runtime source error retained for the execution driver to re-raise.
     """
 
     index: int
@@ -208,6 +220,9 @@ class SourceScanResult:
     duration_seconds: float
     batch_count: int = 1
     cache_hit: bool = False
+    outcome: SourceScanOutcome = "completed"
+    stop_reason: str | None = None
+    error: Exception | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -236,6 +251,12 @@ class SourceScanBatch:
     is_final : bool
         Whether this closes the source. The counters on a final batch are the source's
         totals.
+    outcome : SourceScanOutcome
+        How execution of the planned source task ended.
+    stop_reason : str | None
+        Stable reason code when the outcome was not ``"completed"``.
+    error : Exception | None
+        Runtime source error retained for the execution driver to re-raise.
     """
 
     index: int
@@ -247,6 +268,9 @@ class SourceScanBatch:
     matches_seen: int
     duration_seconds: float
     is_final: bool
+    outcome: SourceScanOutcome = "completed"
+    stop_reason: str | None = None
+    error: Exception | None = None
 
 
 def scan_source_task(
@@ -314,6 +338,9 @@ def scan_source_task(
     records_seen = 0
     matches_seen = 0
     batch_count = 0
+    outcome: SourceScanOutcome = "completed"
+    stop_reason: str | None = None
+    error: Exception | None = None
     for batch in iter_source_task_batches(
         query,
         task,
@@ -326,8 +353,11 @@ def scan_source_task(
         matching_records.extend(batch.records)
         records_seen = batch.records_seen
         matches_seen = batch.matches_seen
+        outcome = batch.outcome
+        stop_reason = batch.stop_reason
+        error = batch.error
 
-    if task.limit_behavior == "drain_source":
+    if task.limit_behavior == "drain_source" and query.order != "scan":
         matching_records.sort(key=search_record_sort_key, reverse=True)
     result = SourceScanResult(
         index=index,
@@ -339,6 +369,9 @@ def scan_source_task(
         matches_seen=matches_seen,
         duration_seconds=time.perf_counter() - source_started_at,
         batch_count=batch_count,
+        outcome=outcome,
+        stop_reason=stop_reason,
+        error=error,
     )
     remember_source_scan(cache, cache_key, control=control, result=result)
     return result
@@ -383,7 +416,12 @@ def remember_source_scan(
     Mirrors the :func:`scan_source_task` guard: cancelled scans are partial
     and must not populate the cache.
     """
-    if cache is None or cache_key is None or control.answer_now_requested():
+    if (
+        cache is None
+        or cache_key is None
+        or control.answer_now_requested()
+        or result.outcome != "completed"
+    ):
         return
     cache._remember(cache_key, result)
 
@@ -446,6 +484,7 @@ def _source_scan_cache_key(
             query.limit,
             query.dedupe,
             query.match_surface,
+            query.order,
             # Cached records are already filtered by this value. Keep it in the
             # key until source scans cache pre-origin text candidates instead.
             query.origin_filter,
@@ -524,6 +563,9 @@ def iter_source_task_batches(
     matching_records: list[SearchRecord] = []
     source_deduped: set[tuple[str, str, str, str, str]] = set()
     matcher = compile_record_matcher(query)
+    outcome: SourceScanOutcome = "completed"
+    stop_reason: str | None = None
+    error: Exception | None = None
 
     def source_limit_satisfied() -> bool:
         # Counts source-local dedupe keys only: the frontier's global
@@ -549,6 +591,9 @@ def iter_source_task_batches(
             matches_seen=matches_seen,
             duration_seconds=time.perf_counter() - source_started_at,
             is_final=is_final,
+            outcome=outcome,
+            stop_reason=stop_reason,
+            error=error,
         )
         matching_records.clear()
         yielded_batch = True
@@ -556,37 +601,76 @@ def iter_source_task_batches(
         return batch
 
     normalized_batch_size = max(1, batch_size)
-    for record in iter_source_task_records(task, query):
-        if control.answer_now_requested():
-            break
-        records_seen += 1
-        if matcher.matches(record):
-            matches_seen += 1
-            source_match_count += 1
-            matching_records.append(record)
-            if query.dedupe:
-                source_deduped.add(record_dedupe_key(record))
-            if source_limit_satisfied():
-                if matching_records:
-                    yield emit_batch(is_final=True)
+    if task.source.adapter_id not in ITER_SOURCE_RECORD_ADAPTERS:
+        outcome = "unsupported"
+        stop_reason = "unsupported_adapter"
+        yield emit_batch(is_final=True)
+        return
+    if control.answer_now_requested():
+        stop_reason = control.stop_reason() or "answer_now"
+        outcome = (
+            "cancelled"
+            if stop_reason
+            in {
+                "caller_cancelled",
+                "deadline",
+                "failure_cleanup",
+                "replacement",
+            }
+            else "bounded"
+        )
+        yield emit_batch(is_final=True)
+        return
+    try:
+        for record in iter_source_task_records(task, query):
+            if control.answer_now_requested():
+                stop_reason = control.stop_reason() or "answer_now"
+                outcome = (
+                    "cancelled"
+                    if stop_reason
+                    in {
+                        "caller_cancelled",
+                        "deadline",
+                        "failure_cleanup",
+                        "replacement",
+                    }
+                    else "bounded"
+                )
                 break
-            if (
-                task.limit_behavior == "bounded_source"
-                and len(matching_records) >= normalized_batch_size
-            ):
-                yield emit_batch(is_final=False)
-        if records_seen % _SOURCE_PROGRESS_RECORD_INTERVAL == 0:
-            _report_source_progress(
-                active_progress,
-                index,
-                total,
-                task.source,
-                records_seen,
-                matches_seen,
-            )
-            time.sleep(0)
+            records_seen += 1
+            if matcher.matches(record):
+                matches_seen += 1
+                source_match_count += 1
+                matching_records.append(record)
+                if query.dedupe:
+                    source_deduped.add(record_dedupe_key(record))
+                if source_limit_satisfied():
+                    outcome = "bounded"
+                    stop_reason = "source_limit"
+                    if matching_records:
+                        yield emit_batch(is_final=True)
+                    break
+                if (
+                    task.limit_behavior == "bounded_source"
+                    and len(matching_records) >= normalized_batch_size
+                ):
+                    yield emit_batch(is_final=False)
+            if records_seen % _SOURCE_PROGRESS_RECORD_INTERVAL == 0:
+                _report_source_progress(
+                    active_progress,
+                    index,
+                    total,
+                    task.source,
+                    records_seen,
+                    matches_seen,
+                )
+                time.sleep(0)
+    except Exception as source_error:
+        outcome = "failed"
+        stop_reason = "source_failure"
+        error = source_error
 
-    if matching_records or (not yielded_final and (yielded_batch or records_seen > 0)):
+    if not yielded_final:
         yield emit_batch(is_final=True)
 
 

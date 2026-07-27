@@ -18,9 +18,11 @@ def register_prompts(mcp: FastMCP) -> None:
     )
     def search_prompts_prompt(topic: str, agent: str = "all") -> str:
         return (
-            "Use the `search` tool to find full user prompts about "
-            f"{topic!r}. Search scope `prompts` only, keep newest-first ordering, "
-            f"and limit the search to agent={agent!r} if requested."
+            "Use the `search` tool with effort='prompt' and scope='prompts' to find "
+            f"dedicated prompt-history records about {topic!r}. Keep newest-first "
+            f"ordering and limit the search to agent={agent!r} if requested. "
+            "A fast miss is not corpus-wide. Use effort='targeted' only when the user "
+            "requests bounded deep search; do not auto-escalate."
         )
 
     _ = search_prompts_prompt
@@ -33,8 +35,9 @@ def register_prompts(mcp: FastMCP) -> None:
     def search_conversations_prompt(topic: str, agent: str = "all") -> str:
         return (
             "Use the `search` tool to find matching conversation records about "
-            f"{topic!r}. Search scope `conversations` only, and restrict to "
-            f"agent={agent!r} when appropriate."
+            f"{topic!r}. Set scope='conversations' and choose effort='targeted' "
+            "for bounded approximate routing or effort='exhaustive' for complete "
+            f"readable coverage. Restrict to agent={agent!r} when appropriate."
         )
 
     _ = search_conversations_prompt

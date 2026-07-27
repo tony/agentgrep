@@ -24,6 +24,7 @@ from agentgrep.progress import (
 from agentgrep.records import SearchRecord
 
 __all__ = [
+    "DepthOfferSelected",
     "DetailFindRequested",
     "DetailFocusRequested",
     "DetailScrollChanged",
@@ -94,6 +95,21 @@ class WelcomeQuerySelected(Message):
     def __init__(self, index: int) -> None:
         super().__init__()
         self.index = index
+
+
+class DepthOfferSelected(Message):
+    """An engine-authored depth escalation was chosen before any run.
+
+    Attributes
+    ----------
+    action_id : str
+        Stable :class:`~agentgrep.results.NextAction` identity the layout
+        applies to the query currently in the primary input.
+    """
+
+    def __init__(self, action_id: str) -> None:
+        super().__init__()
+        self.action_id = action_id
 
 
 class ResultHighlighted(Message):

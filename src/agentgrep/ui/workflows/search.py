@@ -39,10 +39,17 @@ class SearchWorkflow:
             host.reset_view()
 
     def on_query(self, host: WorkflowHost, text: str) -> None:
-        """Submit: cancel any in-flight search, then search ``text`` (empty resets)."""
-        host.request_cancel()
+        """Validate non-empty input before replacing the active search."""
         if not text:
+            host.request_cancel()
             host.reset_view()
             return
+        query = host.build_query(text)
+        if query.effort == "targeted" and query.scope == "prompts":
+            host.show_query_error(
+                "targeted effort requires conversation or all scope",
+            )
+            return
+        host.request_cancel()
         host.record_history(text)
-        host.run_search(host.build_query(text))
+        host.run_search(query)

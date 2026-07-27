@@ -8,14 +8,19 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from agentgrep.mcp._library import (
     SERVER_VERSION,
+    AgentName,
     AgentSelector,
     CatalogAgentSelector,
     FindRecordLike,
+    SearchEffortName,
     SearchRecordLike,
     SearchScopeName,
     SourceHandleLike,
     agentgrep,
 )
+
+if t.TYPE_CHECKING:
+    from agentgrep.results import NextAction, RunCoverage, RunDiagnostic, RunSummary
 
 
 class AgentGrepModel(BaseModel):
@@ -157,6 +162,8 @@ class SourceRecordModel(AgentGrepModel):
     search_by_default: bool
     searchable_reason: str
     inspectable: bool
+    store_role: str
+    required_effort: t.Literal["prompt", "exhaustive"] | None
     version_detection: SourceVersionDetectionModel | None = None
     search_root: str | None = None
     mtime_ns: int
@@ -166,18 +173,38 @@ class SourceRecordModel(AgentGrepModel):
         """Build a typed result from a discovered source."""
         payload = agentgrep.serialize_source_handle(source)
         coverage = str(payload["coverage"])
+        role = agentgrep.store_role_for_record(source.store, source.adapter_id)
+        store_role = "unknown" if role is None else str(role)
+        searchable = coverage in {"default_search", "inspectable"}
         search_by_default = coverage == "default_search"
-        inspectable = coverage in {"default_search", "inspectable"}
-        if search_by_default:
-            searchable_reason = "searched by default"
-        elif inspectable:
-            searchable_reason = "inspectable only; not searched by default"
+        inspectable = coverage != "private"
+        required_effort: t.Literal["prompt", "exhaustive"] | None
+        if not searchable:
+            required_effort = None
+            if coverage == "catalog_only":
+                searchable_reason = "not searchable; available for explicit inspection"
+            else:
+                searchable_reason = "private catalog entry; not discovered or searchable"
+        elif store_role == "prompt_history":
+            required_effort = "prompt"
+            searchable_reason = "searched by fast prompt effort"
+        elif store_role in {"primary_chat", "supplementary_chat"}:
+            required_effort = "exhaustive"
+            searchable_reason = (
+                "targeted effort may select this conversation store; exhaustive "
+                "effort guarantees it is eligible for direct search"
+            )
         else:
-            searchable_reason = "catalog only; not searched by default"
-        payload["searchable"] = search_by_default
+            required_effort = "exhaustive"
+            searchable_reason = (
+                "search requires exhaustive effort and a scope that admits this store role"
+            )
+        payload["searchable"] = searchable
         payload["search_by_default"] = search_by_default
         payload["searchable_reason"] = searchable_reason
         payload["inspectable"] = inspectable
+        payload["store_role"] = store_role
+        payload["required_effort"] = required_effort
         return cls.model_validate(payload)
 
 
@@ -194,19 +221,132 @@ class ResultStatsModel(AgentGrepModel):
     emitted: int
 
 
+class SearchEffortModel(AgentGrepModel):
+    """Requested and successfully completed search effort."""
+
+    requested: t.Literal["prompt", "targeted", "exhaustive"]
+    completed: t.Literal["prompt", "targeted", "exhaustive"] | None
+
+    @classmethod
+    def from_summary(cls, summary: RunSummary) -> SearchEffortModel:
+        """Adapt engine effort without changing its semantics."""
+        return cls(
+            requested=summary.requested_effort,
+            completed=summary.completed_effort,
+        )
+
+
+class NormalizedSearchRequestModel(AgentGrepModel):
+    """Engine-normalized search semantics, excluding adapter page mechanics."""
+
+    terms: list[str]
+    scope: SearchScopeName
+    scope_provenance: t.Literal["inferred", "explicit"]
+    effort: t.Literal["prompt", "targeted", "exhaustive"]
+    agents: list[AgentName]
+    conversation_limit: int | None
+    dedupe: bool
+    case_sensitive: bool
+    order: t.Literal["newest", "relevance", "scan"]
+    match_surface: t.Literal["haystack", "text"]
+
+    @classmethod
+    def from_summary(
+        cls,
+        summary: RunSummary,
+    ) -> NormalizedSearchRequestModel:
+        """Adapt normalized engine intent without exposing page overfetch."""
+        request = summary.request
+        return cls(
+            terms=list(request.terms),
+            scope=request.scope,
+            scope_provenance=request.scope_provenance,
+            effort=request.effort,
+            agents=t.cast("list[AgentName]", list(request.agents)),
+            conversation_limit=request.conversation_limit,
+            dedupe=request.dedupe,
+            case_sensitive=request.case_sensitive,
+            order=t.cast(
+                "t.Literal['newest', 'relevance', 'scan']",
+                request.order,
+            ),
+            match_surface=request.match_surface,
+        )
+
+
+class SearchCoverageModel(AgentGrepModel):
+    """Engine-owned source, record, and conversation coverage."""
+
+    sources_discovered: int
+    sources_eligible: int
+    sources_planned: int
+    sources_attempted: int
+    sources_completed: int
+    sources_bounded: int
+    sources_skipped: int
+    sources_unsupported: int
+    sources_failed: int
+    sources_cancelled: int
+    records_seen: int
+    matches_seen: int
+    conversations_eligible: int
+    conversations_selected: int
+    conversations_completed: int
+    source_stop_reasons: list[str]
+
+    @classmethod
+    def from_coverage(cls, coverage: RunCoverage) -> SearchCoverageModel:
+        """Adapt dependency-light coverage to the MCP schema."""
+        return cls(
+            sources_discovered=coverage.sources_discovered,
+            sources_eligible=coverage.sources_eligible,
+            sources_planned=coverage.sources_planned,
+            sources_attempted=coverage.sources_attempted,
+            sources_completed=coverage.sources_completed,
+            sources_bounded=coverage.sources_bounded,
+            sources_skipped=coverage.sources_skipped,
+            sources_unsupported=coverage.sources_unsupported,
+            sources_failed=coverage.sources_failed,
+            sources_cancelled=coverage.sources_cancelled,
+            records_seen=coverage.records_seen,
+            matches_seen=coverage.matches_seen,
+            conversations_eligible=coverage.conversations_eligible,
+            conversations_selected=coverage.conversations_selected,
+            conversations_completed=coverage.conversations_completed,
+            source_stop_reasons=list(coverage.source_stop_reasons),
+        )
+
+
 class PageInfoModel(AgentGrepModel):
     """Pagination metadata for a result page."""
 
-    limit: int | None = None
+    limit: int | None
     count: int
-    next_cursor: str | None = None
+    next_cursor: str | None
+
+
+class SearchPageModel(AgentGrepModel):
+    """Bounded result-window metadata for one cursorless search."""
+
+    limit: int | None
+    count: int
 
 
 class RunStatusModel(AgentGrepModel):
     """Search or find completion state."""
 
     state: t.Literal["complete", "bounded", "truncated", "cancelled", "approximate", "failed"]
-    reason: str | None = None
+    reason: str | None
+    conditions: list[str]
+
+    @classmethod
+    def from_summary(cls, summary: RunSummary) -> RunStatusModel:
+        """Adapt engine status without inferring completion."""
+        return cls(
+            state=summary.status.state,
+            reason=summary.status.reason,
+            conditions=list(summary.status.conditions),
+        )
 
 
 class DiagnosticModel(AgentGrepModel):
@@ -214,6 +354,51 @@ class DiagnosticModel(AgentGrepModel):
 
     code: str
     message: str
+    severity: t.Literal["info", "warning", "error"]
+
+    @classmethod
+    def from_diagnostic(cls, diagnostic: RunDiagnostic) -> DiagnosticModel:
+        """Adapt one privacy-safe engine diagnostic."""
+        return cls(
+            code=diagnostic.code,
+            message=diagnostic.message,
+            severity=diagnostic.severity,
+        )
+
+
+class SearchRequestPatchModel(AgentGrepModel):
+    """Bounded request changes for one engine-authored next action."""
+
+    effort: SearchEffortName | None
+    scope: SearchScopeName | None
+    conversation_limit: int | None
+
+
+class NextActionModel(AgentGrepModel):
+    """One engine-authored related-search action."""
+
+    action_id: str
+    kind: str
+    label: str
+    reason: str
+    patch: SearchRequestPatchModel
+    requires_confirmation: bool
+
+    @classmethod
+    def from_action(cls, action: NextAction) -> NextActionModel:
+        """Adapt one engine action without expanding its patch."""
+        return cls(
+            action_id=action.action_id,
+            kind=action.kind,
+            label=action.label,
+            reason=action.reason,
+            patch=SearchRequestPatchModel(
+                effort=action.patch.effort,
+                scope=action.patch.scope,
+                conversation_limit=action.patch.conversation_limit,
+            ),
+            requires_confirmation=action.requires_confirmation,
+        )
 
 
 class SearchRequestModel(AgentGrepModel):
@@ -223,22 +408,35 @@ class SearchRequestModel(AgentGrepModel):
     agent: AgentSelector
     scope: SearchScopeName
     case_sensitive: bool
+    effort: SearchEffortName | None = None
+    conversation_limit: int | None = None
     limit: int | None = None
-    cursor: str | None = None
     cwd: str | None = None
     repo: str | None = None
     branch: str | None = None
+    scope_provenance: t.Literal["inferred", "explicit"] = "inferred"
 
 
 class SearchToolResponse(AgentGrepModel):
     """Structured response for the MCP search tool."""
 
-    schema_version: str = agentgrep.SCHEMA_VERSION
-    request: SearchRequestModel
+    schema_version: str
+    request: NormalizedSearchRequestModel
+    effort: SearchEffortModel
+    outcome: t.Literal[
+        "matches",
+        "no_prompt_match",
+        "no_candidate_conversation",
+        "no_selected_conversation_match",
+        "no_exhaustive_match",
+        "undetermined",
+    ]
+    coverage: SearchCoverageModel
     stats: ResultStatsModel
-    page: PageInfoModel
+    page: SearchPageModel
     status: RunStatusModel
-    diagnostics: list[DiagnosticModel] = Field(default_factory=list)
+    diagnostics: list[DiagnosticModel]
+    next_actions: list[NextActionModel]
     results: list[SearchRecordModel]
 
 

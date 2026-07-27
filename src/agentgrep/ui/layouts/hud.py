@@ -38,6 +38,8 @@ from agentgrep.ui.layouts._hud_search import (
 )
 from agentgrep.ui.widgets import (
     CompletionDropdown,
+    DepthOffer,
+    DepthOfferSelected,
     DetailFindInput,
     DetailFocusRequested,
     DetailScroll,
@@ -125,6 +127,9 @@ class HudLayout(_HudSearchBase):
         # a search without a ``scope:`` predicate reverts to, so the
         # widening never persists across searches.
         self._user_scope = ctx.base_scope
+        self._user_effort = ctx.base_effort
+        self._user_scope_provenance = ctx.base_scope_provenance
+        self._user_conversation_limit = ctx.base_conversation_limit
         self.control = ctx.control
         self._invoker = ctx.invoker
         self.initial_search_text: str | None = ctx.initial_search_text
@@ -138,6 +143,7 @@ class HudLayout(_HudSearchBase):
         self._searching_panel: SearchingPanel | None = None
         self._welcome_widget: _WelcomeWordmark | None = None
         self._welcome_examples: WelcomeExamples | None = None
+        self._depth_offer: DepthOffer | None = None
         self._welcome_shine_timer: Timer | None = None
         # Persisted search-input history (agentgrep's only self-written state —
         # under XDG_STATE_HOME, never a searched store). The factory loads the
@@ -382,6 +388,12 @@ class HudLayout(_HudSearchBase):
                             id="empty-examples",
                             markup=False,
                         )
+                    # Engine-authored depth choices for the request the search
+                    # box would submit. Selecting one is the only way into
+                    # ``targeted`` from a cold session, and it names what each
+                    # rung reads instead of implying corpus coverage.
+                    with Center():
+                        yield DepthOffer(id="empty-depth", markup=False)
                 # Shown only while a search runs before its first result
                 # (CSS hides it otherwise): a centered spinner + phase verb
                 # + counts + elapsed, collapsed to the results list the
@@ -444,6 +456,10 @@ class HudLayout(_HudSearchBase):
             "WelcomeExamples",
             streaming.query_one("#empty-examples", WelcomeExamples),
         )
+        self._depth_offer = t.cast(
+            "DepthOffer",
+            streaming.query_one("#empty-depth", DepthOffer),
+        )
         self._detail_header = streaming.query_one("#detail-header")
         self._detail_row = t.cast(
             "SlowSourceDiagnosticsRow",
@@ -462,6 +478,7 @@ class HudLayout(_HudSearchBase):
             streaming.query_one("#search"),
         )
         self._refresh_query_highlighting(dark=bool(self.app.current_theme.dark))
+        self._refresh_depth_offer()
         self._detail_find_input = t.cast(
             "DetailFindInput",
             streaming.query_one("#detail-find"),
@@ -523,6 +540,29 @@ class HudLayout(_HudSearchBase):
             return
         self._search_input.load_query(_WELCOME_QUERIES[message.index])
         self._search_input.focus()
+
+    @_runtime.pump_only
+    def on_depth_offer_selected(self, message: DepthOfferSelected) -> None:
+        """Run the chosen engine depth action against the typed query."""
+        message.stop()
+        self.run_next_action(message.action_id)
+        # Starting the search hides the idle canvas, which blurs this panel and
+        # leaves the screen with no focused widget. Hand focus back to the input
+        # so the next keystroke is not silently discarded.
+        if self._search_input is not None:
+            self._search_input.focus()
+
+    def _refresh_depth_offer(self) -> None:
+        """Repaint the idle canvas with the engine's current depth offer.
+
+        Bounded string work over at most two engine-authored rows. The offer is
+        derived from the live query text, so an inline ``scope:`` predicate can
+        retire a rung as it is typed; repainting per edit keeps the panel's
+        coverage claim true.
+        """
+        if self._depth_offer is None:
+            return
+        self._depth_offer.show_offer(self.pending_depth_actions())
 
     def _set_results_view(self, view: str) -> None:
         """Switch the results region between empty / searching / results.

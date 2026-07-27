@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import pathlib
 import typing as t
 
 import mcp.types as mt
+import pydantic_core
 import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.server.middleware import MiddlewareContext
@@ -16,8 +19,15 @@ from pydantic import BaseModel
 from agentgrep.mcp.middleware import (
     AgentgrepAuditMiddleware,
     AgentgrepResponseLimitingMiddleware,
+    _truncated_search_response,
+)
+from agentgrep.mcp.models import (
+    RunStatusModel,
+    SearchRequestModel,
+    SearchToolResponse,
 )
 from agentgrep.mcp.server import build_mcp_server
+from agentgrep.mcp.tools.search_tools import _search_async
 
 pytestmark = pytest.mark.mcp
 
@@ -48,11 +58,13 @@ def _configured_response_limiter(server: FastMCP) -> ResponseLimitingMiddleware:
     )
 
 
-def _tool_context() -> MiddlewareContext[mt.CallToolRequestParams]:
+def _tool_context(
+    name: str = "oversized_response_probe",
+) -> MiddlewareContext[mt.CallToolRequestParams]:
     """Return the middleware context shared by direct tool-call contracts."""
     return MiddlewareContext(
         message=mt.CallToolRequestParams(
-            name="oversized_response_probe",
+            name=name,
             arguments={},
         ),
         method="tools/call",
@@ -97,14 +109,177 @@ async def test_limiter_marks_truncation_as_error(
     assert len(result.content) == 1
     content = result.content[0]
     assert isinstance(content, mt.TextContent)
-    assert content.text.endswith(limiter.truncation_suffix)
-    assert len(content.text.encode("utf-8")) <= _TEST_RESPONSE_LIMIT_BYTES
+    assert content.text == "[truncated]"
+    assert len(pydantic_core.to_json(result, fallback=str)) <= limiter.max_size
     assert result.meta == metadata
     assert result.structured_content is None
     assert result.is_error is True
     assert len(records) == 1
     assert records[0].agentgrep_outcome == "error"
     assert records[0].agentgrep_error_type == "ToolResultError"
+
+
+@pytest.mark.parametrize(
+    ("state", "reason", "condition"),
+    [
+        ("bounded", "result_limit", "result_limit"),
+        (
+            "approximate",
+            "heuristic_candidate_selection",
+            "heuristic_candidate_selection",
+        ),
+    ],
+)
+async def test_search_truncation_precedes_lower_priority_conditions(
+    codex_transcript_home: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: t.Literal["bounded", "approximate"],
+    reason: str,
+    condition: str,
+) -> None:
+    """Keep sink-owned truncation in the engine's stable condition order."""
+    monkeypatch.setattr(
+        pathlib.Path,
+        "home",
+        classmethod(lambda _cls: codex_transcript_home),
+    )
+    response = await _search_async(
+        SearchRequestModel(
+            terms=["deep-only"],
+            agent="codex",
+            scope="prompts",
+            case_sensitive=False,
+            effort="exhaustive",
+            limit=20,
+        ),
+    )
+    response = response.model_copy(
+        update={
+            "status": RunStatusModel(
+                state=state,
+                reason=reason,
+                conditions=[condition],
+            ),
+        },
+    )
+
+    truncated = _truncated_search_response(response, result_count=0)
+
+    assert truncated.status.state == "truncated"
+    assert truncated.status.reason == "response_truncated"
+    assert truncated.status.conditions == ["response_truncated", condition]
+
+
+async def test_search_limiter_preserves_a_structured_partial_envelope(
+    codex_transcript_home: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Fit whole search records while retaining machine-readable lifecycle state."""
+    monkeypatch.setattr(
+        pathlib.Path,
+        "home",
+        classmethod(lambda _cls: codex_transcript_home),
+    )
+    base = await _search_async(
+        SearchRequestModel(
+            terms=["deep-only"],
+            agent="codex",
+            scope="prompts",
+            case_sensitive=False,
+            effort="exhaustive",
+            limit=20,
+        ),
+    )
+    first = base.results[0].model_copy(
+        update={"ref": "first", "text": "first:" + ("a" * 4_096)},
+    )
+    second = first.model_copy(
+        update={"ref": "second", "text": "second:" + ("b" * 4_096)},
+    )
+    response = base.model_copy(
+        update={
+            "results": [first, second],
+            "page": base.page.model_copy(update={"count": 2}),
+            "stats": base.stats.model_copy(update={"matched": 2, "emitted": 2}),
+        },
+    )
+    metadata = {"request_id": "preserved"}
+    original = ToolResult(
+        content=response,
+        structured_content=response,
+        meta=metadata,
+    )
+    original_size = len(pydantic_core.to_json(original, fallback=str))
+    limiter = AgentgrepResponseLimitingMiddleware(max_size=original_size - 1)
+    audit = AgentgrepAuditMiddleware()
+
+    async def _call_next(
+        context: MiddlewareContext[mt.CallToolRequestParams],
+    ) -> ToolResult:
+        return original
+
+    async def _call_limiter(
+        context: MiddlewareContext[mt.CallToolRequestParams],
+    ) -> ToolResult:
+        return await limiter.on_call_tool(context, _call_next)
+
+    with caplog.at_level(logging.INFO, logger="agentgrep.audit"):
+        result = await audit.on_call_tool(_tool_context("search"), _call_limiter)
+
+    fitted = SearchToolResponse.model_validate(result.structured_content)
+    content = result.content[0]
+    records = _audit_records(caplog)
+    assert isinstance(content, mt.TextContent)
+    assert json.loads(content.text) == result.structured_content
+    assert len(pydantic_core.to_json(result, fallback=str)) <= limiter.max_size
+    assert [record.ref for record in fitted.results] == ["first"]
+    assert fitted.page.count == fitted.stats.emitted == len(fitted.results)
+    assert fitted.status.state == "truncated"
+    assert fitted.status.reason == "response_truncated"
+    assert fitted.status.conditions == ["response_truncated"]
+    assert fitted.effort.completed is None
+    assert fitted.outcome == "undetermined"
+    assert fitted.diagnostics[-1].code == "response_truncated"
+    assert result.meta == metadata
+    assert result.is_error is False
+    assert len(records) == 1
+    assert records[0].agentgrep_outcome == "ok"
+
+
+async def test_search_limiter_falls_back_when_no_envelope_fits(
+    codex_transcript_home: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Return a bounded error when even a zero-result envelope is too large."""
+    monkeypatch.setattr(
+        pathlib.Path,
+        "home",
+        classmethod(lambda _cls: codex_transcript_home),
+    )
+    response = await _search_async(
+        SearchRequestModel(
+            terms=["deep-only"],
+            agent="codex",
+            scope="prompts",
+            case_sensitive=False,
+            effort="exhaustive",
+            limit=20,
+        ),
+    )
+    original = ToolResult(content=response, structured_content=response)
+    limiter = AgentgrepResponseLimitingMiddleware(max_size=100)
+
+    async def _call_next(
+        context: MiddlewareContext[mt.CallToolRequestParams],
+    ) -> ToolResult:
+        return original
+
+    result = await limiter.on_call_tool(_tool_context("search"), _call_next)
+
+    assert result.is_error is True
+    assert result.structured_content is None
+    assert len(pydantic_core.to_json(result, fallback=str)) <= limiter.max_size
 
 
 @pytest.mark.slow
@@ -137,3 +312,44 @@ async def test_client_accepts_truncated_structured_tool_as_error(
     assert records[0].agentgrep_tool == "oversized_response_probe"
     assert records[0].agentgrep_outcome == "error"
     assert records[0].agentgrep_error_type == "ToolResultError"
+
+
+@pytest.mark.slow
+async def test_client_accepts_semantically_truncated_search(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep search schema-valid when one whole record exceeds the byte budget."""
+    history = tmp_path / ".codex" / "history.jsonl"
+    history.parent.mkdir(parents=True)
+    history.write_text(
+        json.dumps(
+            {
+                "session_id": "00000000-0000-0000-0000-000000000300",
+                "ts": 1_785_000_000,
+                "text": "large-needle " + ("x" * 300_000),
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        pathlib.Path,
+        "home",
+        classmethod(lambda _cls: tmp_path),
+    )
+
+    async with Client(build_mcp_server()) as client:
+        result = await client.call_tool_mcp(
+            "search",
+            {"terms": ["large-needle"], "agent": "codex"},
+        )
+
+    response = SearchToolResponse.model_validate(result.structuredContent)
+    assert result.isError is False
+    assert response.results == []
+    assert response.page.count == response.stats.emitted == 0
+    assert response.status.state == "truncated"
+    assert response.status.reason == "response_truncated"
+    assert response.effort.completed is None
+    assert response.outcome == "undetermined"

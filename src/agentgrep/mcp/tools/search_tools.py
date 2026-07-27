@@ -10,27 +10,35 @@ import pathlib
 import time
 import typing as t
 
+import mcp.types as mt
+from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from mcp import McpError
 from pydantic import Field
 
 from agentgrep import events as ag_events
-from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
     AgentSelector,
+    SearchEffortName,
     SearchRecordLike,
     SearchScopeName,
     agentgrep,
     normalize_agent_selection,
 )
+from agentgrep.mcp.middleware import TOOL_ARGUMENT_NAMES_STATE_KEY
 from agentgrep.mcp.models import (
     DiagnosticModel,
-    PageInfoModel,
+    NextActionModel,
+    NormalizedSearchRequestModel,
     RecentSessionsRequest,
     RecentSessionsResponse,
     ResultStatsModel,
     RunStatusModel,
+    SearchCoverageModel,
+    SearchEffortModel,
+    SearchPageModel,
     SearchRecordModel,
     SearchRequestModel,
     SearchToolResponse,
@@ -45,51 +53,29 @@ if t.TYPE_CHECKING:
 
     from agentgrep._engine.runtime import SearchRuntime
     from agentgrep.records import SearchQuery
+    from agentgrep.results import RunSummary
+
+_TARGETED_PROMPT_SCOPE_ERROR = "targeted effort requires conversation or all scope"
 
 
-def _page_status(next_cursor: str | None) -> RunStatusModel:
-    """Return the status for a normal MCP result page."""
-    if next_cursor is None:
-        return RunStatusModel(state="complete")
-    return RunStatusModel(state="bounded", reason="page_limit")
+def _invalid_params_error(message: str) -> McpError:
+    """Build a public MCP invalid-params error.
 
+    Parameters
+    ----------
+    message : str
+        Actionable request constraint without rejected values.
 
-def _page_diagnostics(next_cursor: str | None) -> list[DiagnosticModel]:
-    """Return diagnostics for a normal MCP result page."""
-    if next_cursor is None:
-        return []
-    return [
-        DiagnosticModel(
-            code="page_limit",
-            message="More records are available via page.next_cursor.",
-        )
-    ]
-
-
-def _request_from_cursor(request: SearchRequestModel) -> tuple[SearchRequestModel, int]:
-    """Return the effective request and offset for a search page."""
-    if request.cursor is None:
-        if not request.terms and not _request_has_origin_filter(request):
-            msg = "terms or an origin filter are required unless cursor is provided"
-            raise ToolError(msg)
-        return request, 0
-    try:
-        cursor = refs.parse_search_cursor(request.cursor)
-    except refs.McpTokenError as exc:
-        raise ToolError(str(exc)) from exc
-    return (
-        SearchRequestModel(
-            terms=cursor.terms,
-            agent=cursor.agent,
-            scope=cursor.scope,
-            case_sensitive=cursor.case_sensitive,
-            limit=cursor.limit,
-            cursor=request.cursor,
-            cwd=cursor.cwd,
-            repo=cursor.repo,
-            branch=cursor.branch,
+    Returns
+    -------
+    McpError
+        Error that FastMCP preserves as ``INVALID_PARAMS``.
+    """
+    return McpError(
+        mt.ErrorData(
+            code=mt.INVALID_PARAMS,
+            message=f"Invalid params: {message}",
         ),
-        cursor.offset,
     )
 
 
@@ -99,6 +85,34 @@ def _request_has_origin_filter(request: SearchRequestModel) -> bool:
         or (request.repo or "").strip()
         or (request.branch or "").strip(),
     )
+
+
+def _normalize_request_depth(
+    request: SearchRequestModel,
+) -> tuple[SearchScopeName, SearchEffortName, int | None]:
+    """Normalize MCP effort, inferred scope, and targeted work bound."""
+    scope = request.scope
+    effort = request.effort
+    if effort is None:
+        effort = "prompt" if scope == "prompts" else "exhaustive"
+    elif request.scope_provenance == "inferred" and effort in {
+        "targeted",
+        "exhaustive",
+    }:
+        scope = "all"
+    if effort == "prompt" and scope != "prompts":
+        msg = "prompt effort requires prompt scope"
+        raise ToolError(msg)
+    if effort == "targeted" and scope == "prompts":
+        raise _invalid_params_error(_TARGETED_PROMPT_SCOPE_ERROR)
+    conversation_limit = request.conversation_limit
+    if conversation_limit is not None and conversation_limit < 1:
+        msg = "conversation_limit must be greater than 0"
+        raise ToolError(msg)
+    if conversation_limit is not None and effort != "targeted":
+        msg = "conversation_limit requires targeted effort"
+        raise ToolError(msg)
+    return scope, effort, conversation_limit
 
 
 def _compile_request_query(
@@ -146,11 +160,18 @@ def _compile_request_query(
         message = f"invalid query: {exc}"
         raise ToolError(message) from exc
     scope = scope_widened_for_ast(user_ast, base_query.scope)
+    effort = base_query.effort
+    if scope != "prompts" and effort not in {"targeted", "exhaustive"}:
+        effort = "exhaustive"
+    if effort == "targeted" and scope == "prompts":
+        raise _invalid_params_error(_TARGETED_PROMPT_SCOPE_ERROR)
     return dataclasses.replace(
         base_query,
         terms=compiled.text_terms,
         compiled=None if compiled.is_pure_text else compiled,
         scope=scope,
+        scope_provenance=("explicit" if scope != base_query.scope else base_query.scope_provenance),
+        effort=effort,
         origin_filter=origin_filter,
     )
 
@@ -161,26 +182,29 @@ async def _search_async(
     runtime: SearchRuntime | None = None,
 ) -> SearchToolResponse:
     """Run the async search stream and build a typed response."""
-    effective_request, offset = _request_from_cursor(request)
-    page_limit = effective_request.limit
-    query_limit = None if page_limit is None else offset + page_limit + 1
+    if not request.terms and not _request_has_origin_filter(request):
+        msg = "terms or an origin filter are required"
+        raise ToolError(msg)
+    page_limit = request.limit
+    scope, effort, conversation_limit = _normalize_request_depth(request)
     base_query = t.cast(
         "SearchQuery",
         agentgrep.SearchQuery(
-            terms=tuple(effective_request.terms),
-            scope=effective_request.scope,
+            terms=tuple(request.terms),
+            scope=scope,
             any_term=False,
             regex=False,
-            case_sensitive=effective_request.case_sensitive,
-            agents=normalize_agent_selection(effective_request.agent),
-            limit=query_limit,
+            case_sensitive=request.case_sensitive,
+            agents=normalize_agent_selection(request.agent),
+            limit=page_limit,
+            effort=effort,
+            scope_provenance=request.scope_provenance,
+            conversation_limit=conversation_limit,
         ),
     )
-    query = _compile_request_query(base_query, effective_request)
+    query = _compile_request_query(base_query, request)
     records: list[SearchRecordLike] = []
-    source_count = 0
-    searched = 0
-    matched = 0
+    run_summary: RunSummary | None = None
     # The engine only stops scanning when this generator is finalized: its
     # cancellation request lives in the stream's finally block. A client cancel
     # finalizes it today only because the loop body below is await-free, which
@@ -195,58 +219,43 @@ async def _search_async(
         )
     ) as stream:
         async for event in stream:
-            if isinstance(event, ag_events.SearchStarted):
-                source_count = event.source_count
-            elif isinstance(event, ag_events.SourceFinished):
-                searched += event.records_seen
-                matched += event.matches_seen
-            elif isinstance(event, ag_events.RecordEmitted):
+            if run_summary is not None:
+                msg = "search event stream emitted data after SearchFinished"
+                raise RuntimeError(msg)
+            if isinstance(event, ag_events.RecordEmitted):
                 records.append(t.cast("SearchRecordLike", event.record))
             elif isinstance(event, ag_events.SearchFinished):
-                matched = max(matched, event.match_count)
+                run_summary = event.summary
+    if run_summary is None:
+        msg = "search event stream ended without SearchFinished"
+        raise RuntimeError(msg)
+    if len(records) != run_summary.match_count:
+        msg = "search event record count does not match terminal summary"
+        raise RuntimeError(msg)
     # The inline execution driver emits records per source, not in final
     # result order; restore the newest-first contract the list-returning
     # search path guarantees before building the response.
     records.sort(key=agentgrep.search_record_sort_key, reverse=True)
-    if page_limit is None:
-        page_records = records[offset:]
-        next_cursor = None
-    else:
-        page_records = records[offset : offset + page_limit]
-        has_more = len(records) > offset + page_limit
-        next_cursor = (
-            refs.make_search_cursor(
-                offset=offset + len(page_records),
-                terms=effective_request.terms,
-                agent=effective_request.agent,
-                scope=effective_request.scope,
-                case_sensitive=effective_request.case_sensitive,
-                limit=page_limit,
-                cwd=effective_request.cwd,
-                repo=effective_request.repo,
-                branch=effective_request.branch,
-            )
-            if has_more
-            else None
-        )
-    matched = max(matched, len(records))
-    searched = max(searched, matched)
     return SearchToolResponse(
-        request=effective_request,
+        schema_version=agentgrep.SCHEMA_VERSION,
+        request=NormalizedSearchRequestModel.from_summary(run_summary),
+        effort=SearchEffortModel.from_summary(run_summary),
+        outcome=run_summary.outcome,
+        coverage=SearchCoverageModel.from_coverage(run_summary.coverage),
         stats=ResultStatsModel(
-            sources=source_count,
-            searched=searched,
-            matched=matched,
-            emitted=len(page_records),
+            sources=run_summary.coverage.sources_planned,
+            searched=run_summary.coverage.records_seen,
+            matched=run_summary.coverage.matches_seen,
+            emitted=len(records),
         ),
-        page=PageInfoModel(
+        page=SearchPageModel(
             limit=page_limit,
-            count=len(page_records),
-            next_cursor=next_cursor,
+            count=len(records),
         ),
-        status=_page_status(next_cursor),
-        diagnostics=_page_diagnostics(next_cursor),
-        results=[SearchRecordModel.from_record(record) for record in page_records],
+        status=RunStatusModel.from_summary(run_summary),
+        diagnostics=[DiagnosticModel.from_diagnostic(item) for item in run_summary.diagnostics],
+        next_actions=[NextActionModel.from_action(action) for action in run_summary.next_actions],
+        results=[SearchRecordModel.from_record(record) for record in records],
     )
 
 
@@ -282,12 +291,15 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
         tags=READONLY_TAGS | {"search"},
         annotations=TOOL_ANNOTATIONS,
         description=(
-            "Search normalized prompts by default; opt into conversations with "
-            "scope. Terms accept agentgrep's query language (field predicates, "
-            "booleans, phrases, and wildcards); see agentgrep://query-language."
+            "Search fast prompt-history backends by default. Set effort to targeted "
+            "for a bounded approximate conversation search, or exhaustive for all "
+            "eligible readable conversations. Scope controls returned record kinds. "
+            "Terms accept agentgrep's query language (field predicates, booleans, "
+            "phrases, and wildcards); see agentgrep://query-language."
         ),
     )
     async def search_tool(
+        mcp_context: Context,
         terms: t.Annotated[
             list[str] | None,
             Field(
@@ -301,8 +313,28 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
         ] = "all",
         scope: t.Annotated[
             SearchScopeName,
-            Field(description="Search prompts, conversations, or both."),
+            Field(description="Return prompts, conversations, or both."),
         ] = "prompts",
+        effort: t.Annotated[
+            SearchEffortName | None,
+            Field(
+                default=None,
+                description=(
+                    "Search prompt evidence, a targeted conversation selection, "
+                    "or every eligible readable conversation."
+                ),
+            ),
+        ] = None,
+        conversation_limit: t.Annotated[
+            int | None,
+            Field(
+                default=None,
+                ge=1,
+                description=(
+                    "Maximum distinct conversation attempts for targeted effort (default: 25)."
+                ),
+            ),
+        ] = None,
         case_sensitive: t.Annotated[
             bool,
             Field(description="Perform case-sensitive matching."),
@@ -315,13 +347,6 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
                 description="Maximum number of search results to return.",
             ),
         ] = 20,
-        cursor: t.Annotated[
-            str | None,
-            Field(
-                default=None,
-                description="Opaque page cursor returned by a previous search response.",
-            ),
-        ] = None,
         cwd: t.Annotated[
             str | None,
             Field(
@@ -344,16 +369,23 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
             ),
         ] = None,
     ) -> SearchToolResponse:
+        argument_names = await mcp_context.get_state(TOOL_ARGUMENT_NAMES_STATE_KEY)
         request = SearchRequestModel(
             terms=terms or [],
             agent=agent,
             scope=scope,
+            effort=effort,
+            conversation_limit=conversation_limit,
             case_sensitive=case_sensitive,
             limit=limit,
-            cursor=cursor,
             cwd=cwd,
             repo=repo,
             branch=branch,
+            scope_provenance=(
+                "explicit"
+                if isinstance(argument_names, frozenset) and "scope" in argument_names
+                else "inferred"
+            ),
         )
         return await _search_async(request, runtime=runtime)
 

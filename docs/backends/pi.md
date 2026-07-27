@@ -3,9 +3,10 @@
 # Pi
 
 pi stores each coding-agent conversation as an append-only JSONL transcript.
-agentgrep projects user turns into the default prompt scope and keeps
-assistant, tool, summary, and branch records available through the conversation
-scope.
+Because pi has no dedicated prompt-history store, `--exhaustive` is required
+even for prompt-scope results. Assistant, tool, summary, and branch
+records are available through the conversation scope. Targeted effort cannot
+route this backend.
 
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
@@ -17,12 +18,11 @@ stripped and `/`, `\`, and `:` replaced by `-`, wrapped in double
 dashes (e.g. `--home-d-work-python-agentgrep--`). Each session file is
 named `<iso-timestamp>_<session-uuid>.jsonl`.
 
-Unlike Codex or Grok, pi keeps no separate prompt-history log and no
-SQLite session index — the session transcript is the entire searchable
-surface, which makes pi the structural twin of the Claude Code backend.
-agentgrep projects user turns from that transcript into the default
-prompt scope; assistant, tool, summary, and branch records require
-`--scope conversations` or `--scope all`.
+Unlike Codex, Claude Code, or Grok, pi has no separate prompt-history log;
+ordinary sessions use the JSONL transcript as their searchable surface.
+`--exhaustive` projects user turns, while conversation and all scopes admit
+assistant, tool, summary, and branch records. Pi's optional context-mode SQLite
+store is reserved for those explicit broad scopes.
 
 The optional `PI_CODING_AGENT_SESSION_DIR` override points at the
 sessions directory directly. When it is set, pi writes session files

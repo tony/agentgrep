@@ -18,7 +18,6 @@ import typing as t
 from agentgrep._engine.orchestration import (
     direct_source_matches,
     prefilter_sources_by_root,
-    prompt_history_agents_for_sources,
     source_matches_scope,
     source_order_key,
 )
@@ -26,11 +25,14 @@ from agentgrep._engine.source_filters import source_may_match_query
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.records import (
     CONVERSATION_STORE_ROLES,
+    DEFAULT_TARGETED_CONVERSATION_LIMIT,
     PROMPT_HISTORY_STORE_ROLES,
     AgentName,
     BackendSelection,
+    SearchEffort,
     SearchQuery,
     SearchScope,
+    SearchScopeProvenance,
     SourceHandle,
 )
 from agentgrep.stores import StoreRole
@@ -133,13 +135,24 @@ class QueryRequest:
         Text needles a record must match. Empty admits every record the remaining filters
         allow, which is the metadata-only shape of the plan.
     scope : SearchScope
-        Which stores the plan opens: prompt history only, conversation transcripts, or
-        all of them.
+        Which record kinds the plan may return: prompts, conversations, or both.
+    scope_provenance : SearchScopeProvenance
+        Whether the scope was inferred or explicitly selected.
+    effort : SearchEffort
+        Which source families the plan may open: prompt history only or prompt history
+        plus transcript backends.
+    order : str
+        Result order the engine must preserve. ``"relevance"`` and ``"newest"``
+        compare every eligible match; ``"scan"`` alone permits count-bounded
+        execution without comparing later sources.
     agents : tuple[AgentName, ...]
         Agents whose stores are discovered. An empty tuple discovers nothing.
     limit : int | None
         Result ceiling, which also lets bounded sources stop scanning early. ``None``
         runs the search to exhaustion.
+    conversation_limit : int | None
+        Distinct conversation-attempt bound for targeted effort. ``None`` for
+        prompt and exhaustive requests.
     dedupe : bool
         Whether records that collapse to one identity are folded together.
     any_term : bool
@@ -156,8 +169,12 @@ class QueryRequest:
 
     terms: tuple[str, ...]
     scope: SearchScope
+    scope_provenance: SearchScopeProvenance
+    effort: SearchEffort
+    order: str
     agents: tuple[AgentName, ...]
     limit: int | None
+    conversation_limit: int | None
     dedupe: bool
     any_term: bool
     regex: bool
@@ -210,10 +227,6 @@ class LogicalSearchPlan:
     initial_store_roles : frozenset[StoreRole] | None
         Store roles the first discovery pass opens. ``None`` at ``all`` scope, where every
         role is admitted.
-    expects_prompt_fallback : bool
-        Whether prompt scope may need a second discovery pass over conversation stores.
-        Agents that ship no prompt-history store contribute their prompts through their
-        transcripts instead.
     source_predicate_available : bool
         Whether the compiled query supplies a source-level predicate, so candidates can be
         dropped before any file is opened.
@@ -225,7 +238,6 @@ class LogicalSearchPlan:
 
     request: QueryRequest
     initial_store_roles: frozenset[StoreRole] | None
-    expects_prompt_fallback: bool
     source_predicate_available: bool
     text_prefilter_required: bool
 
@@ -420,12 +432,21 @@ def build_source_authority_plan(
 
 def build_query_request(query: SearchQuery) -> QueryRequest:
     """Build immutable planner intent from a search query."""
+    if query.order not in {"newest", "relevance", "scan"}:
+        msg = "order must be 'newest', 'relevance', or 'scan'"
+        raise ValueError(msg)
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
+    effort = _normalized_search_effort(query)
+    conversation_limit = _normalized_conversation_limit(query, effort=effort)
     return QueryRequest(
         terms=query.terms,
         scope=query.scope,
+        scope_provenance=query.scope_provenance,
+        effort=effort,
+        order=query.order,
         agents=query.agents,
         limit=query.limit,
+        conversation_limit=conversation_limit,
         dedupe=query.dedupe,
         any_term=query.any_term,
         regex=query.regex,
@@ -434,23 +455,63 @@ def build_query_request(query: SearchQuery) -> QueryRequest:
     )
 
 
+def _normalized_search_effort(query: SearchQuery) -> SearchEffort:
+    """Derive and validate the source-read policy for ``query``."""
+    if query.effort not in {None, "prompt", "targeted", "exhaustive"}:
+        msg = "effort must be 'prompt', 'targeted', or 'exhaustive'"
+        raise ValueError(msg)
+    if query.effort == "prompt" and query.scope != "prompts":
+        msg = "prompt effort requires prompt scope"
+        raise ValueError(msg)
+    if query.effort == "targeted" and query.scope == "prompts":
+        msg = "targeted effort requires conversation or all scope"
+        raise ValueError(msg)
+    return query.effort or ("prompt" if query.scope == "prompts" else "exhaustive")
+
+
+def _normalized_conversation_limit(
+    query: SearchQuery,
+    *,
+    effort: SearchEffort,
+) -> int | None:
+    """Validate and normalize the targeted conversation-attempt bound."""
+    if effort != "targeted":
+        if query.conversation_limit is not None:
+            msg = "conversation_limit requires targeted effort"
+            raise ValueError(msg)
+        return None
+    value = (
+        DEFAULT_TARGETED_CONVERSATION_LIMIT
+        if query.conversation_limit is None
+        else query.conversation_limit
+    )
+    if value < 1:
+        msg = "conversation_limit must be greater than 0"
+        raise ValueError(msg)
+    return value
+
+
+def _query_limit_requires_drain(query: SearchQuery) -> bool:
+    """Return whether a limited query must compare all eligible records."""
+    return query.limit is not None and query.order != "scan"
+
+
 def build_logical_search_plan(query: SearchQuery) -> LogicalSearchPlan:
     """Build a logical search plan from frontend-neutral query intent."""
-    if query.scope == "all":
+    request = build_query_request(query)
+    if request.effort == "prompt":
+        store_roles = PROMPT_HISTORY_STORE_ROLES
+    elif query.scope == "all":
         store_roles = None
-        expects_prompt_fallback = False
     elif query.scope == "conversations":
         store_roles = CONVERSATION_STORE_ROLES
-        expects_prompt_fallback = False
     else:
-        store_roles = PROMPT_HISTORY_STORE_ROLES
-        expects_prompt_fallback = True
+        store_roles = PROMPT_HISTORY_STORE_ROLES | CONVERSATION_STORE_ROLES
 
     source_predicate = query.compiled.source_predicate if query.compiled is not None else None
     return LogicalSearchPlan(
-        request=build_query_request(query),
+        request=request,
         initial_store_roles=store_roles,
-        expects_prompt_fallback=expects_prompt_fallback,
         source_predicate_available=source_predicate is not None,
         text_prefilter_required=bool(query.terms),
     )
@@ -490,17 +551,19 @@ def build_physical_search_plan(
         planner decisions that produced them.
     """
     logical = build_logical_search_plan(query)
+    strategy_query = query
+    if _query_limit_requires_drain(query):
+        strategy_query = dataclasses.replace(query, limit=None)
     source_list = list(sources)
     active_progress = noop_search_progress() if progress is None else progress
     active_control = SearchControl() if control is None else control
-    prompt_history_agents = prompt_history_agents_for_sources(source_list)
     scoped_sources = [
         source
         for source in source_list
         if source_matches_scope(
             source,
             query.scope,
-            prompt_history_agents=prompt_history_agents,
+            effort=logical.request.effort,
         )
     ]
     decisions: list[PlannerDecision] = [
@@ -545,7 +608,7 @@ def build_physical_search_plan(
                 and path_term_matcher(str(source.path))
             ):
                 path_match_sources.append(source)
-            elif _can_use_lazy_source_admission(query, source):
+            elif _can_use_lazy_source_admission(strategy_query, source):
                 lazy_sources.append(source)
             else:
                 eager_sources.append(source)
@@ -568,7 +631,7 @@ def build_physical_search_plan(
             )
         elif planned_sources:
             planned_sources = prefilter_sources_by_root(
-                query,
+                strategy_query,
                 planned_sources,
                 backends.grep_tool,
                 progress=active_progress,
@@ -616,7 +679,7 @@ def build_physical_search_plan(
         if source.search_root is not None:
             ordered_sources.append(source)
             continue
-        if direct_source_matches(source, query, backends, active_control):
+        if direct_source_matches(source, strategy_query, backends, active_control):
             ordered_sources.append(source)
     ordered_sources.sort(key=source_order_key)
     decisions.append(
@@ -632,7 +695,7 @@ def build_physical_search_plan(
             _source_task(
                 source,
                 _source_strategy(
-                    query,
+                    strategy_query,
                     source,
                     source_route="root" if source.search_root is not None else "direct",
                 ),

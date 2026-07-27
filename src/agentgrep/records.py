@@ -31,6 +31,7 @@ __all__ = [
     "CONVERSATION_CONTENT_STORES",
     "CONVERSATION_STORE_ROLES",
     "CURSOR_STATE_TOKENS",
+    "DEFAULT_TARGETED_CONVERSATION_LIMIT",
     "ITER_SOURCE_RECORD_ADAPTERS",
     "JSON_FILE_SUFFIXES",
     "OFFICIAL_CURSOR_STATE_PATHS",
@@ -59,14 +60,17 @@ __all__ = [
     "RawJsonlSkipLine",
     "RecordOrigin",
     "RecordOriginPayload",
+    "SearchEffort",
     "SearchMatchSurface",
     "SearchQuery",
     "SearchRecord",
     "SearchRecordPayload",
     "SearchScope",
+    "SearchScopeProvenance",
     "SourceHandle",
     "SourceHandlePayload",
     "SourceOriginSummary",
+    "SourceScanOutcome",
     "SourceVersionDetection",
     "SourceVersionDetectionPayload",
     "SummaryRow",
@@ -91,11 +95,21 @@ AgentName = t.Literal[
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
 ProgressMode = t.Literal["auto", "always", "never"]
 SearchScope = t.Literal["prompts", "conversations", "all"]
+SearchScopeProvenance = t.Literal["inferred", "explicit"]
+SearchEffort = t.Literal["prompt", "targeted", "exhaustive"]
 SearchMatchSurface = t.Literal["haystack", "text"]
+SourceScanOutcome = t.Literal[
+    "completed",
+    "bounded",
+    "unsupported",
+    "failed",
+    "cancelled",
+]
 DiscoveryVersionDetail = t.Literal["none", "catalog", "shape"]
 DiscoveryStoreRoles = frozenset[StoreRole] | None
 ColorMode = t.Literal["auto", "always", "never"]
 GrepStyle = t.Literal["default", "pretty"]
+DEFAULT_TARGETED_CONVERSATION_LIMIT = 25
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 type RawJsonlSkipLine = t.Callable[[str], bool]
@@ -501,7 +515,7 @@ class SearchQuery:
         Text needles a record must match. Empty admits every record the remaining
         filters allow.
     scope : SearchScope
-        Which stores to open: prompt history only, conversation transcripts, or all.
+        Which record kinds may be returned: prompts, conversations, or both.
     any_term : bool
         Whether one matching term suffices. ``False`` requires every term to match.
     regex : bool
@@ -512,8 +526,9 @@ class SearchQuery:
         Agents whose stores are discovered. An empty tuple discovers nothing; callers
         meaning "every agent" pass :data:`AGENT_CHOICES`.
     limit : int | None
-        Result ceiling, which also lets the engine stop scanning early. ``None`` runs the
-        search to exhaustion.
+        Result ceiling. Scan-ordered plans may stop early when their source policy
+        proves the remaining work irrelevant; globally ordered plans compare every
+        eligible match. ``None`` returns every accepted match.
     dedupe : bool
         Whether records that collapse to one identity are folded together. ``False``
         keeps every match, including the same message reached through two stores.
@@ -526,6 +541,24 @@ class SearchQuery:
     origin_filter : RecordOrigin | None
         Project filter supplied by the CLI or MCP surface, held apart from ``compiled``.
         ``None`` applies no origin filter.
+    effort : SearchEffort | None
+        Read policy for source admission. ``"prompt"`` opens only dedicated prompt
+        history, ``"targeted"`` adds a bounded set of prompt-routed conversations,
+        and ``"exhaustive"`` admits every eligible transcript backend. ``None``
+        preserves compatibility by deriving the policy from ``scope``.
+    conversation_limit : int | None
+        Maximum distinct conversation attempts for targeted effort. ``None`` uses
+        :data:`DEFAULT_TARGETED_CONVERSATION_LIMIT`; other efforts leave it unused.
+    order : str
+        Result order requested from the engine. ``"newest"`` is the public default;
+        ``"relevance"`` ranks matches before applying the result limit; ``"scan"``
+        permits count-bounded execution when a caller does not require a global order.
+    relevance_threshold : int
+        Minimum relevance score retained when ``order`` is ``"relevance"``.
+    origin_boost : RecordOrigin | None
+        Optional project context whose matching records receive a relevance boost.
+    scope_provenance : SearchScopeProvenance
+        Whether scope was inferred from defaults/query semantics or explicitly selected.
     """
 
     terms: tuple[str, ...]
@@ -539,6 +572,12 @@ class SearchQuery:
     compiled: CompiledQuery | None = None
     match_surface: SearchMatchSurface = "haystack"
     origin_filter: RecordOrigin | None = None
+    effort: SearchEffort | None = None
+    order: str = "newest"
+    scope_provenance: SearchScopeProvenance = "inferred"
+    conversation_limit: int | None = None
+    relevance_threshold: int = 0
+    origin_boost: RecordOrigin | None = None
 
 
 @dataclasses.dataclass(slots=True)

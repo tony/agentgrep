@@ -73,12 +73,12 @@ otherwise run as a one-shot. This is the `tig`-shaped overlay model —
 The CLI is a first-class consumer for any agent that doesn't speak
 MCP. Two flags govern machine-readable output:
 
-- `--json` emits a single JSON document with an `envelope` carrying
-  the record list. Best when the caller wants to parse the whole
-  result at once.
-- `--ndjson` streams one JSON object per line. Best for piping into
-  `jq`, into another CLI, or into an agent that consumes results
-  incrementally.
+- `--json` emits a single command-specific JSON document carrying records or
+  events. Search output includes the engine-owned terminal summary. Best when
+  the caller wants to parse the whole result at once.
+- `--ndjson` emits one JSON object per line. For grep's scan-ordered stream,
+  direct terminal output flushes accepted matches; use `PYTHONUNBUFFERED=1`
+  when a downstream process must observe each piped event immediately.
 
 Both flags work on `search`, `grep`, and `find`. See
 {ref}`cli-find-json-output` for the record shapes.
@@ -101,10 +101,22 @@ Prefer matches from the current project:
 $ agentgrep search --here "deploy"
 ```
 
-Sweep prompts and conversations in one pass:
+Search a bounded set of conversations selected from prompt matches:
 
 ```console
-$ agentgrep search "deploy" --scope all
+$ agentgrep search "deploy" --deep
+```
+
+Search prompt records across every readable conversation backend:
+
+```console
+$ agentgrep search "deploy" --exhaustive
+```
+
+Return prompt and conversation records in one exhaustive sweep:
+
+```console
+$ agentgrep search "deploy" --exhaustive --scope all
 ```
 
 Search prompts with rg-shaped flags:

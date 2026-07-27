@@ -3,9 +3,10 @@
 # OpenCode
 
 OpenCode is a SQLite-backed conversation backend. agentgrep reconstructs turns
-from the relational session/message/part tables, searches user text in the
-default prompt scope, and leaves assistant/reasoning parts to the conversation
-scope.
+from the relational session/message/part tables. Because OpenCode has no
+dedicated prompt-history store, `--exhaustive` is required for user text;
+assistant and reasoning parts additionally require conversation scope.
+Targeted effort cannot route this backend.
 
 Base path: `~/.local/share/opencode` (env overrides: `XDG_DATA_HOME`, `OPENCODE_DB`).
 
@@ -29,8 +30,9 @@ database (an absolute path is used directly).
 {storage:storeref}`opencode.db` is a relational `session → message → part` schema
 (Drizzle). A conversation turn is reconstructed by joining a `part` row up to
 its `message` (for the role) and `session` (for the title and working
-directory). User text parts participate in the default prompt scope; assistant
-and reasoning parts require `--scope conversations` or `--scope all`.
+directory). User text parts participate in prompt scope under `--exhaustive`;
+assistant and reasoning parts require `--scope conversations` or
+`--scope all`.
 
 `session` table — one row per session:
 

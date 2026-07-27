@@ -3,16 +3,16 @@
 # agentgrep search
 
 The `agentgrep search` command is the smart default for "what did I say
-about X?" — it ranks matches by relevance and groups them by session, so
-the best answer rises to the top instead of scrolling past in discovery
-order. Where {ref}`grep
-<cli-grep>` is `rg`-shaped (every matching line, newest-first), `search`
-is results-shaped: fewer, better rows.
+about X?" — it ranks matches by relevance, uses newest as the stable
+tie-break, and groups them by session, so the best answer rises to the top.
+Where {ref}`grep <cli-grep>` is `rg`-shaped and preserves scan order,
+`search` is results-shaped: fewer, better rows.
 
-Like `grep`, it searches normalized prompt records by default and takes
-explicit `--scope` controls for conversations. Scoring uses rapidfuzz's
-`WRatio` — a token-aware 0-100 similarity — against the space-joined
-terms.
+Like `grep`, it searches normalized prompt-history records by default.
+`--deep` opens a bounded set of conversations selected from prompt matches;
+`--exhaustive` opens every readable conversation backend. Scoring uses
+rapidfuzz's `WRatio` — a token-aware 0-100 similarity — against the
+space-joined terms.
 
 ## Examples
 
@@ -22,10 +22,22 @@ Rank prompts by relevance to a multi-term query (terms are AND-matched):
 $ agentgrep search streaming parser
 ```
 
-Search prompts and conversations together in one sweep:
+Search selected conversations related to prompt matches:
 
 ```console
-$ agentgrep search "deploy" --scope all
+$ agentgrep search "deploy" --deep
+```
+
+Search prompt records across every readable conversation backend:
+
+```console
+$ agentgrep search "deploy" --exhaustive
+```
+
+Search prompts and conversations together in one exhaustive sweep:
+
+```console
+$ agentgrep search "deploy" --exhaustive --scope all
 ```
 
 Prefer records from the project you are standing in:
@@ -46,7 +58,7 @@ Keep only strong matches by raising the score bar:
 $ agentgrep search --threshold 70 migration
 ```
 
-Skip ranking and grouping for a flat, discovery-order list:
+Skip ranking and grouping for a flat, globally newest-first list:
 
 ```console
 $ agentgrep search --no-rank --no-group caching
@@ -80,10 +92,11 @@ shows every match; raise it to drop weak ones:
 $ agentgrep search --threshold 70 release
 ```
 
-A high threshold can filter everything out — `search` then exits `1`
-(no matches) with no rows, the same way `grep` reports an empty result.
-Pass `--no-rank` to bypass scoring entirely and return records in
-discovery order (newest-first), the ordering `grep` uses:
+A high threshold can filter everything out. A no-match terminal message does
+not distinguish threshold filtering from other output filters. Pass
+`--no-rank` to bypass scoring entirely and return records globally newest-first.
+This may still buffer until the engine knows the global frontier; `grep`
+instead preserves scan order so it can stream:
 
 ```console
 $ agentgrep search --no-rank release
@@ -103,17 +116,53 @@ list with no session headings:
 $ agentgrep search --no-group caching
 ```
 
-## Search scope
+## Search depth and result scope
 
-`search` searches `--scope prompts` by default — user-authored prompts,
-including dedicated prompt-history logs and user turns projected from
-transcript-only stores. Pass `--scope conversations` for full
-conversation, session, assistant, tool, and event records, or
-`--scope all` to search both surfaces together:
+`search` opens only dedicated prompt-history stores by default. This
+fast path returns user-authored prompts without walking conversation
+backends.
+
+Pass `--deep` to use matching prompt evidence to select and search a bounded
+set of conversations. It attempts at most 25 distinct conversations by
+default; change that request-local work bound with `--conversation-limit`.
+Targeted results report `status.state="approximate"` and separate eligible,
+selected, and completed conversation counts:
 
 ```console
-$ agentgrep search "docs deploy" --scope all
+$ agentgrep search "docs deploy" --deep
 ```
+
+```console
+$ agentgrep search "docs deploy" --deep --conversation-limit 10
+```
+
+The default of 25 is an unmeasured routing-policy value, not a result limit or
+completeness claim. Repeated prompt evidence for one proven conversation uses
+one slot. Unresolved or ambiguous selected locators consume a slot and are not
+backfilled. Targeted routing is currently available for Codex, Claude Code,
+Grok, and Antigravity CLI; other conversation backends require exhaustive
+effort.
+
+Pass `--exhaustive` to search every readable conversation backend:
+
+```console
+$ agentgrep search "docs deploy" --exhaustive
+```
+
+`--exhaustive` with an omitted CLI scope keeps prompt scope, so the command
+above projects prompt records from every readable transcript. Depth controls
+which storage backends may be read. `--scope` separately
+controls returned record kinds. Pass `--scope conversations` for full
+conversation, session, assistant, tool, and event records, or combine
+exhaustive reads with `--scope all` for both surfaces:
+
+```console
+$ agentgrep search "docs deploy" --exhaustive --scope all
+```
+
+For compatibility, explicit conversation and all scopes already imply
+the exhaustive reads those records require. A prompt-only scope cannot be
+combined with `--deep`.
 
 (cli-search-project-context)=
 
@@ -155,11 +204,12 @@ open on current-project results.
 The default output is ranked, grouped text for terminal reading. For
 scripts and non-MCP agents, two machine-readable modes mirror `grep`:
 
-- `--json` emits one JSON document with an `envelope` carrying the
-  ranked record list. Best when the caller parses the whole result at
-  once.
-- `--ndjson` streams one JSON object per line. Best for piping into
-  `jq`, another CLI, or an agent that consumes results incrementally.
+- `--json` emits one JSON document with top-level `query`, `results`, and
+  engine-owned `summary` fields. Best when the caller parses the whole result
+  at once.
+- `--ndjson` emits one JSON object per line and ends with the equivalent
+  summary after the globally ordered result set is ready. Best when a caller
+  needs line-delimited records rather than a single JSON document.
 
 ```console
 $ agentgrep search bliss --json
