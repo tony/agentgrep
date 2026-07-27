@@ -2,21 +2,35 @@
 
 from __future__ import annotations
 
+import typing as t
+
 from rich.text import Text
 from textual import events
+from textual.binding import Binding, BindingType
 from textual.content import Content
 from textual.reactive import reactive
 from textual.style import Style
 from textual.widgets import Static
 
-from agentgrep.ui import _runtime
+from agentgrep.ui import _result_status, _runtime
 from agentgrep.ui.highlighter import QueryHighlighter
-from agentgrep.ui.widgets.messages import WelcomeQuerySelected
+from agentgrep.ui.widgets.messages import DepthOfferSelected, WelcomeQuerySelected
 
-__all__ = ["WELCOME_QUERY_INDEX_META", "WelcomeExamples"]
+if t.TYPE_CHECKING:
+    from agentgrep.results import NextAction
+
+__all__ = [
+    "DEPTH_OFFER_ACTION_META",
+    "WELCOME_QUERY_INDEX_META",
+    "DepthOffer",
+    "WelcomeExamples",
+]
 
 WELCOME_QUERY_INDEX_META = "agentgrep_query_index"
 """Rich/Textual metadata key identifying a fixed welcome query."""
+
+DEPTH_OFFER_ACTION_META = "agentgrep_depth_action_id"
+"""Rich/Textual metadata key carrying one engine-authored ``action_id``."""
 
 _WELCOME_QUERIES = (
     "agent:claude",
@@ -28,6 +42,10 @@ _WELCOME_QUERIES = (
 _WELCOME_QUERY_ROWS = ((0, 1, 2), (3, 4))
 _WELCOME_BRAND_SHINE = (1, 2, 3, 4, 5, 4, 3, 2, 1)
 _WELCOME_SHINE_INTERVAL = 0.08
+
+#: Style of the row under the depth panel's keyboard cursor. Painted only while
+#: the panel holds focus, so a mouse user never sees a cursor they cannot move.
+_DEPTH_OFFER_CURSOR_STYLE = "bold $accent"
 
 
 def _welcome_wordmark(offset: int = 0) -> Content:
@@ -98,3 +116,170 @@ class WelcomeExamples(Static):
         if type(index) is int:
             event.stop()
             self.post_message(WelcomeQuerySelected(index))
+
+
+def depth_offer_content(
+    actions: tuple[NextAction, ...],
+    *,
+    highlighted: int | None = None,
+) -> Content:
+    """Build the pre-run depth panel from engine-authored escalations.
+
+    The engine owns both the vocabulary and the eligibility of every rung, so
+    this renders whatever :func:`~agentgrep.results.offered_depth_actions`
+    returns and adds no depth concept of its own. Selectable rows carry their
+    ``action_id`` as span metadata; the lead line never claims coverage.
+
+    Parameters
+    ----------
+    actions : tuple[NextAction, ...]
+        Escalations offered for the request the primary input would submit.
+    highlighted : int | None
+        Index of the selectable row carrying the keyboard cursor, or ``None``
+        to paint no cursor.
+
+    Returns
+    -------
+    Content
+        A lead line plus one metadata-tagged row per selectable escalation.
+        Empty when the engine offers nothing.
+    """
+    lead = _result_status.format_depth_offer_lead(actions)
+    if not lead:
+        return Content("")
+    rows = _result_status.format_depth_offer_rows(actions)
+    body = Text()
+    body.append(lead, style="dim")
+    click_ranges: list[tuple[int, int, str]] = []
+    for action_id, row in rows:
+        body.append("\n")
+        start = len(body)
+        body.append(f"▸ {row}")
+        click_ranges.append((start, len(body), action_id))
+    content = Content.from_rich_text(body)
+    for index, (start, end, action_id) in enumerate(click_ranges):
+        content = content.stylize(
+            Style.from_meta({DEPTH_OFFER_ACTION_META: action_id}),
+            start,
+            end,
+        )
+        if index == highlighted:
+            content = content.stylize(_DEPTH_OFFER_CURSOR_STYLE, start, end)
+    return content
+
+
+class DepthOffer(Static, can_focus=True):
+    """Selectable engine-authored depth choices on the idle welcome canvas.
+
+    Closes the pre-run gap in the effort ladder: without this the TUI could
+    only escalate a run that had already finished, so a session that opened
+    cold had no way to reach ``targeted`` at all. Selecting a row posts the
+    engine's ``action_id``; the layout applies the engine's own request patch
+    to whatever query the primary input currently holds.
+
+    Both pointers reach it: a click selects the row under the cursor, and the
+    panel joins the tab chain whenever it has a selectable rung, where up/down
+    move the cursor and enter or space chooses it.
+    """
+
+    ALLOW_SELECT = False
+
+    BINDINGS: t.ClassVar[list[BindingType]] = [
+        Binding("up,k", "cursor_up", "Up", show=False),
+        Binding("down,j", "cursor_down", "Down", show=False),
+        Binding("enter,space", "select_offer", "Choose depth"),
+    ]
+
+    highlighted: reactive[int] = reactive(0, init=False)
+    """Index of the selectable row carrying the keyboard cursor."""
+
+    #: Engine-authored escalations currently painted, and their selectable rows.
+    #: Both are replaced wholesale by :meth:`show_offer`.
+    _offered: tuple[NextAction, ...] = ()
+    _rows: tuple[tuple[str, str], ...] = ()
+
+    @_runtime.pump_only
+    def show_offer(self, actions: tuple[NextAction, ...]) -> None:
+        """Paint one engine-authored offer and rewind the keyboard cursor.
+
+        Parameters
+        ----------
+        actions : tuple[NextAction, ...]
+            Escalations offered for the request the primary input would submit.
+        """
+        self._offered = actions
+        self._rows = _result_status.format_depth_offer_rows(actions)
+        # An offer with nothing selectable — the top rung, or an explicit scope
+        # awaiting confirmation — must not become a dead stop in the tab chain.
+        self.can_focus = bool(self._rows)
+        self.set_reactive(DepthOffer.highlighted, 0)
+        self._repaint_offer()
+
+    def _repaint_offer(self) -> None:
+        """Repaint the panel, showing the cursor only while it holds focus.
+
+        Bounded string work over at most two engine-authored rows, so it is
+        safe on the pump (ADR 0011 NB-5).
+        """
+        self.update(
+            depth_offer_content(
+                self._offered,
+                highlighted=self.highlighted if self.has_focus else None,
+            ),
+        )
+
+    @_runtime.pump_only
+    def watch_highlighted(self) -> None:
+        """Repaint after the keyboard cursor moves to another rung."""
+        self._repaint_offer()
+
+    @_runtime.pump_only
+    def watch_has_focus(self, _has_focus: bool) -> None:
+        """Reveal the keyboard cursor while the panel holds focus, hide it after.
+
+        ``MessagePump`` walks the MRO subclass-first, so this class's own
+        ``Focus``/``Blur`` handlers would run before ``Widget._on_focus``
+        assigns ``has_focus`` — a repaint from there reads the state the panel
+        is leaving, not the one it is entering. The reactive watcher runs after
+        the assignment, so it is the only hook whose paint matches the flag
+        :meth:`_repaint_offer` reads.
+
+        Parameters
+        ----------
+        _has_focus : bool
+            Whether the panel now holds focus. Named to match Textual's own
+            watcher, whose CSS-state update this forwards to.
+        """
+        super().watch_has_focus(_has_focus)
+        self._repaint_offer()
+
+    @_runtime.pump_only
+    def action_cursor_down(self) -> None:
+        """Move the keyboard cursor to the next offered rung."""
+        self._move_cursor(1)
+
+    @_runtime.pump_only
+    def action_cursor_up(self) -> None:
+        """Move the keyboard cursor to the previous offered rung."""
+        self._move_cursor(-1)
+
+    def _move_cursor(self, delta: int) -> None:
+        """Wrap the keyboard cursor within the selectable rows."""
+        if len(self._rows) < 2:
+            return
+        self.highlighted = (self.highlighted + delta) % len(self._rows)
+
+    @_runtime.pump_only
+    def action_select_offer(self) -> None:
+        """Post the engine ``action_id`` under the keyboard cursor."""
+        if not 0 <= self.highlighted < len(self._rows):
+            return
+        self.post_message(DepthOfferSelected(self._rows[self.highlighted][0]))
+
+    @_runtime.pump_only
+    def on_click(self, event: events.Click) -> None:
+        """Post the engine ``action_id`` carried by the clicked row span."""
+        action_id = event.style.meta.get(DEPTH_OFFER_ACTION_META)
+        if type(action_id) is str:
+            event.stop()
+            self.post_message(DepthOfferSelected(action_id))

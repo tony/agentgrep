@@ -22,6 +22,7 @@ from agentgrep.progress import (
 from agentgrep.query import default_registry
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _history, _runtime, _streaming
+from agentgrep.ui._result_status import format_run_status
 from agentgrep.ui._source_diagnostics import (
     SourceScanFinished,
     SourceScanStarted,
@@ -48,10 +49,13 @@ from agentgrep.ui.widgets import (
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
+    from agentgrep.results import RunSummary
 
 
 class _HudSearchBase(_HudDetailInteractionBase):
     """Search and result-streaming base for the HUD layout."""
+
+    _query_error_active: bool = False
 
     def _start_search_worker(self, query: SearchQuery) -> None:
         """Reset chrome and spawn a new search worker for ``query``.
@@ -62,6 +66,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
         every debounced keystroke without piling up cancellations."
         """
         self.search_query = query
+        self._run_summary = None
         self._reset_search_chrome()
         # A search is starting — give the empty canvas its centered
         # "searching" moment; the first record batch collapses it to the
@@ -75,10 +80,21 @@ class _HudSearchBase(_HudDetailInteractionBase):
         if self._detail_row is not None:
             self._detail_row.begin()
         streaming = t.cast("StreamingAppLike", t.cast("object", self))
+        emit = self._search_emit
+        if emit is None:
+            return
+        # Bind the request on the pump. Reading these off ``self`` inside the
+        # worker would resolve them whenever the thread first runs, so a
+        # replacement landing in that window would hand the outgoing worker the
+        # incoming run's control — and the signal meant for it would reach
+        # nobody.
         streaming.run_worker(
-            self._run_search,
+            functools.partial(self._run_search, query, self.control, emit),
             name="search",
             group="search",
+            # Without this Textual titles the worker with repr(partial), which
+            # now expands the bound query's terms into the worker log.
+            description="run search",
             thread=True,
             exclusive=True,
         )
@@ -90,6 +106,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
         callers that replace or clear a running search must signal the
         old control first so the new worker starts with a clean slate.
         """
+        self._query_error_active = False
         self.control = SearchControl()
         self._filter_generation += 1
         self._records_generation += 1
@@ -189,6 +206,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
                 event.total,
                 event.elapsed,
                 str(event.error) if event.error else None,
+                event.summary,
             )
 
     @_runtime.pump_only
@@ -203,8 +221,13 @@ class _HudSearchBase(_HudDetailInteractionBase):
                 "t.Any",
                 self._search_input,
             ).has_class("-error"):
+                self._query_error_active = False
                 self._set_search_rule_state("")
             self._update_search_dropdown(value)
+            # The offer is derived from the live query, so an inline scope:
+            # predicate can retire a rung mid-edit. Repaint or the panel keeps
+            # claiming coverage the next Enter would not match.
+            self._refresh_depth_offer()
         elif input_id == "filter":
             self._update_filter_dropdown(value)
 
@@ -299,12 +322,26 @@ class _HudSearchBase(_HudDetailInteractionBase):
         target_input.focus()
 
     @_runtime.offload
-    def _run_search(self) -> None:
-        emit = self._search_emit
-        if emit is None:
-            return
+    def _run_search(
+        self,
+        query: SearchQuery,
+        control: SearchControl,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Run one search off the pump against the request bound when it started.
+
+        Parameters
+        ----------
+        query : SearchQuery
+            Request this worker owns, bound at spawn.
+        control : SearchControl
+            Cooperative-cancel flag this worker owns. Passed rather than read
+            from ``self`` so a replacement cannot swap it mid-flight.
+        emit : cabc.Callable[[object], None]
+            Generation-gated event sink for this run.
+        """
         try:
-            self._invoker.run(self.search_query, control=self.control, emit=emit)
+            self._invoker.run(query, control=control, emit=emit)
         except BaseException as exc:
             emit(
                 StreamingSearchFinished(
@@ -326,6 +363,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
         text = message.payload.text.strip()
         if self._dispatch_slash_text(text) is not None:
             return
+        self._remember_active_search_text(text)
         self._workflow.on_query(self, text)
 
     # --- WorkflowHost surface: the active workflow drives the layout here -----
@@ -333,16 +371,28 @@ class _HudSearchBase(_HudDetailInteractionBase):
         """Parse ``text`` into a query at the user's launch scope (host surface)."""
         return self._build_search_query(text)
 
+    @_runtime.pump_only
+    def show_query_error(self, message: str) -> None:
+        """Present a query error without replacing or dispatching the input."""
+        self._query_error_active = True
+        self._set_search_rule_state("error")
+        if self._search_input is not None:
+            self._search_input.focus()
+        self.notify(message, title="Invalid query", severity="error")
+
     def run_search(self, query: SearchQuery) -> None:
         """Reset the chrome and stream ``query`` through the engine (host surface)."""
+        self._query_error_active = False
         self._start_search_worker(query)
 
     def reset_view(self) -> None:
         """Return to the idle bare-canvas state without a search (host surface)."""
         self._reset_search_chrome()
         self._search_done = True
+        self._run_summary = None
         self._set_empty_state(empty=True)
         self.search_query = self._build_search_query("")
+        self._refresh_depth_offer()
 
     def record_history(self, text: str) -> None:
         """Persist ``text`` to the search-input history (host surface)."""
@@ -445,7 +495,13 @@ class _HudSearchBase(_HudDetailInteractionBase):
         # search's ``scope:``-widened "all" never feeds back as the base —
         # otherwise a follow-up query with no ``scope:`` predicate would
         # keep scanning conversations invisibly.
-        base = dataclasses.replace(self.search_query, scope=self._user_scope)
+        base = dataclasses.replace(
+            self.search_query,
+            scope=self._user_scope,
+            effort=self._user_effort,
+            scope_provenance=self._user_scope_provenance,
+            conversation_limit=self._user_conversation_limit,
+        )
         result = build_query_from_input(text, base, default_registry())
         if result.query is not None:
             return result.query
@@ -599,6 +655,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
         total: int,
         elapsed: float,
         error_message: str | None,
+        run_summary: RunSummary | None = None,
     ) -> None:
         r"""Freeze the header chrome — invoked via ``call_from_thread``.
 
@@ -610,6 +667,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
         # list; with none, keep the centered panel and freeze it into its
         # terminal state instead of revealing an empty list.
         self._search_done = True
+        self._run_summary = run_summary
         if self.all_records:
             self._set_results_view("results")
         elif self._searching_panel is not None:
@@ -619,11 +677,14 @@ class _HudSearchBase(_HudDetailInteractionBase):
                 total=total,
                 elapsed=elapsed,
                 message=error_message or "",
+                summary=run_summary,
             )
         else:
             self._set_results_view("results")
         if outcome == "error":
             summary = f"Search failed: {error_message}"
+        elif run_summary is not None:
+            summary = f"{format_run_status(run_summary)} in {elapsed:.1f}s"
         elif outcome == "interrupted":
             source_label = self._scanning_source_label()
             source_summary = f" while scanning source {source_label}" if source_label else ""
@@ -634,7 +695,8 @@ class _HudSearchBase(_HudDetailInteractionBase):
         # the ctrl+\ row while result navigation remains on the results rule.
         if self._filter_header is not None:
             self._filter_header.freeze(outcome, message=error_message or "")
-        self._set_search_rule_state(outcome)
+        if not self._query_error_active:
+            self._set_search_rule_state(outcome)
         detail = summary
         if self._detail_row is not None:
             detail = self._detail_row.freeze(summary, now=time.monotonic())

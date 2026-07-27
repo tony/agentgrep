@@ -20,7 +20,12 @@ from agentgrep.ui._context import UiContext
 if t.TYPE_CHECKING:
     from agentgrep._types import RunnableAppLike
     from agentgrep.progress import SearchControl
-    from agentgrep.records import SearchQuery, SearchScope
+    from agentgrep.records import (
+        SearchEffort,
+        SearchQuery,
+        SearchScope,
+        SearchScopeProvenance,
+    )
 
 __all__ = ["build_streaming_ui_app", "run_ui"]
 
@@ -36,6 +41,8 @@ def run_ui(
     control: SearchControl,
     initial_search_text: str | None = None,
     base_scope: SearchScope | None = None,
+    base_effort: SearchEffort | None = None,
+    base_scope_provenance: SearchScopeProvenance | None = None,
     layout: str = registry.DEFAULT_LAYOUT,
     workflow: str = registry.DEFAULT_WORKFLOW,
 ) -> None:
@@ -60,6 +67,12 @@ def run_ui(
     base_scope : SearchScope | None
         Scope used by later plain interactive queries. ``None`` preserves the
         launch query's scope.
+    base_effort : SearchEffort | None
+        Read policy used by later plain interactive queries. ``None`` preserves
+        the launch query's normalized policy.
+    base_scope_provenance : SearchScopeProvenance | None
+        Provenance restored with ``base_scope``. ``None`` preserves the launch
+        query's provenance.
     layout : str
         The layout to launch into (see :data:`agentgrep.ui.registry.LAYOUTS`).
     workflow : str
@@ -71,6 +84,8 @@ def run_ui(
         control=control,
         initial_search_text=initial_search_text,
         base_scope=base_scope,
+        base_effort=base_effort,
+        base_scope_provenance=base_scope_provenance,
         layout=layout,
         workflow=workflow,
         _offer_theme_setup=True,
@@ -85,6 +100,8 @@ def build_streaming_ui_app(
     control: SearchControl,
     initial_search_text: str | None = None,
     base_scope: SearchScope | None = None,
+    base_effort: SearchEffort | None = None,
+    base_scope_provenance: SearchScopeProvenance | None = None,
     layout: str = registry.DEFAULT_LAYOUT,
     workflow: str = registry.DEFAULT_WORKFLOW,
     _offer_theme_setup: bool = False,
@@ -112,6 +129,12 @@ def build_streaming_ui_app(
     base_scope : SearchScope | None
         Scope used by later plain interactive queries. ``None`` preserves the
         launch query's scope.
+    base_effort : SearchEffort | None
+        Read policy used by later plain interactive queries. ``None`` preserves
+        the launch query's normalized policy.
+    base_scope_provenance : SearchScopeProvenance | None
+        Provenance restored with ``base_scope``. ``None`` preserves the launch
+        query's provenance.
     layout : str
         The layout to launch into; validated against the registry.
     workflow : str
@@ -163,12 +186,28 @@ def build_streaming_ui_app(
         history_disabled = _history.history_disabled()
         if not history_disabled:
             history = tuple(_history.load_history(_history.history_path(home)))
+    resolved_base_scope = query.scope if base_scope is None else base_scope
+    resolved_base_scope_provenance = (
+        query.scope_provenance if base_scope_provenance is None else base_scope_provenance
+    )
+    resolved_base_effort = base_effort
+    if resolved_base_effort is None:
+        if query.effort is not None:
+            resolved_base_effort = query.effort
+        else:
+            resolved_base_effort = "exhaustive" if resolved_base_scope != "prompts" else "prompt"
+    resolved_base_conversation_limit = (
+        query.conversation_limit if resolved_base_effort == "targeted" else None
+    )
     ctx = UiContext(
         home=home,
         invoker=EngineSearchInvoker(home),
         query=query,
         control=control,
-        base_scope=query.scope if base_scope is None else base_scope,
+        base_scope=resolved_base_scope,
+        base_effort=resolved_base_effort,
+        base_scope_provenance=resolved_base_scope_provenance,
+        base_conversation_limit=resolved_base_conversation_limit,
         initial_search_text=initial_search_text,
         history=history,
         history_disabled=history_disabled,

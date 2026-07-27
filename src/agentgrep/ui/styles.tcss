@@ -556,6 +556,22 @@ Screen {
 #empty-lead {
     margin-bottom: 1;
 }
+/* Engine-authored depth offer: the pre-run half of the effort ladder. Its
+   rows are clickable, so it keeps the left alignment a selectable list wants
+   while the surrounding hint stays centered. */
+#empty-depth {
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    margin-top: 1;
+    text-align: left;
+}
+/* The depth panel is the idle canvas's only route into conversation coverage,
+   so a small terminal sheds its spacing rather than the affordance itself. */
+HudLayout.-compact-height #empty-depth,
+HudLayout.-compact-width #empty-depth {
+    margin-top: 0;
+}
 HudLayout.-compact-height #empty-welcome,
 HudLayout.-compact-width #empty-welcome {
     padding: 0 1;

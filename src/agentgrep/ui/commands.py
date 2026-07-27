@@ -59,6 +59,8 @@ class SlashCommand:
     accepts_args : bool
         Whether a typed remainder reaches ``run``. ``False`` makes dispatch reject the
         whole line when anything follows the token, rather than dropping it silently.
+    clears_input : bool
+        Whether successful dispatch clears the shared search input.
     """
 
     name: str
@@ -67,6 +69,7 @@ class SlashCommand:
     run: cabc.Callable[[t.Any, str], bool]
     argument_hint: str = ""
     accepts_args: bool = False
+    clears_input: bool = True
 
 
 def _run_clear(app: t.Any, args: str) -> bool:
@@ -90,6 +93,24 @@ def _run_help(app: t.Any, args: str) -> bool:
     lines = [f"{_command_label(cmd)} — {cmd.description}" for cmd in app.slash_commands]
     app.notify("\n".join(lines), title="Slash commands", timeout=10)
     return True
+
+
+def _run_deep(app: t.Any, args: str) -> bool:
+    """Escalate the active query to a bounded targeted conversation search.
+
+    ``args`` is an optional conversation count (``/deep 50``) bounding this one
+    request; an empty remainder keeps the engine's own targeted cap.
+    """
+    return bool(app.run_next_action("search.targeted", args))
+
+
+def _run_exhaustive(app: t.Any, args: str) -> bool:
+    """Escalate the active query to every readable conversation.
+
+    A remainder reaches the layout so a typed count is refused out loud rather
+    than searched as literal query text; this rung has nothing to bound.
+    """
+    return bool(app.run_next_action("search.exhaustive", args))
 
 
 def _run_keys(app: t.Any, args: str) -> bool:
@@ -138,7 +159,24 @@ def command_menu_label(command: SlashCommand) -> str:
 
 SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("clear", ("new", "reset"), "Clear search and results", _run_clear),
+    SlashCommand(
+        "deep",
+        (),
+        "Search selected conversations",
+        _run_deep,
+        "[count]",
+        accepts_args=True,
+        clears_input=False,
+    ),
     SlashCommand("exit", ("quit",), "Quit agentgrep", _run_exit),
+    SlashCommand(
+        "exhaustive",
+        ("all",),
+        "Search all readable conversations",
+        _run_exhaustive,
+        accepts_args=True,
+        clears_input=False,
+    ),
     SlashCommand("help", (), "List slash commands", _run_help),
     SlashCommand("keys", (), "Toggle key bindings help", _run_keys),
     SlashCommand("screenshot", (), "Save a clean screenshot", _run_screenshot),

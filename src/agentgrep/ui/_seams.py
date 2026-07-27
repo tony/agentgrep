@@ -97,11 +97,11 @@ class SearchInvoker(t.Protocol):
 class EngineSearchInvoker:
     """Concrete :class:`SearchInvoker` wrapping the headless search engine.
 
-    ``run_search_query`` has no ``emit`` parameter — streaming flows through a
-    :class:`~agentgrep.progress.StreamingSearchProgress` passed as ``progress``.
-    This adapter wraps ``emit`` in that reporter and owns the source-scan-cache
-    ``runtime``, created once and reused across searches so the explorer keeps a
-    single warm cache for the session.
+    The primary event stream owns terminal result evidence, while
+    :class:`~agentgrep.progress.StreamingSearchProgress` keeps the TUI's
+    high-frequency batching and source diagnostics. This adapter connects both
+    paths and owns the source-scan-cache ``runtime``, created once and reused
+    across searches so the explorer keeps a single warm cache for the session.
     """
 
     def __init__(self, home: pathlib.Path) -> None:
@@ -118,12 +118,13 @@ class EngineSearchInvoker:
         emit: cabc.Callable[[object], None],
     ) -> None:
         """Run ``query`` against the engine, forwarding events to ``emit``."""
-        from agentgrep._engine.orchestration import run_search_query
+        from agentgrep._engine.search import iter_search_events
 
-        run_search_query(
+        for _event in iter_search_events(
             self._home,
             query,
             progress=_UiStreamingSearchProgress(emit=emit),
             control=control,
             runtime=self._runtime,
-        )
+        ):
+            pass

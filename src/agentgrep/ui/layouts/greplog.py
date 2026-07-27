@@ -36,6 +36,10 @@ from agentgrep.progress import (
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui import _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
+from agentgrep.ui._result_status import (
+    format_next_action_hint,
+    format_run_status,
+)
 from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import LayoutScreen
@@ -43,6 +47,7 @@ from agentgrep.ui.widgets import CompletionDropdown, SearchInput, SearchRequeste
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
+    from agentgrep.results import RunSummary
     from agentgrep.ui.workflows import Workflow
 
 #: Bounded slice size for streaming log writes (NB-4), matching the HUD applier.
@@ -73,6 +78,9 @@ class GrepLogLayout(LayoutScreen):
         super().__init__(ctx, workflow)
         self.search_query = ctx.query
         self._user_scope = ctx.base_scope
+        self._user_effort = ctx.base_effort
+        self._user_scope_provenance = ctx.base_scope_provenance
+        self._user_conversation_limit = ctx.base_conversation_limit
         self.control = ctx.control
         self._records: list[SearchRecord] = []
         self._search_emit: cabc.Callable[[object], None] | None = None
@@ -168,6 +176,11 @@ class GrepLogLayout(LayoutScreen):
         source = getattr(event, "input", None)
         if getattr(source, "id", None) != "search":
             return
+        if self._search_input is not None and t.cast(
+            "t.Any",
+            self._search_input,
+        ).has_class("-error"):
+            t.cast("t.Any", self._search_input).remove_class("-error")
         value = str(getattr(event, "value", ""))
         if not self._update_command_completion(value):
             self._hide_command_completion()
@@ -183,6 +196,7 @@ class GrepLogLayout(LayoutScreen):
         text = message.payload.text.strip()
         if self._dispatch_slash_text(text) is not None:
             return
+        self._remember_active_search_text(text)
         self._workflow.on_query(self, text)
 
     def action_stop_search(self) -> None:
@@ -216,7 +230,13 @@ class GrepLogLayout(LayoutScreen):
 
         from agentgrep.query import build_query_from_input, default_registry
 
-        base = dataclasses.replace(self.search_query, scope=self._user_scope)
+        base = dataclasses.replace(
+            self.search_query,
+            scope=self._user_scope,
+            effort=self._user_effort,
+            scope_provenance=self._user_scope_provenance,
+            conversation_limit=self._user_conversation_limit,
+        )
         result = build_query_from_input(text, base, default_registry())
         if result.query is not None:
             return result.query
@@ -226,9 +246,19 @@ class GrepLogLayout(LayoutScreen):
             compiled=None,
         )
 
+    @_runtime.pump_only
+    def show_query_error(self, message: str) -> None:
+        """Present a query error without replacing or dispatching the input."""
+        if self._search_input is not None:
+            target = t.cast("t.Any", self._search_input)
+            target.add_class("-error")
+            target.focus()
+        self.notify(message, title="Invalid query", severity="error")
+
     def run_search(self, query: SearchQuery) -> None:
         """Clear the log and stream ``query`` into it (host surface)."""
         self.search_query = query
+        self._run_summary = None
         self.control = SearchControl()
         self._records = []
         self._filter_matcher = None
@@ -240,11 +270,18 @@ class GrepLogLayout(LayoutScreen):
             self._log.clear()
         if self._status is not None:
             self._status.update("searching…")
-        self._search_emit = self._make_gated_emit()
+        # Bumps the generation that discards a replaced run's late events.
+        emit = self._make_gated_emit()
+        # Bind the request on the pump. Reading these off ``self`` inside the
+        # worker would resolve them whenever the thread first runs, so a
+        # replacement landing in that window would hand the outgoing worker the
+        # incoming run's control — and the signal meant for it would reach
+        # nobody.
         self.run_worker(
-            self._run_search,
+            functools.partial(self._run_search, query, self.control, emit),
             name="search",
             group="search",
+            description="run search",
             thread=True,
             exclusive=True,
         )
@@ -311,6 +348,7 @@ class GrepLogLayout(LayoutScreen):
         self._filter_scanned_count = 0
         self._filter_scan_generation = None
         self._search_done = True
+        self._run_summary = None
         if self._log is not None:
             self._log.clear()
         if self._status is not None:
@@ -336,13 +374,26 @@ class GrepLogLayout(LayoutScreen):
         )
 
     @_runtime.offload
-    def _run_search(self) -> None:
-        """Run the grep off the pump, forwarding events to the gated emitter."""
-        emit = self._search_emit
-        if emit is None:
-            return
+    def _run_search(
+        self,
+        query: SearchQuery,
+        control: SearchControl,
+        emit: cabc.Callable[[object], None],
+    ) -> None:
+        """Run the grep off the pump against the request bound when it started.
+
+        Parameters
+        ----------
+        query : SearchQuery
+            Request this worker owns, bound at spawn.
+        control : SearchControl
+            Cooperative-cancel flag this worker owns. Passed rather than read
+            from ``self`` so a replacement cannot swap it mid-flight.
+        emit : cabc.Callable[[object], None]
+            Generation-gated event sink for this run.
+        """
         try:
-            self.context.invoker.run(self.search_query, control=self.control, emit=emit)
+            self.context.invoker.run(query, control=control, emit=emit)
         except BaseException as exc:
             emit(
                 StreamingSearchFinished(
@@ -383,6 +434,7 @@ class GrepLogLayout(LayoutScreen):
                 event.total,
                 event.elapsed,
                 str(event.error) if event.error else None,
+                event.summary,
             )
 
     @_runtime.pump_only
@@ -392,13 +444,20 @@ class GrepLogLayout(LayoutScreen):
         total: int,
         elapsed: float,
         error_message: str | None,
+        run_summary: RunSummary | None = None,
     ) -> None:
         """Freeze the status line with the grep outcome."""
         self._search_done = True
+        self._run_summary = run_summary
         if self._status is None:
             return
         if outcome == "error":
             self._status.update(f"grep failed: {error_message}")
+        elif run_summary is not None:
+            status = format_run_status(run_summary)
+            action_hint = format_next_action_hint(run_summary) if total == 0 else ""
+            suffix = f" · {action_hint}" if action_hint else ""
+            self._status.update(f"{status}{suffix} · {elapsed:.1f}s")
         elif outcome == "interrupted":
             self._status.update(f"stopped at {format_match_count(total)} in {elapsed:.1f}s")
         else:

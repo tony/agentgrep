@@ -39,6 +39,10 @@ class WorkflowHost(t.Protocol):
         """Parse ``text`` into a :class:`SearchQuery` at the layout's base scope."""
         ...
 
+    def show_query_error(self, message: str) -> None:
+        """Keep the input editable while presenting one bounded query error."""
+        ...
+
     def run_search(self, query: SearchQuery) -> None:
         """Reset the view and stream ``query`` through the engine seam."""
         ...

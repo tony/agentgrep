@@ -17,6 +17,11 @@ from textual.widgets import Static
 
 from agentgrep.progress import ProgressSnapshot, format_match_count
 from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._result_status import (
+    format_empty_evidence,
+    format_empty_outcome,
+    format_next_action_hint,
+)
 from agentgrep.ui._source_diagnostics import (
     SlowSourceDiagnostics,
     SourceScanFinished,
@@ -29,6 +34,9 @@ from agentgrep.ui.format import (
     phase_label,
     render_progress_meter,
 )
+
+if t.TYPE_CHECKING:
+    from agentgrep.results import RunSummary
 
 __all__ = [
     "FilterHeader",
@@ -632,6 +640,7 @@ class SearchingPanel(Static):
         self._error = ""
         self._frozen_total = 0
         self._frozen_elapsed: float | None = None
+        self._run_summary: RunSummary | None = None
         self._started_at = time.monotonic()
         self._c_accent = ""
         self._c_success = ""
@@ -665,6 +674,7 @@ class SearchingPanel(Static):
         self._matches = 0
         self._frozen_total = 0
         self._frozen_elapsed = None
+        self._run_summary = None
         self._started_at = time.monotonic()
         self.auto_refresh = 1.0 / self._FPS
         self.refresh()
@@ -684,12 +694,14 @@ class SearchingPanel(Static):
         total: int = 0,
         elapsed: float | None = None,
         message: str = "",
+        summary: RunSummary | None = None,
     ) -> None:
         """Lock the panel into its terminal state and stop the spinner timer."""
         self._outcome = outcome
         self._error = message if outcome == "error" else ""
         self._frozen_total = total
         self._frozen_elapsed = elapsed
+        self._run_summary = summary
         self._final_glyph = {"complete": "✓", "interrupted": "■", "error": "✗"}.get(
             outcome,
             "·",
@@ -756,12 +768,28 @@ class SearchingPanel(Static):
         text.append(glyph, style=hue or None)
         text.append(" ")
         if self._frozen_total <= 0 and self._outcome == "complete":
-            text.append("No matches", style=self._c_muted or None)
+            if self._run_summary is None:
+                empty_label = "No matches"
+                evidence = ""
+            else:
+                empty_label = format_empty_outcome(self._run_summary)
+                evidence = format_empty_evidence(self._run_summary)
+            text.append(empty_label, style=self._c_muted or None)
+            # Name the surface that was actually read. Without it an empty
+            # prompt-effort panel reads as a corpus-wide negative.
+            if evidence:
+                text.append("\n")
+                text.append(evidence, style=self._c_dim or None)
         else:
             prefix = "Stopped · " if self._outcome == "interrupted" else ""
             text.append(
                 f"{prefix}{format_match_count(self._frozen_total)}", style=self._c_muted or None
             )
+        if self._run_summary is not None:
+            action_hint = format_next_action_hint(self._run_summary)
+            if action_hint:
+                text.append("\n")
+                text.append(action_hint, style=self._c_dim or None)
         if self._frozen_elapsed is not None and self._frozen_elapsed >= 1:
             text.append("\n")
             text.append(format_elapsed_compact(self._frozen_elapsed), style=self._c_dim or None)
