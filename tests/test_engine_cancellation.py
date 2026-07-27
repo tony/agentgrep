@@ -106,3 +106,48 @@ def test_scan_source_task_drops_record_pulled_after_cancellation(
     assert result.records == records[:1]
     assert result.records_seen == 1
     assert result.matches_seen == 1
+    assert result.outcome == "bounded"
+    assert result.stop_reason == "answer_now"
+    assert result.error is None
+
+
+def test_pre_cancelled_source_does_not_open_its_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Avoid source I/O when cancellation is already visible."""
+    task = _source_task()
+    query = SearchQuery(
+        terms=("matching",),
+        scope="prompts",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+    calls = 0
+
+    def iter_records(
+        _task: SourceTask,
+        _query: SearchQuery,
+    ) -> cabc.Iterator[SearchRecord]:
+        nonlocal calls
+        calls += 1
+        yield _record(task.source, 1)
+
+    monkeypatch.setattr(scanning, "iter_source_task_records", iter_records)
+    control = SearchControl()
+    control.request_answer_now(reason="caller_cancelled")
+
+    result = scanning.scan_source_task(
+        query,
+        task,
+        index=1,
+        total=1,
+        control=control,
+    )
+
+    assert calls == 0
+    assert result.records == ()
+    assert result.outcome == "cancelled"
+    assert result.stop_reason == "caller_cancelled"
