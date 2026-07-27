@@ -395,18 +395,26 @@ Screen {
     width: 1fr;
     layout: vertical;
 }
-/* Narrow terminals stack the panes: results on top, detail below
-   (tig moves its diff view to the bottom on narrow screens). The
-   ``1fr``/``2fr`` units are per-axis, so the side-by-side width
-   rules above still hold; only the body's layout axis flips. */
+/* Narrow terminals stack the panes: results on top, detail below.
+   These height units are per-axis, so the side-by-side width rules
+   above still hold; only the body's layout axis flips.
+
+   Geometry follows tig's horizontal split, where `split-view-height`
+   sizes the *bottom* view at 67% and the list keeps the rest: once a
+   row is selected, the stacked layout is for reading it, and the list
+   above only has to keep the neighbours in sight. tig also floors both
+   views at MIN_VIEW_HEIGHT (4 rows) so a short terminal shrinks the
+   split instead of erasing a pane; `min-height` is that floor. */
 #body.-stacked {
     layout: vertical;
 }
 #body.-stacked > #results-column {
-    height: 2fr;
+    height: 1fr;
+    min-height: 4;
 }
 #body.-stacked > #detail-column {
-    height: 1fr;
+    height: 2fr;
+    min-height: 4;
 }
 /* Stacked detail stays closed until the user selects a row. */
 #detail-column.-collapsed {
