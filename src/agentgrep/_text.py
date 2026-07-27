@@ -316,6 +316,8 @@ CLI_DESCRIPTION = build_description(
             "search",
             (
                 "agentgrep search streaming parser",
+                "agentgrep search --deep migration",
+                "agentgrep search --exhaustive migration",
                 "agentgrep search --here deploy",
                 "agentgrep search 'ruff OR uv'",
                 "agentgrep search 'agent:codex migration'",
@@ -326,6 +328,8 @@ CLI_DESCRIPTION = build_description(
             "grep",
             (
                 "agentgrep grep bliss",
+                "agentgrep grep --deep TODO",
+                "agentgrep grep --exhaustive TODO",
                 "agentgrep grep -i 'serene bliss'",
                 "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep 'cwd:~/work/django-project deploy'",
@@ -346,7 +350,8 @@ CLI_DESCRIPTION = build_description(
             (
                 "agentgrep ui",
                 "agentgrep ui bliss",
-                "agentgrep search --only-here deploy --ui",
+                "agentgrep search --deep migration --ui",
+                "agentgrep search --exhaustive migration --ui",
             ),
         ),
     ),
@@ -369,8 +374,10 @@ FIND_DESCRIPTION = build_description(
 )
 UI_DESCRIPTION = build_description(
     """
-    Launch the interactive Textual explorer for browsing prompts and
-    history across all configured agents.
+    Launch the interactive Textual explorer over fast prompt-history stores.
+    After a search, use /deep for selected conversations or /exhaustive for
+    every readable conversation. The same depth is available at launch through
+    search --deep ... --ui and search --exhaustive ... --ui.
     """,
     (
         (
@@ -378,6 +385,8 @@ UI_DESCRIPTION = build_description(
             (
                 "agentgrep ui",
                 "agentgrep ui bliss",
+                "agentgrep search --deep migration --ui",
+                "agentgrep search --exhaustive migration --ui",
             ),
         ),
     ),
@@ -386,6 +395,10 @@ SEARCH_DESCRIPTION = build_description(
     """
     Smart search with relevance ranking, deduplication, and session grouping.
     Uses rapidfuzz for scoring — results sorted by match quality.
+
+    Fast by default: reads prompt-history stores only. ``--deep`` uses prompt
+    matches to select a bounded set of conversations; ``--exhaustive`` scans
+    every readable conversation backend.
 
     Terms accept a query language: bare terms are AND-combined substrings;
     compose with OR / NOT / ( ); quote "exact phrases"; filter by field
@@ -397,6 +410,8 @@ SEARCH_DESCRIPTION = build_description(
             None,
             (
                 "agentgrep search streaming parser",
+                "agentgrep search --deep migration",
+                "agentgrep search --exhaustive migration",
                 "agentgrep search --here deploy",
                 "agentgrep search --cwd ~/work/django-project deploy",
                 "agentgrep search --threshold 70 migration",
@@ -428,6 +443,10 @@ GREP_DESCRIPTION = build_description(
     matching, ``-i`` / ``-s`` to override case, ``--json`` for an
     rg-style event stream.
 
+    Fast by default: reads prompt-history stores only. ``--deep`` uses prompt
+    matches to select a bounded set of conversations; ``--exhaustive`` scans
+    every readable conversation backend.
+
     Patterns accept the same query language as ``search`` (field
     predicates, OR / NOT, "phrases"), but grep needs at least one text
     pattern to drive line-level matching.
@@ -437,6 +456,8 @@ GREP_DESCRIPTION = build_description(
             None,
             (
                 "agentgrep grep bliss",
+                "agentgrep grep --deep TODO",
+                "agentgrep grep --exhaustive TODO",
                 "agentgrep grep -i 'serene bliss'",
                 "agentgrep grep -F --scope conversations TODO",
                 "agentgrep grep --json design",

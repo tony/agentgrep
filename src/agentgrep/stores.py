@@ -37,10 +37,9 @@ class StoreFormat(enum.StrEnum):
 class StoreRole(enum.StrEnum):
     """Semantic role a store plays for the owning agent.
 
-    The role drives the default search policy decisions downstream adapters
-    make — chat transcripts are usually searched, app-state and cache stores
-    are usually not. The role itself is descriptive; the policy decision is
-    captured separately on each :class:`StoreDescriptor`.
+    Role narrows eligible stores by effort and scope. Fast prompt effort admits
+    prompt-history roles; exhaustive and broad scopes may add chat roles.
+    Coverage separately controls eligibility.
     """
 
     PRIMARY_CHAT = "primary_chat"
@@ -59,14 +58,10 @@ class StoreRole(enum.StrEnum):
 class StoreCoverage(enum.StrEnum):
     """How agentgrep treats a known store at runtime.
 
-    ``DEFAULT_SEARCH`` stores are opened by normal search and find flows.
-    ``INSPECTABLE`` stores are hidden from the default prompt scope but are
-    opt-in searchable: ``--scope conversations`` and ``--scope all`` open them,
-    and inventory tools list them. ``CATALOG_ONLY`` stores are never searched at
-    any scope — inventory tools list them and ``find`` enumerates the ones that
-    carry discovery specs, but their payloads are config, logs, caches, or
-    undecodable bytes rather than recall content. ``PRIVATE`` stores are
-    documented in the catalogue but intentionally not enumerated from disk.
+    ``DEFAULT_SEARCH`` stores are eligible without inventory opt-in; effort and
+    scope still gate their roles. ``INSPECTABLE`` stores may join exhaustive or
+    broad-scope search and explicit inventory. ``CATALOG_ONLY`` stores are never
+    searched. ``PRIVATE`` stores are not enumerated.
     """
 
     DEFAULT_SEARCH = "default_search"
@@ -196,7 +191,7 @@ class StoreDescriptor(pydantic.BaseModel):
     """Stable dotted identifier, e.g. ``claude.projects.session``."""
 
     role: StoreRole
-    """Semantic role; informs default search policy."""
+    """Semantic role used by effort and scope discovery."""
 
     format: StoreFormat
     """On-disk encoding."""
@@ -211,7 +206,7 @@ class StoreDescriptor(pydantic.BaseModel):
     """Per-platform path overrides keyed by ``"linux"``/``"darwin"``/``"win32"``."""
 
     coverage: StoreCoverage | None = None
-    """Explicit runtime coverage level, or ``None`` to infer from search policy."""
+    """Explicit search-eligibility tier, or ``None`` to infer it."""
 
     version_strategies: tuple[VersionDetectionStrategy, ...] = ()
     """Strategies runtime discovery may use to identify concrete source versions."""
@@ -241,9 +236,10 @@ class StoreDescriptor(pydantic.BaseModel):
     """Sibling ``store_id`` values this store overlaps with; explains how they differ."""
 
     search_by_default: bool | None = None
-    """Whether agentgrep should search this store by default.
+    """Legacy coverage hint.
 
-    ``None`` means the decision is deferred.
+    ``True`` infers ``DEFAULT_SEARCH`` when ``coverage`` is unset; otherwise
+    discovery availability determines the tier.
     """
 
     search_notes: str | None = None
@@ -276,11 +272,10 @@ SEARCHABLE_COVERAGE: frozenset[StoreCoverage] = frozenset(
 )
 """Coverage levels a search may open.
 
-``DEFAULT_SEARCH`` is the always-on surface; ``INSPECTABLE`` is the opt-in
-surface a non-default scope unlocks. ``CATALOG_ONLY`` rows stay out even though
-many of them carry discovery specs — the inventory-oriented
-``include_non_default=True`` flag admits those specs so ``find`` can enumerate
-them, so search has to re-narrow rather than inherit the flag's reach.
+``DEFAULT_SEARCH`` and ``INSPECTABLE`` are the only tiers search may open. Fast
+prompt effort admits prompt-history roles from the default tier. Exhaustive or
+broad scopes may add chat roles from either tier. Catalog-only rows remain
+inventory-only.
 """
 
 

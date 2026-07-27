@@ -67,6 +67,7 @@ def discover_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover all known parseable sources for the selected agents.
 
@@ -75,7 +76,9 @@ def discover_sources(
     ``"catalog"`` attaches low-cost catalog observations, and ``"shape"``
     inspects concrete source shape for inventory surfaces. ``store_roles``
     lets latency-sensitive search paths enumerate only the catalogue roles
-    that can satisfy a coarse query scope.
+    that can satisfy a coarse query scope. Generic callers retain the
+    conversation-content role fallback; search can disable it explicitly when
+    a prompt-only read policy must not enumerate app state.
     """
     discovered: list[SourceHandle] = []
     for agent in agents:
@@ -87,6 +90,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "claude":
@@ -97,6 +103,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "cursor-cli":
@@ -107,6 +116,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "cursor-ide":
@@ -117,6 +129,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "gemini":
@@ -127,6 +142,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "antigravity-cli":
@@ -137,6 +155,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "antigravity-ide":
@@ -147,6 +168,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "grok":
@@ -157,6 +181,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "pi":
@@ -167,6 +194,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "opencode":
@@ -177,6 +207,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
         elif agent == "vscode":
@@ -187,6 +220,9 @@ def discover_sources(
                     include_non_default=include_non_default,
                     version_detail=version_detail,
                     store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
                 ),
             )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
@@ -976,15 +1012,16 @@ def format_timestamp_tig(value: str | None) -> str:
 def descriptor_admits_store_roles(
     descriptor: StoreDescriptor,
     store_roles: DiscoveryStoreRoles,
+    *,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> bool:
     """Return whether a catalogue row can serve a role-narrowed discovery pass.
 
-    A row normally qualifies on its own ``role``. The exception is the
-    conversation surface: the app-state rows in
-    :data:`agentgrep.records.CONVERSATION_CONTENT_STORES` hold conversation
-    content, and a role check alone would leave them unreachable at every scope.
-    Admitting them here — coarsely, per descriptor, before any filesystem walk —
-    keeps the walk narrow; ``source_matches_scope`` narrows precisely afterwards.
+    A row normally qualifies on its own ``role``. Conversation-role passes
+    also admit the app-state rows in
+    :data:`agentgrep.records.CONVERSATION_CONTENT_STORES`, which hold
+    conversation content. Search discovery can disable that role-mismatch
+    fallback for deep prompt effort without changing the generic role filter.
 
     Parameters
     ----------
@@ -992,6 +1029,8 @@ def descriptor_admits_store_roles(
         The catalogue row being considered.
     store_roles : DiscoveryStoreRoles
         Roles the caller's scope can consume, or ``None`` for every role.
+    allow_conversation_content_role_fallback : bool
+        Whether conversation roles may admit allowlisted app-state stores.
 
     Returns
     -------
@@ -1002,6 +1041,8 @@ def descriptor_admits_store_roles(
         return True
     if descriptor.role in store_roles:
         return True
+    if not allow_conversation_content_role_fallback:
+        return False
     if not store_roles & CONVERSATION_STORE_ROLES:
         return False
     return any(spec.store in CONVERSATION_CONTENT_STORES for spec in descriptor.discovery)
@@ -1016,6 +1057,7 @@ def discover_from_catalog(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
 
@@ -1029,9 +1071,9 @@ def discover_from_catalog(
     never enumerated from disk. ``version_detail`` lets latency-sensitive
     callers skip source-version enrichment until a metadata-rich surface asks
     for it. ``store_roles`` restricts enumeration before any filesystem walk,
-    which lets search avoid stores its scope cannot consume — see
-    :func:`descriptor_admits_store_roles` for how the conversation surface still
-    reaches its allowlisted app-state rows.
+    which lets search avoid stores its scope cannot consume. The fallback flag
+    controls whether conversation roles can also reach allowlisted app-state
+    rows; see :func:`descriptor_admits_store_roles`.
     """
     from agentgrep.store_catalog import CATALOG
 
@@ -1052,7 +1094,11 @@ def discover_from_catalog(
         coverage = descriptor.coverage_level
         if coverage is StoreCoverage.PRIVATE:
             continue
-        if not descriptor_admits_store_roles(descriptor, store_roles):
+        if not descriptor_admits_store_roles(
+            descriptor,
+            store_roles,
+            allow_conversation_content_role_fallback=(allow_conversation_content_role_fallback),
+        ):
             continue
         if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
             continue
@@ -1104,6 +1150,7 @@ def discover_codex_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Codex sessions and command history.
 
@@ -1128,6 +1175,7 @@ def discover_codex_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1138,6 +1186,7 @@ def discover_claude_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Claude Code project session files.
 
@@ -1159,6 +1208,7 @@ def discover_claude_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1169,6 +1219,7 @@ def discover_cursor_cli_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Cursor CLI (``cursor-agent``) sources.
 
@@ -1185,6 +1236,7 @@ def discover_cursor_cli_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1230,6 +1282,7 @@ def discover_cursor_ide_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Cursor IDE (desktop app) sources.
 
@@ -1255,6 +1308,7 @@ def discover_cursor_ide_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1265,6 +1319,7 @@ def discover_gemini_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Gemini CLI sessions and prompt logs.
 
@@ -1284,6 +1339,7 @@ def discover_gemini_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1294,6 +1350,7 @@ def discover_antigravity_cli_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Google Antigravity CLI stores under ``~/.gemini``."""
     base = home / ".gemini" / "antigravity-cli"
@@ -1307,6 +1364,7 @@ def discover_antigravity_cli_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1317,6 +1375,7 @@ def discover_antigravity_ide_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Google Antigravity IDE stores under ``~/.gemini``."""
     base = home / ".gemini" / "antigravity"
@@ -1330,6 +1389,7 @@ def discover_antigravity_ide_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1340,6 +1400,7 @@ def discover_grok_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover Grok CLI sessions and prompt history.
 
@@ -1359,6 +1420,7 @@ def discover_grok_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1369,6 +1431,7 @@ def discover_pi_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover pi (earendil-works/pi) session transcripts.
 
@@ -1402,6 +1465,7 @@ def discover_pi_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1412,6 +1476,7 @@ def discover_opencode_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover OpenCode (anomalyco/opencode) SQLite databases.
 
@@ -1438,7 +1503,11 @@ def discover_opencode_sources(
             from agentgrep.store_catalog import CATALOG
 
             descriptor = CATALOG.by_id("opencode.db")
-            if store_roles is not None and descriptor.role not in store_roles:
+            if not descriptor_admits_store_roles(
+                descriptor,
+                store_roles,
+                allow_conversation_content_role_fallback=(allow_conversation_content_role_fallback),
+            ):
                 return []
             handle = SourceHandle(
                 agent="opencode",
@@ -1474,6 +1543,7 @@ def discover_opencode_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
 
 
@@ -1533,6 +1603,7 @@ def discover_vscode_sources(
     include_non_default: bool = False,
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
     """Discover VS Code (GitHub Copilot Chat) sources.
 
@@ -1560,4 +1631,5 @@ def discover_vscode_sources(
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )

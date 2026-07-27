@@ -339,16 +339,32 @@ from agentgrep.records import (
     RawJsonlSkipLine,
     RecordOrigin,
     RecordOriginPayload,
+    SearchEffort,
     SearchMatchSurface,
     SearchQuery,
     SearchRecord,
     SearchRecordPayload,
     SearchScope,
+    SearchScopeProvenance,
     SourceHandle,
     SourceHandlePayload,
+    SourceScanOutcome,
     SourceVersionDetection,
     SourceVersionDetectionPayload,
     SummaryRow,
+)
+from agentgrep.results import (
+    NextAction,
+    NormalizedSearchRequest,
+    RunCoverage,
+    RunDiagnostic,
+    RunState,
+    RunStatus,
+    RunSummary,
+    SearchOutcome,
+    SearchRequestPatch,
+    SearchResult,
+    apply_search_request_patch,
 )
 from agentgrep.stores import (
     DiscoverySpec,
@@ -383,6 +399,8 @@ def run_ui(
     control: SearchControl,
     initial_search_text: str | None = None,
     base_scope: SearchScope | None = None,
+    base_effort: SearchEffort | None = None,
+    base_scope_provenance: SearchScopeProvenance | None = None,
     layout: str | None = None,
     workflow: str | None = None,
 ) -> None:
@@ -401,7 +419,9 @@ def run_ui(
 
     ``base_scope`` preserves the discovery scope that later interactive
     queries without a ``scope:`` predicate return to. ``None`` uses the
-    effective launch-query scope.
+    effective launch-query scope. ``base_effort`` does the same for the
+    prompt/exhaustive read policy. ``base_scope_provenance`` preserves
+    whether that stable scope was explicitly selected.
     """
     from agentgrep.ui import registry as ui_registry
     from agentgrep.ui.app import run_ui as _run_ui
@@ -412,6 +432,8 @@ def run_ui(
         control=control,
         initial_search_text=initial_search_text,
         base_scope=base_scope,
+        base_effort=base_effort,
+        base_scope_provenance=base_scope_provenance,
         layout=ui_registry.DEFAULT_LAYOUT if layout is None else layout,
         workflow=ui_registry.DEFAULT_WORKFLOW if workflow is None else workflow,
     )
@@ -424,6 +446,8 @@ def build_streaming_ui_app(
     control: SearchControl,
     initial_search_text: str | None = None,
     base_scope: SearchScope | None = None,
+    base_effort: SearchEffort | None = None,
+    base_scope_provenance: SearchScopeProvenance | None = None,
     layout: str | None = None,
     workflow: str | None = None,
 ) -> object:
@@ -443,6 +467,8 @@ def build_streaming_ui_app(
         control=control,
         initial_search_text=initial_search_text,
         base_scope=base_scope,
+        base_effort=base_effort,
+        base_scope_provenance=base_scope_provenance,
         layout=ui_registry.DEFAULT_LAYOUT if layout is None else layout,
         workflow=ui_registry.DEFAULT_WORKFLOW if workflow is None else workflow,
     )
@@ -489,6 +515,7 @@ from agentgrep._engine import (  # noqa: E402  (re-exports must follow main defi
     aiter_search_events,
     iter_find_events,
     iter_search_events,
+    run_search_result,
 )
 from agentgrep._engine.orchestration import (  # noqa: E402  (re-exports must follow main definition)
     _source_profile_attributes,
@@ -630,7 +657,9 @@ __all__ = (
     "JSONValue",
     "KeyValueRow",
     "MessageCandidate",
+    "NextAction",
     "NoopSearchProgress",
+    "NormalizedSearchRequest",
     "OutputMode",
     "ParserBundle",
     "PathKind",
@@ -646,25 +675,36 @@ __all__ = (
     "RecordOriginPayload",
     "RecordsAppendedPayload",
     "RichTextModule",
+    "RunCoverage",
+    "RunDiagnostic",
+    "RunState",
+    "RunStatus",
+    "RunSummary",
     "RunnableAppLike",
     "SearchArgs",
     "SearchColors",
     "SearchControl",
+    "SearchEffort",
     "SearchFinishedPayload",
     "SearchMatchSurface",
+    "SearchOutcome",
     "SearchProgress",
     "SearchQuery",
     "SearchRecord",
     "SearchRecordPayload",
+    "SearchRequestPatch",
     "SearchRequestedPayload",
+    "SearchResult",
     "SearchRuntime",
     "SearchScope",
+    "SearchScopeProvenance",
     "SourceHandle",
     "SourceHandlePayload",
     "SourceKind",
     "SourceProgressCallback",
     "SourceScanCache",
     "SourceScanCacheStats",
+    "SourceScanOutcome",
     "SourceVersionDetection",
     "SourceVersionDetectionPayload",
     "StaticLike",
@@ -688,6 +728,7 @@ __all__ = (
     "add_common_agent_options",
     "add_output_mode_options",
     "aiter_search_events",
+    "apply_search_request_patch",
     "as_optional_str",
     "build_description",
     "build_discovery_version_context",
@@ -839,6 +880,7 @@ __all__ = (
     "run_readonly_command",
     "run_search_command",
     "run_search_query",
+    "run_search_result",
     "run_ui",
     "run_ui_command",
     "search_record_sort_key",
