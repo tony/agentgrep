@@ -56,6 +56,7 @@ CatalogAgentSelector = t.Literal[
     "all",
 ]
 SearchScopeName = t.Literal["prompts", "conversations", "all"]
+SearchEffortName = t.Literal["prompt", "targeted", "exhaustive"]
 
 SERVER_VERSION = "0.1.0"
 KNOWN_ADAPTERS: tuple[str, ...] = (
@@ -220,6 +221,9 @@ class SearchQueryFactory(t.Protocol):
         case_sensitive: bool,
         agents: tuple[str, ...],
         limit: int | None,
+        effort: str | None = None,
+        scope_provenance: str = "inferred",
+        conversation_limit: int | None = None,
     ) -> object: ...
 
 
@@ -241,6 +245,12 @@ class AgentGrepModule(t.Protocol):
     def parse_agents(self, values: list[str]) -> tuple[str, ...]: ...
 
     def select_backends(self) -> BackendSelectionLike: ...
+
+    def store_role_for_record(
+        self,
+        store: str,
+        adapter_id: str,
+    ) -> str | None: ...
 
     def discover_sources(
         self,

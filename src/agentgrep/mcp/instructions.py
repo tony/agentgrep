@@ -37,18 +37,22 @@ _INSTR_SCOPE = (
 )
 
 _INSTR_SEARCH_VS_DISCOVERY = (
-    "search vs discovery: search() finds matching prompt-scope text by default; "
-    "pass scope='conversations' to opt into full conversation records. find() "
+    "search vs discovery: search() reads fast prompt-history stores by default; "
+    "set effort='targeted' for a bounded approximate conversation search, or "
+    "effort='exhaustive' for every eligible readable conversation. Scope controls "
+    "returned record kinds. find() "
     "enumerates the on-disk stores agentgrep can read. Use the agentgrep://capabilities "
-    "and agentgrep://sources resources to inspect the server's catalog before "
-    "deciding which stores are worth searching."
+    "and agentgrep://sources resources to inspect the server's catalog before deciding "
+    "which stores are worth searching."
 )
 
 _INSTR_DEFAULTS = (
     "Defaults: results are newest-first and deduplicated by session. "
-    "search AND-matches bare terms as substrings and scope='prompts'. "
-    "Read status, stats, and page.next_cursor on search/find responses; pass "
-    "the cursor back for the next page."
+    "search AND-matches bare terms as substrings with prompt effort. "
+    "Read status, stats, coverage, diagnostics, and next_actions on search "
+    "responses. Search is cursorless: a bounded result_limit means more "
+    "matches may exist, so refine the query or rerun with a higher limit. "
+    "Find remains paginated; pass page.next_cursor back as cursor."
 )
 
 _INSTR_QUERY = (

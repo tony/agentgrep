@@ -43,8 +43,12 @@ if t.TYPE_CHECKING:
 def _page_status(next_cursor: str | None) -> RunStatusModel:
     """Return the status for a normal MCP result page."""
     if next_cursor is None:
-        return RunStatusModel(state="complete")
-    return RunStatusModel(state="bounded", reason="page_limit")
+        return RunStatusModel(state="complete", reason=None, conditions=[])
+    return RunStatusModel(
+        state="bounded",
+        reason="page_limit",
+        conditions=["page_limit"],
+    )
 
 
 def _page_diagnostics(next_cursor: str | None) -> list[DiagnosticModel]:
@@ -55,6 +59,7 @@ def _page_diagnostics(next_cursor: str | None) -> list[DiagnosticModel]:
         DiagnosticModel(
             code="page_limit",
             message="More records are available via page.next_cursor.",
+            severity="info",
         )
     ]
 

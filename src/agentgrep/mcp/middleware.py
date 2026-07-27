@@ -1,8 +1,8 @@
 """FastMCP middleware for the ``agentgrep`` server.
 
-Holds the server's response-limiting and structured audit middleware. FastMCP's
-own timing and error-handling middleware are wired alongside them from
-:mod:`agentgrep.mcp.server`.
+Holds the server's validation, response-limiting, and structured audit
+middleware. FastMCP's own timing and generic error-handling middleware are
+wired alongside them from :mod:`agentgrep.mcp.server`.
 """
 
 from __future__ import annotations
@@ -12,9 +12,23 @@ import logging
 import time
 import typing as t
 
-from fastmcp.server.middleware import Middleware, MiddlewareContext
+import mcp.types as mt
+import pydantic
+import pydantic_core
+from fastmcp.exceptions import (
+    ToolError,
+    ValidationError as FastMCPValidationError,
+)
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.tools.base import ToolResult
+from mcp import McpError
+
+if t.TYPE_CHECKING:
+    from agentgrep.mcp.models import SearchToolResponse
+
+TOOL_ARGUMENT_NAMES_STATE_KEY = "agentgrep.tool_argument_names"
+"""Request-local FastMCP state key for caller-supplied tool argument names."""
 
 _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
     {"terms", "pattern", "sample_text", "cursor"},
@@ -22,20 +36,134 @@ _SENSITIVE_ARG_NAMES: frozenset[str] = frozenset(
 """Tool argument names whose values get redacted before logging.
 
 ``terms`` and ``pattern`` can carry user secrets when an agent searches its
-own history for tokens; page ``cursor`` values encode those same inputs;
-``sample_text`` is the validate-query payload and may contain anything the
-caller pastes in.
+own history for tokens; find-page ``cursor`` values encode the original
+pattern; ``sample_text`` is the validate-query payload and may contain
+anything the caller pastes in.
 """
 
 _MAX_LOGGED_STR_LEN: int = 200
+_MAX_VALIDATION_ISSUES: int = 3
+_MAX_VALIDATION_DETAIL_LEN: int = 160
+_FASTMCP_SERVER_LOGGER_NAME = "fastmcp.server.server"
+_FASTMCP_INVALID_ARGUMENTS_MESSAGE = "Invalid arguments for tool %r: %s"
+
+
+class _FastMCPValidationLogFilter(logging.Filter):
+    """Redact FastMCP's pre-middleware argument-validation warning."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Replace raw validation details while retaining the warning."""
+        if (
+            record.name == _FASTMCP_SERVER_LOGGER_NAME
+            and record.msg == _FASTMCP_INVALID_ARGUMENTS_MESSAGE
+        ):
+            arguments = record.args
+            if isinstance(arguments, tuple) and len(arguments) == 2:
+                record.args = (
+                    arguments[0],
+                    "[validation details redacted]",
+                )
+            else:
+                record.msg = "Invalid tool arguments [validation details redacted]"
+                record.args = ()
+        return True
+
+
+_FASTMCP_VALIDATION_LOG_FILTER = _FastMCPValidationLogFilter()
+
+
+def _install_fastmcp_validation_log_redaction() -> None:
+    """Install the narrow FastMCP validation-warning filter once per process."""
+    logging.getLogger(_FASTMCP_SERVER_LOGGER_NAME).addFilter(
+        _FASTMCP_VALIDATION_LOG_FILTER,
+    )
+
+
+def _validation_error_detail(error: FastMCPValidationError) -> str:
+    """Return a bounded, input-free description of argument validation.
+
+    Parameters
+    ----------
+    error : FastMCPValidationError
+        FastMCP's argument-validation wrapper.
+
+    Returns
+    -------
+    str
+        Concise field paths and messages without model names, input
+        representations, or Pydantic documentation URLs.
+    """
+    cause = error.__cause__
+    if not isinstance(cause, pydantic.ValidationError):
+        return "tool arguments failed validation"
+    issues = cause.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    )
+    details: list[str] = []
+    for issue in issues[:_MAX_VALIDATION_ISSUES]:
+        location = ".".join(str(part) for part in issue.get("loc", ()))
+        message = str(issue.get("msg", "invalid value"))
+        detail = f"{location}: {message}" if location else message
+        details.append(detail[:_MAX_VALIDATION_DETAIL_LEN])
+    remaining = len(issues) - len(details)
+    if remaining > 0:
+        details.append(f"{remaining} more validation errors")
+    return "; ".join(details) if details else "tool arguments failed validation"
+
+
+class AgentgrepValidationErrorMiddleware(Middleware):
+    """Preserve invalid-params errors across FastMCP's tool adapter."""
+
+    async def on_message(
+        self,
+        context: MiddlewareContext[t.Any],
+        call_next: CallNext[t.Any, t.Any],
+    ) -> t.Any:
+        """Preserve client errors before generic error handling."""
+        try:
+            return await call_next(context)
+        except FastMCPValidationError as error:
+            detail = _validation_error_detail(error)
+            raise McpError(
+                mt.ErrorData(
+                    code=mt.INVALID_PARAMS,
+                    message=f"Invalid params: {detail}",
+                ),
+            ) from error
+        except ToolError as error:
+            cause = error.__cause__
+            if isinstance(cause, McpError):
+                raise cause from error
+            raise
+
+
+class AgentgrepArgumentPresenceMiddleware(Middleware):
+    """Preserve caller-supplied search argument names before default injection."""
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        """Store raw search argument presence in request-local context state."""
+        if context.fastmcp_context is not None and context.message.name == "search":
+            await context.fastmcp_context.set_state(
+                TOOL_ARGUMENT_NAMES_STATE_KEY,
+                frozenset((context.message.arguments or {}).keys()),
+                serializable=False,
+            )
+        return await call_next(context)
 
 
 class AgentgrepResponseLimitingMiddleware(ResponseLimitingMiddleware):
-    """Mark truncated tool results as MCP errors.
+    """Preserve bounded search envelopes and fail closed for generic truncation.
 
-    Truncation removes structured content, so a successful result would no
-    longer satisfy the tool's advertised output schema. Error results preserve
-    the bounded text and metadata without triggering output-schema validation.
+    Search results lose whole trailing records and retain structured lifecycle
+    evidence. Other oversized results, or a search envelope that cannot fit
+    even without records, become bounded MCP errors because FastMCP's generic
+    truncation removes structured content.
     """
 
     def _truncate_to_result(
@@ -43,12 +171,175 @@ class AgentgrepResponseLimitingMiddleware(ResponseLimitingMiddleware):
         text: str,
         meta: dict[str, t.Any] | None = None,
     ) -> ToolResult:
-        truncated = super()._truncate_to_result(text, meta)
-        return ToolResult(
-            content=truncated.content,
-            meta=truncated.meta,
-            is_error=True,
+        """Return the largest UTF-8-safe error payload within ``max_size``."""
+
+        def error_result(content: str) -> ToolResult:
+            return ToolResult(
+                content=[mt.TextContent(type="text", text=content)],
+                meta=meta,
+                is_error=True,
+            )
+
+        suffix = self.truncation_suffix
+        if _tool_result_size(error_result(suffix)) <= self.max_size:
+            low = 0
+            high = len(text)
+            best = error_result(suffix)
+            while low <= high:
+                midpoint = (low + high) // 2
+                current = error_result(text[:midpoint] + suffix)
+                if _tool_result_size(current) <= self.max_size:
+                    best = current
+                    low = midpoint + 1
+                else:
+                    high = midpoint - 1
+            return best
+
+        marker = error_result("[truncated]")
+        if _tool_result_size(marker) <= self.max_size:
+            return marker
+        empty_text = error_result("")
+        if _tool_result_size(empty_text) <= self.max_size:
+            return empty_text
+        empty_content = ToolResult(content=[], meta=meta, is_error=True)
+        if _tool_result_size(empty_content) <= self.max_size:
+            return empty_content
+        return ToolResult(content=[], is_error=True)
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        """Fit search records semantically before the generic text fallback."""
+        result = await call_next(context)
+        if self.tools is not None and context.message.name not in self.tools:
+            return result
+        if _tool_result_size(result) <= self.max_size:
+            return result
+        if context.message.name == "search":
+            fitted = _fit_search_tool_result(result, max_size=self.max_size)
+            if fitted is not None:
+                return fitted
+
+        async def replay_result(
+            context: MiddlewareContext[mt.CallToolRequestParams],
+        ) -> ToolResult:
+            _ = context
+            return result
+
+        return await super().on_call_tool(context, replay_result)
+
+
+def _tool_result_size(result: ToolResult) -> int:
+    """Return the exact serialized size enforced by FastMCP."""
+    return len(pydantic_core.to_json(result, fallback=str))
+
+
+def _truncated_search_response(
+    response: SearchToolResponse,
+    *,
+    result_count: int,
+) -> SearchToolResponse:
+    """Return one schema-valid response containing a whole-record prefix."""
+    from agentgrep.mcp.models import DiagnosticModel, RunStatusModel
+
+    conditions = _insert_response_truncation(response.status.conditions)
+    if response.status.state in {"failed", "cancelled"}:
+        status = response.status.model_copy(update={"conditions": conditions})
+    else:
+        status = RunStatusModel(
+            state="truncated",
+            reason="response_truncated",
+            conditions=conditions,
         )
+    diagnostics = list(response.diagnostics)
+    if not any(item.code == "response_truncated" for item in diagnostics):
+        diagnostics.append(
+            DiagnosticModel(
+                code="response_truncated",
+                message=("Some matching records were omitted to fit the MCP response budget."),
+                severity="warning",
+            ),
+        )
+    return response.model_copy(
+        update={
+            "effort": response.effort.model_copy(update={"completed": None}),
+            "outcome": "undetermined",
+            "page": response.page.model_copy(update={"count": result_count}),
+            "status": status,
+            "diagnostics": diagnostics,
+            "stats": response.stats.model_copy(update={"emitted": result_count}),
+            "results": response.results[:result_count],
+        },
+    )
+
+
+def _insert_response_truncation(conditions: list[str]) -> list[str]:
+    """Insert sink truncation at the engine's stable precedence position."""
+    ordered = list(conditions)
+    if "response_truncated" in ordered:
+        return ordered
+    higher_precedence = {
+        "unsupported_source",
+        "source_failure",
+        "engine_failure",
+        "cancelled",
+    }
+    insert_at = 0
+    while insert_at < len(ordered) and ordered[insert_at] in higher_precedence:
+        insert_at += 1
+    ordered.insert(insert_at, "response_truncated")
+    return ordered
+
+
+def _search_tool_result(
+    response: SearchToolResponse,
+    *,
+    meta: dict[str, t.Any] | None,
+) -> ToolResult:
+    """Build the exact FastMCP representation used for byte fitting."""
+    return ToolResult(
+        content=[mt.TextContent(type="text", text=response.model_dump_json())],
+        structured_content=response.model_dump(mode="json"),
+        meta=meta,
+    )
+
+
+def _fit_search_tool_result(
+    result: ToolResult,
+    *,
+    max_size: int,
+) -> ToolResult | None:
+    """Return the largest whole-record search prefix within ``max_size``."""
+    from agentgrep.mcp.models import SearchToolResponse
+
+    if result.is_error or result.structured_content is None:
+        return None
+    try:
+        response = SearchToolResponse.model_validate(result.structured_content)
+    except ValueError:
+        return None
+
+    def candidate(count: int) -> ToolResult:
+        truncated = _truncated_search_response(response, result_count=count)
+        return _search_tool_result(truncated, meta=result.meta)
+
+    zero = candidate(0)
+    if _tool_result_size(zero) > max_size:
+        return None
+    low = 0
+    high = len(response.results)
+    best = zero
+    while low <= high:
+        midpoint = (low + high) // 2
+        current = candidate(midpoint)
+        if _tool_result_size(current) <= max_size:
+            best = current
+            low = midpoint + 1
+        else:
+            high = midpoint - 1
+    return best
 
 
 def _redact_digest(value: str) -> dict[str, t.Any]:

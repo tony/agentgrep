@@ -226,7 +226,7 @@ def register(mcp: FastMCP) -> None:
             bool,
             Field(
                 default=False,
-                description="Return only stores that are searched by default.",
+                description="Return only stores in the default-search eligibility tier.",
             ),
         ] = False,
     ) -> ListStoresResponse:
