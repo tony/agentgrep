@@ -36,11 +36,26 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a44 (Yet to be released)
+## agentgrep 0.1.0a45 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a44 (2026-07-27)
+
+agentgrep 0.1.0a44 gives every search an explicit depth. `search` and `grep`
+read fast prompt history by default, `--deep` adds a bounded set of
+conversations selected from matching prompt evidence, and `--exhaustive` reads
+every eligible conversation backend; MCP {tooliconl}`search` and the Textual
+explorer offer the same three levels, and the explorer's idle canvas lists the
+rungs available for the query you have typed. Results now report how complete
+they are — exact, bounded, or approximate — which sources they covered, and
+what to run next, so a shallow miss reads as one rung's miss rather than an
+empty corpus. Two surfaces that used to reach conversations implicitly now ask
+for the rung instead: MCP search cursors are gone in favor of one ordered
+response capped by `limit`, and the transcript-only agents leave the default
+search. See {ref}`cli-search` for details.
 
 ### Breaking changes
 
