@@ -7,6 +7,9 @@ The `cursor-agent` terminal CLI, modelled as its own backend
 data spans two home directories: the original `~/.cursor/` tree
 (transcripts, plans, AI-tracking) and the newer lowercase
 `~/.config/cursor/` tree (prompt history and chat `store.db` blobs).
+The prompt-history adapter does not yet provide a proof-bound
+prompt-to-conversation locator, so `--deep` cannot select Cursor CLI
+transcripts; use `--exhaustive` for conversation coverage.
 
 ## Stores
 

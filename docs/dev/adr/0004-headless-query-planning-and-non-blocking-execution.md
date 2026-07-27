@@ -193,9 +193,11 @@ then expose that state through the frontend result payload.
   `bounded`
   : The run intentionally stopped at a documented semantic bound, such as a
     requested result/page limit, source-local bounded scan, answer-now request,
-    or configured result cap. A normal paginated response that emits a complete
-    page and a usable `next_cursor` is `bounded`, not `truncated`. More records
-    may exist outside the examined bound.
+    or configured result cap. A normal paginated discovery response that emits
+    a complete page and a usable `next_cursor` is `bounded`, not `truncated`.
+    A cursorless search capped at `limit` is also `bounded` when lookahead
+    proves another ordered match. More records may exist outside the examined
+    bound.
 
   `truncated`
   : The sink stopped emitting because of an output budget, byte budget, tool
@@ -220,25 +222,20 @@ then expose that state through the frontend result payload.
 `RunStatus` values are compatibility-sensitive. Additive values require tests
 for every sink that renders or serializes run status.
 
-### Reachability today
-
-Only `complete` and `bounded` have a producer. The rest are declared in the MCP
-`RunStatusModel` literal but no code path constructs them, so a caller cannot
-learn from the payload that a run was cut short, cancelled, approximated, or
-failed. A state with no producer is a promise the payload cannot keep, so each
-one below names the layer that owes it.
+### Reachability
 
 | State | Producer today | Owed by |
 | --- | --- | --- |
-| `complete` | `_page_status`, in the MCP search and discovery tool modules, when a page has no `next_cursor` | — |
-| `bounded` | the same helpers, with `reason="page_limit"`, when a page has a `next_cursor` | — |
-| `truncated` | none | the sinks that own an output budget: MCP response limits, and the JSON/NDJSON writers |
-| `cancelled` | none | the execution driver's cancellation path (`SearchControl`), surfaced through the collectors |
-| `approximate` | none | the planner, wherever mtime-as-recency or a bounded newest-first scan is used (see {ref}`adr-result-order-limit-and-streaming-merge`, OL-1) |
-| `failed` | none | the collectors, on an unrecovered source or run error |
+| `complete` | the engine terminal-summary builder after full planned coverage | — |
+| `bounded` | engine result lookahead, source bounds, and answer-now; discovery pagination adds its page-local bound | — |
+| `truncated` | the MCP response-limit sink when it omits whole search records | any future CLI JSON/NDJSON byte budget |
+| `cancelled` | the engine collector from `SearchControl` terminal evidence | — |
+| `approximate` | the engine summary for targeted effort or another declared approximation | — |
+| `failed` | the engine collector on source, adapter, or execution failure | — |
 
-The CLI JSON and NDJSON payloads carry no run status at all yet; only the MCP
-tool responses do.
+CLI JSON and NDJSON summaries and MCP search responses serialize the same
+engine-owned lifecycle vocabulary. A sink may add only evidence it owns, such
+as MCP response truncation.
 
 ### Result payload fields
 
@@ -255,8 +252,8 @@ Minimum result payload fields:
 - `stats`: counts for sources discovered, eligible, searched, skipped,
   cancelled, records seen, matches seen, records emitted, dedupe drops, elapsed
   time, and the active limit/page size.
-- `page`: page metadata with `limit`, emitted count, and opaque `next_cursor`
-  when another page can be requested.
+- `page`: result-window metadata with `limit` and emitted count, plus an opaque
+  `next_cursor` only for tools that support continuation.
 - `status`: `RunStatus` plus optional reason, source/budget that
   caused truncation, cancellation point, and approximation notes.
 - `diagnostics`: privacy-safe warnings and errors, including unsupported
@@ -265,10 +262,12 @@ Minimum result payload fields:
 - `results`: emitted records in sink-specific record models.
 
 `PageInfo`
-: The pagination type. `next_cursor` is opaque, stable only for the
-  documented cursor lifetime, and must carry enough planner/execution state to
-  resume without callers reconstructing source paths. Absence of `next_cursor`
-  means there is no supported next-page request for that result payload.
+: The result-window type. Search exposes only `limit` and emitted count and is
+  deliberately cursorless. A tool that supports pagination may add
+  `next_cursor`; it is opaque, stable only for the documented cursor lifetime,
+  and must carry enough planner/execution state to resume without callers
+  reconstructing source paths. Absence of `next_cursor` means there is no
+  supported next-page request for that result payload.
 
 `Diagnostic`
 : A privacy-safe warning or error record with a stable code, severity, message,
@@ -295,6 +294,14 @@ must not construct record parsers. A prompt-only query must not discover
 conversation-only stores unless the requested scope requires them. A field
 predicate such as `agent:grok` or `path:*session*` must prune before record
 parsing whenever the adapter can prove the predicate from source metadata.
+
+Search effort is an ordered, engine-owned read policy. {ref}`ADR 0020
+<adr-progressive-deep-search>` owns the `prompt`, `targeted`, and `exhaustive`
+effort guarantees, frontend normalization, status, and explicit escalation.
+{ref}`ADR 0021 <adr-prompt-guided-conversation-routing>` owns targeted
+candidate evidence, proof-bound locators, the conversation-attempt bound, and
+the no-backfill rule. This ADR supplies their shared planner, driver, matcher,
+collector, lifecycle, and coverage boundaries.
 
 Planning must choose the cheapest correct adapter strategy. `find` remains a
 first-class fd/find-shaped source and storage discovery command; it may share

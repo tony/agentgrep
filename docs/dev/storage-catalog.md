@@ -67,14 +67,15 @@ Every descriptor has an effective coverage level:
 
 | Coverage | Meaning |
 |----------|---------|
-| `default_search` | Normal search and find commands discover and parse this store. |
-| `inspectable` | Inventory tools can discover it when explicitly requested; default search skips it. |
-| `catalog_only` | The path and schema are documented, and default search skips it. A row may still expose a conservative structural sample for explicit inspection. |
+| `default_search` | Eligible for search without inventory opt-in; effort and scope still gate its role. |
+| `inspectable` | May join exhaustive or broad-scope search and explicit inventory. |
+| `catalog_only` | Search never opens it. The path and schema remain documented, and a row may expose a conservative structural sample for explicit inspection. |
 | `private` | The store is documented but intentionally not enumerated from disk. |
 
-This distinction lets the catalogue describe auth files, runtime logs,
-shell snapshots, and file-history caches without making them part of
-ordinary prompt search.
+Coverage sets search eligibility; effort and scope decide which eligible
+roles are opened. This distinction lets the catalogue describe auth files,
+runtime logs, shell snapshots, and file-history caches without making them
+part of ordinary prompt search.
 
 ## Version detection strategies
 
@@ -104,12 +105,22 @@ Inventory and MCP source-listing surfaces keep shape detection enabled,
 while catalog-only detail remains available for callers that want a
 cheap, low-confidence metadata stamp.
 
-Search callers also narrow discovery by descriptor role before walking
-the filesystem. Prompt scope first enumerates `prompt_history` rows and
-then falls back, per agent, to `primary_chat` and `supplementary_chat`
-rows only when no prompt-history source exists for that agent.
-Conversation scope enumerates the chat roles directly, and all scope
-keeps the full default-search catalogue.
+Search callers also narrow discovery by descriptor role before walking the
+filesystem. Prompt effort enumerates only `prompt_history` rows. Targeted
+selection searches those prompt sources first, then opens only exact
+conversation sources resolved from proof-bearing Codex, Claude Code, Grok, or
+Antigravity CLI evidence; it does not enumerate every chat source. Exhaustive
+discovery adds the eligible `primary_chat` and `supplementary_chat` rows.
+Conversation scope admits those chat roles plus the explicit
+conversation-content app-state allowlist, while all scope admits prompt and
+conversation record kinds.
+
+Targeted routing has its own positive `conversation_limit`, currently 25
+attempts by default. That policy is unmeasured and independent of result
+`limit`; no result-limit migration to 25 occurred. Invariant agent and project
+predicates run before candidate grouping and the bound. Unresolved or ambiguous
+selected locators consume an attempt and are not backfilled. Locator traversal
+is separately request-bounded, and routing evidence never establishes a result.
 
 ## Stores by agent
 
@@ -323,8 +334,8 @@ Pi (earendil-works) stores each conversation as one append-only JSONL
 file under `${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/`,
 grouped by working directory (`--<encoded_cwd>--`, leading slash
 stripped and `/ \ :` replaced by `-`). It keeps no separate
-prompt-history log and no SQLite index, so a single adapter covers the
-whole searchable surface:
+prompt-history log or index for ordinary sessions, so their searchable
+surface comes directly from the JSONL transcript:
 
 - `pi.sessions_jsonl.v1` parses `sessions/--<cwd>--/<ts>_<uuid>.jsonl`.
   Line one is a `type:"session"` header (`version` may be absent in v1
@@ -335,9 +346,16 @@ whole searchable surface:
   names are emitted as history text. User turns surface as prompts via
   the shared role-to-kind mapping.
 
+- `pi.context_mode_sqlite.v1` parses the optional per-project
+  `~/.pi/context-mode/sessions/<project_hash>.db` store. Its
+  `session_events` rows carry role, intent, decision, tool-call,
+  file-read, blocker-resolution, and data events. This app-state store
+  joins explicit conversation and all scopes, not deep prompt search.
+
 Discovery resolves two roots: `PI_CODING_AGENT_DIR` (the agent dir,
 default `~/.pi/agent`) and the optional `PI_CODING_AGENT_SESSION_DIR`,
 which holds session files flat with the cwd recovered from the header.
+Context-mode discovery separately checks `~/.pi/context-mode/sessions/`.
 
 Documentary-only entries cover settings, auth (private credentials),
 models, themes, tools, managed binaries, prompt templates, the debug

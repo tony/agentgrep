@@ -29,17 +29,30 @@ snippets live in the
 
 ## CLI quickstart
 
-Search your prompts across every configured agent — ranked, deduped,
-newest first:
+Search fast prompt-history stores — ranked by relevance, deduped, with newest
+as the stable tie-break:
 
 ```console
 $ agentgrep search "deploy"
 ```
 
-Search prompts and conversations together in one sweep:
+Use prompt matches to search selected conversations. Targeted search attempts
+at most 25 conversations by default and reports approximate coverage:
 
 ```console
-$ agentgrep search "deploy" --scope all
+$ agentgrep search "deploy" --deep
+```
+
+Search prompt records across every readable conversation backend:
+
+```console
+$ agentgrep search "deploy" --exhaustive
+```
+
+Search prompts and conversations together in one explicit deep sweep:
+
+```console
+$ agentgrep search "deploy" --exhaustive --scope all
 ```
 
 Prefer ripgrep-shaped flags? `grep` mirrors `rg` / `ag` against the
@@ -89,15 +102,18 @@ import agentgrep
 backends = agentgrep.select_backends()
 query = agentgrep.SearchQuery(
     terms=("hello",),
-    scope="all",
+    scope="prompts",
     any_term=False,
     regex=False,
     case_sensitive=False,
     agents=agentgrep.AGENT_CHOICES,
     limit=10,
+    effort="prompt",
 )
-for record in agentgrep.run_search_query(Path.home(), query, backends=backends):
+result = agentgrep.run_search_result(Path.home(), query, backends=backends)
+for record in result.records:
     print(record.agent, record.title or record.path)
+print(result.summary.status.state, result.summary.coverage)
 ```
 
 ## Links

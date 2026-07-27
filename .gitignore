@@ -219,3 +219,6 @@ __marimo__/
 
 # Benchmark and profiling temp files
 .tmp/
+
+# Pi
+.pi-subagents/

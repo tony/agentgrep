@@ -4,9 +4,10 @@
 
 ## Status
 
-Accepted as a contract; not yet implemented. The defect that forced it and the
-engine work remain tracked in [#113](https://github.com/tony/agentgrep/issues/113).
-A focused order/limit regression is required with that implementation.
+Accepted. The ordered-limit collector contract is implemented. Search is
+cursorless: the `agcur1` offset cursor shipped in agentgrep 0.1.0a22 is no
+longer accepted, and the keyset cursor proposed by the original OL-5 text was
+withdrawn before publication. This ADR allocates no replacement encoding.
 
 ## Context
 
@@ -30,9 +31,11 @@ Three further facts frame the fix.
   frontend after collection, `grep` and the TUI want recency, and the collector
   itself yields in scan order. Nothing in the request names the desired list, so
   nothing in the result can name the list the caller got.
-- MCP pagination is an offset over a re-run scan: each page re-executes the
-  search with an inflated limit and slices the sorted buffer. It inherits the
-  defect above and pays a full rescan per page.
+- The former MCP pagination path, released in agentgrep 0.1.0a22, used an
+  `agcur1` offset over a re-run scan: each page re-executed search with an
+  inflated limit and sliced the sorted buffer. It inherited the defect above
+  and paid a full rescan per page. This ADR removes that published continuation
+  rather than retaining it.
 - The concurrency question is already answered by the shipped code rather than
   by taste. `ExecutionDriverConfig.max_workers` defaults to `1`, and nothing
   outside the tests raises it, so collection runs single-threaded today.
@@ -96,17 +99,14 @@ the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
   703](https://peps.python.org/pep-0703/), supported since CPython 3.14 per [PEP
   779](https://peps.python.org/pep-0779/)) with no code change. Design for
   threads; let the build decide the throughput.
-- **OL-5 — Cursor pagination is defined only for `order="newest"`.** The cursor
-  is a keyset anchored on the `(timestamp, agent, path)` total order that
-  `search_record_sort_key` already computes: a page resumes *strictly below* the
-  last key it emitted, so it neither rescans from zero nor skips a record
-  written between pages. Keyset cursors and relevance ordering do not compose —
-  a relevance score is a function of the query and the corpus, not a position in
-  a total order, and a stable score has no successor to resume from. A
-  relevance-ordered request therefore returns **no cursor**: it reports
-  `bounded` with a diagnostic that names the order as the reason. Callers who
-  want to page rank by recency; callers who want relevance ask for one bounded
-  top-k.
+- **OL-5 — Search result windows are cursorless.** `limit` caps one ordered
+  response. Exact lookahead reports `bounded` with `reason="result_limit"` when
+  another match exists, but it creates no continuation handle. MCP callers
+  migrating from the released `agcur1` search cursor rerun without `cursor`,
+  then refine the query or raise `limit`. A future cursor requires its own
+  snapshot, ordering, request-binding, and lifetime decision; this ADR fixes no
+  token prefix, key shape, or replay contract. Find pagination is a separate
+  discovery contract and retains its `agcur1` cursor.
 - **OL-6 — The tier interface is decided now; the tier policy is deferred.**
   The collector merges *sorted source streams*; whether a stream is a live file
   scan or an index cursor is invisible to it. That interface — one merge, N
@@ -121,13 +121,19 @@ the enumerated style of {ref}`ADR 0011 <adr-non-blocking-tui-invariants>`.
 
 | `order` | Key | Limit means | Cursor |
 | --- | --- | --- | --- |
-| `newest` (default) | `(timestamp, agent, path)`, descending | the k newest matching records | keyset (OL-5) |
+| `newest` (default) | `(timestamp, agent, path)`, descending | the k newest matching records | none (OL-5) |
 | `relevance` | score, then the `newest` key as tiebreak | the k best-scoring matching records | none |
 | `scan` | source order, then record order | the first k records the plan encountered | none |
 
 `scan` is the honest name for "whatever the plan happened to reach first". It is
 useful for `grep`-shaped streaming and for profiling, and it is the only order
 in which a caller may assume nothing about global rank. It is never a default.
+
+Ordered relevance and newest execution may retain records until the global
+frontier is known. Source start/finish pairs still report attempted work, but
+ordered `RecordEmitted` events need not occur between the pair for the source
+that produced them. Scan order preserves source priority and may emit and stop
+incrementally.
 
 ## Prior art
 
@@ -162,20 +168,24 @@ OL-3 keeps the pump-facing async bridge exactly where it is. {ref}`ADR 0006
 applied order surface on the CLI and MCP payloads. {ref}`ADR 0003
 <adr-native-boundary-execution-architecture>` is not invoked: nothing here
 approves native code, and OL-4's throughput lever is an interpreter build, not a
-Rust engine.
+Rust engine. {ref}`ADR 0020 <adr-progressive-deep-search>` owns how effort and
+scope select the sources entering this merge, while {ref}`ADR 0021
+<adr-prompt-guided-conversation-routing>` owns the fixed targeted source
+selection.
 
 ## Consequences
 
 The engine gains a declared order it can be held to, and `--limit` starts
 meaning what its help text has always claimed. Ordering, dedupe, and bounding
 become one testable stage with one total-order key, so an inline driver and a
-threaded driver can be asserted to produce byte-identical lists. Pagination
-stops rescanning from zero. And the throughput story becomes a build choice
+threaded driver can be asserted to produce byte-identical lists. Removing the
+published offset continuation avoids repeated rescans without promising an
+unsupported replay contract. And the throughput story becomes a build choice
 rather than an async rewrite.
 
 The costs are real. `order` is a new public request parameter, so CLI, MCP, and
 library surfaces each grow a field and each owe it a test. A bounded top-k
-frontier is more state than a counter. Relevance requests lose pagination
+frontier is more state than a counter. Search requests lose pagination
 outright — a deliberate loss, since the alternative is a cursor that silently
 returns a different list each page. The tier barrier adds a wait that, with no
 index, never triggers; it must not be allowed to rot untested in the meantime.
@@ -190,6 +200,6 @@ and limit disagree.
 A limit without a declared order is a lie, and agentgrep has been telling it.
 Order and limit are one stage in the collector; asyncio delivers results without
 blocking a loop and computes nothing; threads carry the parallelism and the
-interpreter build sets its ceiling; cursors exist where a total order exists and
-nowhere else; and the live-versus-indexed split is one more sorted input into
-the same merge, whose policy waits for an index worth having.
+interpreter build sets its ceiling; search has no continuation; and the
+live-versus-indexed split is one more sorted input into the same merge, whose
+policy waits for an index worth having.

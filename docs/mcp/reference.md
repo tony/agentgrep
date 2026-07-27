@@ -21,13 +21,25 @@ FastMCP server factory, payload models, and MCP helpers.
 
 .. autoclass:: agentgrep.mcp.SearchRequestModel
 
+.. autoclass:: agentgrep.mcp.NormalizedSearchRequestModel
+
 .. autoclass:: agentgrep.mcp.SearchToolResponse
+
+.. autoclass:: agentgrep.mcp.SearchEffortModel
+
+.. autoclass:: agentgrep.mcp.SearchCoverageModel
+
+.. autoclass:: agentgrep.mcp.SearchRequestPatchModel
+
+.. autoclass:: agentgrep.mcp.NextActionModel
 
 .. autoclass:: agentgrep.mcp.FindRequestModel
 
 .. autoclass:: agentgrep.mcp.FindToolResponse
 
 .. autoclass:: agentgrep.mcp.ResultStatsModel
+
+.. autoclass:: agentgrep.mcp.SearchPageModel
 
 .. autoclass:: agentgrep.mcp.PageInfoModel
 

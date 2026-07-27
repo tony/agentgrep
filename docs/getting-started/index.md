@@ -15,16 +15,29 @@ $ uv sync --all-groups
 
 ## 2. Search local agent prompts
 
-Ranked search across supported stores — deduped, newest first:
+Ranked search across fast prompt-history stores — deduped, relevance first,
+with newest as the stable tie-break:
 
 ```console
 $ uv run agentgrep search "release notes"
 ```
 
-Search prompts and conversations together in one sweep:
+Use matching prompts to select and search a bounded set of conversations:
 
 ```console
-$ uv run agentgrep search "release notes" --scope all
+$ uv run agentgrep search "release notes" --deep
+```
+
+Include prompt records stored only inside every readable transcript:
+
+```console
+$ uv run agentgrep search "release notes" --exhaustive
+```
+
+Search prompts and conversations together in one explicit deep sweep:
+
+```console
+$ uv run agentgrep search "release notes" --exhaustive --scope all
 ```
 
 Prefer ripgrep-shaped flags? `grep` searches prompt-scope records
@@ -40,7 +53,8 @@ Search one agent's prompt records:
 $ uv run agentgrep grep "deploy docs" --agent codex
 ```
 
-Search full conversation records explicitly:
+Search full conversation records explicitly. A conversation scope
+authorizes the transcript reads it requires:
 
 ```console
 $ uv run agentgrep grep "deploy docs" --agent codex --scope conversations

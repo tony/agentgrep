@@ -9,7 +9,11 @@ MCP prompts are reusable recipes a client can render before calling tools.
 ```{fastmcp-prompt} search_prompts
 ```
 
-Use this when the user wants matching user prompts.
+Use this when the user wants matching user prompts. The recipe starts with
+`effort="prompt"`, which reads dedicated prompt-history stores only; a fast
+miss is not corpus-wide. It names `effort="targeted"` as an explicit,
+user-requested escalation for bounded conversation search and tells the client
+not to escalate automatically.
 
 ```{fastmcp-prompt-input} search_prompts
 ```

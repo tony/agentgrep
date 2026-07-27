@@ -2,10 +2,10 @@
 
 # Gemini CLI
 
-Gemini CLI keeps temporary chat transcripts and older JSON archives under its
-CLI home. agentgrep treats the active JSONL chat files as the main searchable
-surface and keeps legacy/archive variants explicit so readers can tell which
-shape a result came from.
+Gemini CLI keeps a prompt-history log alongside active JSONL and legacy JSON
+chat files. Normal search reads the prompt log; `--exhaustive` also projects prompts
+from the chat files. The prompt-log adapter has no proof-bound targeted route,
+so `--deep` does not select Gemini conversations.
 
 Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 

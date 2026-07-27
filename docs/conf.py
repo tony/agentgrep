@@ -89,6 +89,7 @@ conf["fastmcp_model_classes"] = (
     "FindRequestModel",
     "FindToolResponse",
     "ResultStatsModel",
+    "SearchPageModel",
     "PageInfoModel",
     "RunStatusModel",
     "DiagnosticModel",

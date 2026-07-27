@@ -48,11 +48,19 @@ same project-aware filtering described in {ref}`cli-search-project-context`:
 }
 ```
 
+This request uses prompt effort because its prompt-only scope omits effort. For
+bounded conversation search, set `effort` to `targeted` and omit scope so MCP
+infers `all`. An explicit `scope="prompts"` with targeted effort is rejected.
+Targeted results remain approximate; use `exhaustive` when you need every
+eligible readable conversation backend.
+
 ## Python search query
 
 Use {class}`~agentgrep.RecordOrigin` on {class}`~agentgrep.SearchQuery`
 when code builds the same filter directly before calling
-{func}`~agentgrep.run_search_query`:
+{func}`~agentgrep.run_search_query`. Prefer
+{func}`~agentgrep.run_search_result` when you also need terminal status,
+coverage, diagnostics, or next actions:
 
 ```python
 import agentgrep

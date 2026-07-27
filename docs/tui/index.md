@@ -2,19 +2,24 @@
 
 # TUI
 
-The `agentgrep ui` command launches the interactive Textual explorer
-over the same Codex, Claude Code, Cursor, Gemini, Antigravity, Grok,
-Pi, OpenCode, and VS Code stores the rest of the CLI walks. It is read-only —
-agentgrep never mutates the source stores. Bare `agentgrep` prints the
-directory of choices, so
-the explorer always needs the explicit `ui` subcommand.
+`agentgrep ui` launches the read-only Textual explorer over dedicated
+prompt-history stores. `/deep` searches selected conversations and
+`/exhaustive` searches every readable conversation, either as a follow-up to
+the active search or as the first search of the session. The
+same depth can be selected at launch with `agentgrep search --deep QUERY
+--ui` or `agentgrep search --exhaustive QUERY --ui`. Bare `agentgrep` lists
+subcommands, so the explorer requires `ui`.
+
+`--deep` infers all scope, so prompt and selected-conversation records can
+appear together. `--exhaustive` keeps an omitted CLI scope at prompts; add
+`--scope all` when you want both record kinds. Targeted routing is available
+for Codex, Claude Code, Grok, and Antigravity CLI; other conversation backends
+require exhaustive effort.
 
 ```{note}
 Versions before 0.1.0a5 made bare `agentgrep` equivalent to
-`agentgrep ui`. That shortcut is gone. Reach the explorer through
-the explicit `ui` subcommand, or use the `--ui` overlay on
-`agentgrep grep` / `find` to open it
-pre-filled with that subcommand's query.
+`agentgrep ui`. Use `ui` now, or add `--ui` to `search`, `grep`, or
+`find`.
 ```
 
 ## Examples
@@ -36,6 +41,18 @@ Hand a one-shot `search` straight to the explorer with `--ui`:
 
 ```console
 $ agentgrep search bliss --ui
+```
+
+Open the explorer with bounded targeted conversation search:
+
+```console
+$ agentgrep search --deep bliss --ui
+```
+
+Open the explorer with every readable conversation:
+
+```console
+$ agentgrep search --exhaustive bliss --ui
 ```
 
 Open the explorer on current-project results:
@@ -60,6 +77,11 @@ Textual command palette without covering your results.
 The shared commands are:
 
 - `/clear` clears the current search and results.
+- `/deep` runs the active query against the conversations selected from
+  matching prompt evidence. `/deep 50` bounds that one request to 50
+  conversations.
+- `/exhaustive` or `/all` runs the active query against every readable
+  conversation.
 - `/exit` or `/quit` closes agentgrep.
 - `/help` lists the active slash commands, and `/keys` toggles the active key
   bindings panel.
@@ -70,6 +92,73 @@ The shared commands are:
   pane; use `/maximize results` or `/maximize detail` to be explicit.
 - `/minimize` restores the normal results/detail split.
 - `/screenshot` captures the current screen as an automatically named SVG.
+
+The engine offers `/deep` and `/exhaustive` as request-local follow-ups. When
+the last search offered the matching escalation they apply its patch; otherwise
+they escalate whatever query the search box holds, so a session can start at
+either depth without spending a prompt search first. Reaching a slash command
+means emptying the box, so the query you typed before `/` is the one they
+escalate. If an explicit prompt scope requires confirmation, a denied `/deep` or
+`/exhaustive` keeps the wider search unstarted and restores the active query in
+the input. Transient slash follow-ups do not replace launch effort: an ordinary
+later edit returns to the launch effort and preserves its custom targeted
+conversation bound.
+
+The terminal status tells you what completed: failures show `Search incomplete`;
+cancellation or answer-now shows `Stopped at N`; prompt effort says conversation
+bodies were not read; targeted effort reports completed/selected conversations;
+and exhaustive effort reports completed/planned sources. Relevance or newest
+ordering can keep records visually buffered while the global frontier is still
+unknown, so an empty result list is not proof that the worker is stuck.
+
+(tui-depth-discoverability)=
+
+## Finding the depth ladder
+
+Search effort is a ladder — `prompt`, then `targeted`, then `exhaustive` (see
+{ref}`adr-progressive-deep-search`). The explorer's job is to make each rung
+reachable and to make it obvious which rung you are standing on. Two surfaces
+carry that: the idle canvas before a search, and the empty panel after one.
+
+### Before a search
+
+The idle canvas lists the depth choices the engine offers for the query the
+search box would submit. Selecting one applies the engine's own request patch
+to your typed query and starts that search, so `targeted` is reachable from a
+cold session without first running a shallow search to unlock it. The panel is
+authored entirely from engine actions: when the engine offers no deeper rung —
+because you launched at `exhaustive`, or typed an inline `scope:` predicate that
+already reads conversations — it lists nothing.
+
+Pick a rung with the mouse, or reach the panel with `Tab` and use the arrow
+keys and `Enter`. It leaves the tab order whenever it has nothing selectable,
+so it never becomes a dead stop.
+
+An explicitly selected prompt scope is not silently widened here either. In that
+case the panel drops the selectable rows and states the scope change the wider
+search would need, matching what a denied `/deep` reports after a run.
+
+### After a search
+
+An empty result is a claim about the surface that was read, never about your
+history as a whole. The panel therefore pairs a distinguishable outcome with the
+evidence behind it:
+
+| Outcome | What it proves | What it does not prove |
+| --- | --- | --- |
+| `No prompt matches` | Prompt history holds no match | Nothing about conversation bodies — they were not opened |
+| `No candidate conversations` | Prompt evidence selected no conversation to read | Nothing about unselected conversations |
+| `No matches in selected conversations` | The conversations chosen from prompt evidence hold no match | Nothing about conversations routing did not choose |
+| `No matches in readable conversations` | Every readable conversation was read and holds no match | Nothing about stores agentgrep cannot read |
+
+`Search incomplete` is a fifth, non-terminal state: coverage was cut short by a
+failure, cancellation, truncation, or a bound, so the run is not a negative
+result at any depth.
+
+The principle behind the table is that a miss at one rung is not a corpus-wide
+negative. Only the last row is close to one, and even it is bounded by which
+stores are readable. Each panel names its next rung so the difference between
+"not there" and "not looked at" stays visible without reading the docs.
 
 `/screenshot` first clears the command text and menu, then captures the explorer
 without cancelling the search or changing its results, theme, or zoom.

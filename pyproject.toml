@@ -291,6 +291,10 @@ convention = "numpy"
 # falls back to the logical-line estimate rather than raising on the pump. The
 # alias chain continues in `_hud_search.py`, listed under the next note.
 "src/agentgrep/ui/layouts/_hud_detail_interaction.py" = ["PLC0414", "BLE001"]
+# The inline scanner converts every adapter failure into a terminal
+# SourceScanResult. Adapters cross parser, filesystem, SQLite, and subprocess
+# boundaries without a shared narrower exception base.
+"src/agentgrep/_engine/scanning.py" = ["BLE001"]
 # A scan worker runs on its own thread, where an escaping exception dies
 # silently and leaves the consumer waiting. These handlers catch BaseException
 # so the failure is forwarded as a queued failure item or an error event and

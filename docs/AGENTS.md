@@ -124,7 +124,7 @@ surrounding prose instead.
 that says what `search` answers and how it differs from `grep` before
 any flag, examples ordered by shrinking audience, honest trade-offs
 (a high threshold can filter everything out; `--no-rank` returns
-discovery order), features named by concept with `{ref}`
+globally newest-first records), features named by concept with `{ref}`
 cross-references, and the generated `argparse` block and exit-code
 list left exact. Read it before reshaping another page.
 

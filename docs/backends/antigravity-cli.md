@@ -4,8 +4,9 @@
 
 Antigravity CLI contributes two distinct surfaces: a searchable prompt recall
 log and inspectable conversation artifacts. agentgrep searches the prompt log
-by default and keeps the protobuf-backed transcript databases opt-in because
-their schema is not public.
+by default. Targeted effort can resolve a prompt `conversationId` to its
+readable transcript or corresponding conversation database. The protobuf-backed
+database remains best-effort because its schema is not public.
 
 Base path: `~/.gemini/antigravity-cli` (no observed env override).
 
@@ -35,7 +36,8 @@ conversation at `conversations/<conversation_uuid>.db`. The observed `steps`
 table stores protobuf data in `step_payload`; companion metadata tables also
 use protobuf blobs. There is no published schema, so agentgrep extracts
 readable protobuf strings best-effort and exposes the store only when
-non-default inventory sources are requested.
+non-default inventory sources are requested or a targeted prompt locator
+selects that exact conversation.
 
 The `steps` blobs carry the transcript text and no model; the model is one
 table over, in the `gen_metadata` protobuf Struct (with `executor_metadata`

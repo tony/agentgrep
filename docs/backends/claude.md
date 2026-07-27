@@ -3,9 +3,12 @@
 # Claude Code
 
 Claude Code stores a small global prompt history and per-project transcript
-logs. agentgrep searches the prompt and transcript surfaces by default, while
-memory, todo, settings, shell snapshots, and plugin/skill files stay
-inventory-only unless a caller explicitly asks to inspect non-default stores.
+logs. agentgrep searches the global prompt history by default and adds
+selected transcripts under targeted effort when a history `sessionId` resolves
+uniquely inside the projects tree. `--exhaustive` adds transcript-backed
+prompts from every eligible project transcript. Memory, todo, and plugin/skill
+stores may join explicit broad-scope search. Settings and shell snapshots
+remain inventory-only.
 
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
@@ -13,12 +16,11 @@ Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
 ## Stores
 
-Coverage is not the same as default search. `default` stores are
-searched normally; `inspectable` stores are discoverable only when an
-inventory caller opts in; `catalog` stores are documented but not
-searched by default; `private` stores are intentionally not
-enumerated. Some catalog stores expose safe structural samples for
-explicit inspection.
+Default-search coverage marks eligibility, not an unconditional read.
+Fast prompt effort opens only prompt-history roles; exhaustive effort and
+broad scopes may add searchable chat stores. Catalog-only stores remain
+outside search, and private stores are not enumerated. Some catalog stores
+expose safe structural samples for explicit inspection.
 
 ```{storage:agent} claude
 ```

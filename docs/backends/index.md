@@ -95,18 +95,33 @@ they are excluded from search — see {doc}`unsupported/index`
 ## Coverage levels
 
 The backend pages distinguish search support from storage coverage.
-Default-search stores are opened by normal search and find commands.
-Inspectable stores are known and can be inventoried explicitly, but
-are not searched by default. Catalog-only stores are documented so
-future adapters do not mistake them for prompt history; some catalog
-stores expose safe structural samples for `inspect_record_sample`, but
-they still stay outside default search. Private stores are documented
-but intentionally not enumerated from disk.
+Default-search stores are eligible for search without an inventory
+opt-in; fast prompt effort narrows that tier to prompt-history roles.
+Inspectable stores are known and can be inventoried explicitly.
+Catalog-only stores are documented so future adapters do not mistake
+them for prompt history; some catalog stores expose safe structural
+samples for `inspect_record_sample`, but they still stay outside
+search. Private stores are documented but intentionally not enumerated
+from disk.
 
 Search scope is record-level. `--scope prompts` is the default and
-includes dedicated prompt-history logs plus user turns projected from
-transcript-only backends. Full conversation, assistant, tool, and event
-records require `--scope conversations` or `--scope all`.
+admits user-authored prompts. Fast effort reads dedicated prompt-history
+logs only; `--exhaustive` also projects user turns from transcript backends.
+Full conversation, assistant, tool, and event records require
+`--scope conversations` or `--scope all`.
+
+## Targeted conversation routing
+
+`--deep` starts from matching prompt evidence and opens only conversations
+whose owning adapter can prove the prompt-to-transcript locator. Current
+targeted routes cover Codex, Claude Code, Grok, and Antigravity CLI. The router
+groups duplicate evidence before its conversation-attempt bound, applies
+conversation-invariant agent and project filters before selection, and never
+uses routing evidence as a result match.
+
+Other backends require `--exhaustive` for conversation coverage. A targeted
+miss is approximate, not a corpus-wide negative, and never triggers an
+automatic exhaustive sweep.
 
 (backend-project-context)=
 

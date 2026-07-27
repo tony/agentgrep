@@ -3,8 +3,9 @@
 # Grok CLI
 
 Grok CLI combines a prompt-history audit log with full session transcript
-files. agentgrep searches user prompts by default and exposes assistant,
-reasoning, and tool records when the caller chooses the conversation scope.
+files. agentgrep searches user prompts by default. Targeted effort resolves a
+prompt record's session UUID to the corresponding project transcript; full
+assistant, reasoning, and tool records also require conversation or all scope.
 
 Base path: `~/.grok` (env override: `GROK_HOME`).
 
