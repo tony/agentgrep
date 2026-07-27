@@ -30,11 +30,13 @@ from agentgrep.records import (
     CONVERSATION_CONTENT_STORES,
     CONVERSATION_STORE_ROLES,
     JSON_FILE_SUFFIXES,
+    PROMPT_HISTORY_STORE_ROLES,
     AgentName,
     BackendSelection,
     DiscoveryVersionDetail,
     FindRecord,
     JSONScalar,
+    SearchEffort,
     SearchMatchSurface,
     SearchQuery,
     SearchRecord,
@@ -117,6 +119,25 @@ def run_search_query(
             active_backends,
             version_detail="none",
         )
+        from agentgrep._engine.planning import build_logical_search_plan
+
+        request = build_logical_search_plan(query).request
+        if request.effort == "targeted":
+            from agentgrep._engine.routing import build_targeted_routing_plan
+
+            if request.conversation_limit is None:
+                msg = "targeted request has no conversation limit"
+                raise RuntimeError(msg)
+            routing = build_targeted_routing_plan(
+                query,
+                sources,
+                conversation_limit=request.conversation_limit,
+                control=active_control,
+            )
+            if routing.evidence_sources_failed:
+                msg = "targeted prompt evidence could not be read"
+                raise RuntimeError(msg)
+            sources.extend(routing.sources)
         active_progress.sources_discovered(len(sources))
         return search_sources(
             query,
@@ -431,9 +452,7 @@ def collect_search_records_from_plan(
     Returns
     -------
     list of SearchRecord
-        Matching records sorted newest-first by
-        :func:`search_record_sort_key`, truncated to ``query.limit``
-        when set.
+        Matching records in ``query.order``, truncated to ``query.limit`` when set.
     """
     from agentgrep._engine.execution import ExecutionRecordEmitted, select_execution_driver
 
@@ -448,7 +467,8 @@ def collect_search_records_from_plan(
         )
         if isinstance(event, ExecutionRecordEmitted)
     ]
-    results.sort(key=search_record_sort_key, reverse=True)
+    if query.order == "newest":
+        results.sort(key=search_record_sort_key, reverse=True)
     return results
 
 
@@ -651,16 +671,24 @@ def discover_sources_for_search(
 ) -> list[SourceHandle]:
     """Discover only the source roles needed for a search query scope.
 
-    ``scope="prompts"`` (the default) stays on the ``DEFAULT_SEARCH`` coverage
-    tier. ``scope="conversations"`` and ``scope="all"`` are the documented
-    opt-ins, so they lift the coverage gate to ``INSPECTABLE`` as well — that is
-    what makes stores such as ``codex.state_db`` reachable from a search at all
-    — and then re-narrow through :func:`searchable_sources` so the inventory
-    flag's ``CATALOG_ONLY`` rows stay out.
+    Prompt effort stays on dedicated prompt-history sources. Targeted effort
+    starts from the same compact evidence set; the request-local router resolves
+    only its bounded conversation decision. Exhaustive effort admits transcript
+    sources directly.
     """
     from agentgrep._engine.planning import build_logical_search_plan
 
     logical_plan = build_logical_search_plan(query)
+    allow_conversation_content_role_fallback = query.scope in {"conversations", "all"}
+    if logical_plan.request.effort in {"prompt", "targeted"}:
+        return discover_sources(
+            home,
+            query.agents,
+            backends,
+            version_detail=version_detail,
+            store_roles=PROMPT_HISTORY_STORE_ROLES,
+            allow_conversation_content_role_fallback=False,
+        )
     if query.scope == "all":
         return searchable_sources(
             discover_sources(
@@ -669,6 +697,7 @@ def discover_sources_for_search(
                 backends,
                 include_non_default=True,
                 version_detail=version_detail,
+                allow_conversation_content_role_fallback=(allow_conversation_content_role_fallback),
             ),
         )
     if query.scope == "conversations":
@@ -680,65 +709,67 @@ def discover_sources_for_search(
                 include_non_default=True,
                 version_detail=version_detail,
                 store_roles=logical_plan.initial_store_roles,
+                allow_conversation_content_role_fallback=(allow_conversation_content_role_fallback),
             ),
         )
 
-    prompt_sources = discover_sources(
-        home,
-        query.agents,
-        backends,
-        version_detail=version_detail,
-        store_roles=logical_plan.initial_store_roles,
-    )
-    agents_with_prompt_history = frozenset(
-        source.agent
-        for source in prompt_sources
-        if store_role_for_record(source.store, source.adapter_id) == StoreRole.PROMPT_HISTORY
-    )
-    fallback_agents = tuple(
-        agent for agent in query.agents if agent not in agents_with_prompt_history
-    )
-    if not fallback_agents:
-        return prompt_sources
-
-    sources = [
-        *prompt_sources,
-        *discover_sources(
+    return searchable_sources(
+        discover_sources(
             home,
-            fallback_agents,
+            query.agents,
             backends,
+            include_non_default=True,
             version_detail=version_detail,
-            store_roles=CONVERSATION_STORE_ROLES,
+            store_roles=logical_plan.initial_store_roles,
+            allow_conversation_content_role_fallback=(allow_conversation_content_role_fallback),
         ),
-    ]
-    deduped: list[SourceHandle] = []
-    seen: set[tuple[AgentName, str, str, pathlib.Path]] = set()
-    for source in sources:
-        key = (source.agent, source.store, source.adapter_id, source.path)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(source)
-    return deduped
+    )
 
 
 def source_matches_scope(
     source: SourceHandle,
     scope: SearchScope,
     *,
-    prompt_history_agents: frozenset[str] = frozenset(),
+    effort: SearchEffort | None = None,
+    prompt_history_agents: frozenset[str] | None = None,
 ) -> bool:
-    """Return whether ``source`` can yield records for the requested scope."""
+    """Return whether ``source`` can yield records for the requested scope.
+
+    ``prompt_history_agents`` retains the pre-effort fallback contract for
+    public Python callers. New engine code passes a normalized ``effort``;
+    combining both policies is ambiguous and rejected.
+    """
+    if effort not in {None, "prompt", "targeted", "exhaustive"}:
+        msg = "effort must be 'prompt', 'targeted', or 'exhaustive'"
+        raise ValueError(msg)
+    if effort == "targeted" and scope == "prompts":
+        msg = "targeted effort requires conversation or all scope"
+        raise ValueError(msg)
+    if effort is None:
+        legacy_agents = frozenset() if prompt_history_agents is None else prompt_history_agents
+        if scope == "all":
+            return True
+        if scope == "conversations":
+            return store_serves_conversation_scope(source.store, source.adapter_id)
+        role = store_role_for_record(source.store, source.adapter_id)
+        if role == StoreRole.PROMPT_HISTORY:
+            return True
+        if role in CONVERSATION_STORE_ROLES:
+            return source.agent not in legacy_agents
+        return True
+    if prompt_history_agents is not None:
+        msg = "cannot combine effort with prompt_history_agents"
+        raise ValueError(msg)
+    role = store_role_for_record(source.store, source.adapter_id)
+    if effort == "prompt":
+        return role == StoreRole.PROMPT_HISTORY
     if scope == "all":
         return True
     if scope == "conversations":
         return store_serves_conversation_scope(source.store, source.adapter_id)
-    role = store_role_for_record(source.store, source.adapter_id)
     if role == StoreRole.PROMPT_HISTORY:
         return True
-    if role in CONVERSATION_STORE_ROLES:
-        return source.agent not in prompt_history_agents
-    return True
+    return role in CONVERSATION_STORE_ROLES
 
 
 def matches_record(record: SearchRecord, query: SearchQuery) -> bool:
