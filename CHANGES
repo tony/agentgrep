@@ -42,6 +42,17 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### The stacked explorer favors the detail pane
+
+A terminal too narrow for side-by-side panes stacks the results list
+over the detail pane. The detail pane now takes the larger share of that
+split, so the record you selected is the one with room to be read, and
+the list above keeps enough rows to show its neighbours. Both panes hold
+a four-row floor, so a short terminal compresses the split rather than
+losing a pane. The side-by-side layout is unchanged.
+
 ## agentgrep 0.1.0a44 (2026-07-27)
 
 agentgrep 0.1.0a44 gives every search an explicit depth. `search` and `grep`
