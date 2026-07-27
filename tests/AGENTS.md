@@ -62,9 +62,27 @@ typed `NamedTuple` with a stable `test_id` and explicit `ids=`.
   sufficient.
 - Tests for private branches, formatting trivia, or implementation details
   without a concrete regression or public contract.
-- Sleeps, retries, broad fuzz matrices, and large fixture stores in the default
-  lane.
+- Retries, broad fuzz matrices, and large fixture stores in the default lane.
 
 When a new test would break either latency budget, reduce its scope, share an
 immutable cached harness, or move it to the explicit slow/CI lane before
 merging.
+
+## Synchronize on the signal, never the clock
+
+Block until something *happens*; never wait for time to *pass*. A non-zero
+`time.sleep` decides the outcome by wall-clock timing — a defect, not a tuning
+knob. Block on a published signal, with a generous asserted timeout as a
+deadlock failsafe:
+
+```python
+assert ready.wait(timeout=5.0), "worker never published the second record"
+```
+
+Not sleeps: `time.sleep(0)` and `await asyncio.sleep(0)` yield the scheduler. A
+`wait(timeout=...)` expected to be satisfied is a failsafe; one counted on to
+expire is a sleep in disguise.
+
+No signal? Publish one, or assert the decision directly — the worker count a
+driver requests, not which of two racing workers wins. If the claim is only
+observable by racing, delete the test.
