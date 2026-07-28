@@ -36,11 +36,19 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a45 (Yet to be released)
+## agentgrep 0.1.0a46 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a45 (2026-07-27)
+
+agentgrep 0.1.0a45 tunes the Textual explorer's narrow-terminal layout. When a
+terminal is too narrow for side-by-side panes, the stacked split now gives the
+detail pane the larger share, so the record you selected is the one with room
+to be read, and both panes hold a four-row floor so a short terminal compresses
+the split rather than losing a pane. See {ref}`tui` for details.
 
 ### What's new
 
