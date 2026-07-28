@@ -688,7 +688,8 @@ def format_search_progress_line(
     colors : SearchColors
         An :class:`AnsiColors` instance (used by the CLI chrome).
     answer_now_hint : bool, default False
-        When ``True``, append the ``[Press enter, answer now]`` reminder.
+        When ``True``, append an interrupt reminder — answering early once
+        scanning has started, cancelling while it has not.
     max_width : int or None, default None
         Maximum visible terminal cells for the returned line. When set, the
         formatter drops optional detail and hint segments before truncating.
@@ -749,7 +750,12 @@ def _format_search_progress_line(
         ],
     )
     if answer_now_hint:
-        parts.append(colors.white("[Press enter, answer now]"))
+        # Before scanning starts nothing has been read, so answering returns an
+        # empty result and discovery cannot observe the request at all.
+        if snapshot.current is None:
+            parts.append(colors.white("[Ctrl-C to cancel]"))
+        else:
+            parts.append(colors.white("[Press enter, answer now]"))
     return " | ".join(parts)
 
 
