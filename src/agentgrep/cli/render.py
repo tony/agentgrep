@@ -52,6 +52,7 @@ from agentgrep.progress import (
 )
 from agentgrep.records import (
     AGENT_CHOICES,
+    ColorMode,
     FindRecord,
     SearchEffort,
     SearchQuery,
@@ -308,6 +309,49 @@ def run_ui_command(args: UIArgs) -> int:
     return 0
 
 
+def _build_search_feedback(
+    control: SearchControl,
+    *,
+    color_mode: ColorMode,
+    progress_enabled: bool,
+    answer_now_enabled: bool,
+) -> tuple[SearchProgress, AnswerNowInputListener | None]:
+    """Return the stderr progress reporter and the input listener wired to it.
+
+    The listener publishes the user's keypress straight to the reporter so the
+    progress line can acknowledge it while the collected records are still
+    being ranked. Building the pair together keeps that subscription from
+    being dropped by a later edit to either half.
+
+    Parameters
+    ----------
+    control : SearchControl
+        Control the keypress requests a partial answer on.
+    color_mode : ColorMode
+        ``--color`` selection applied to the progress line.
+    progress_enabled : bool
+        Whether a progress line is drawn at all.
+    answer_now_enabled : bool
+        Whether stdin and stderr are both interactive, so a keypress can be
+        read and its acknowledgment seen.
+
+    Returns
+    -------
+    tuple
+        The reporter, and the listener when one is warranted.
+    """
+    if not progress_enabled:
+        return noop_search_progress(), None
+    progress = ConsoleSearchProgress(
+        enabled=True,
+        color_mode=color_mode,
+        answer_now_hint=answer_now_enabled,
+    )
+    if not answer_now_enabled:
+        return progress, None
+    return progress, AnswerNowInputListener(control, on_request=progress.answer_now_pending)
+
+
 def run_search_command(args: SearchArgs) -> int:
     """Execute ``agentgrep search`` with ranked, pretty output.
 
@@ -366,16 +410,12 @@ def run_search_command(args: SearchArgs) -> int:
         and bool(getattr(sys.stdin, "isatty", lambda: False)())
         and bool(getattr(sys.stderr, "isatty", lambda: False)())
     )
-    listener = AnswerNowInputListener(control) if answer_now_enabled else None
-    progress: SearchProgress
-    if not progress_enabled:
-        progress = noop_search_progress()
-    else:
-        progress = ConsoleSearchProgress(
-            enabled=True,
-            color_mode=args.color_mode,
-            answer_now_hint=answer_now_enabled,
-        )
+    progress, listener = _build_search_feedback(
+        control,
+        color_mode=args.color_mode,
+        progress_enabled=progress_enabled,
+        answer_now_enabled=answer_now_enabled,
+    )
     if listener is not None:
         listener.start()
     try:

@@ -66,6 +66,9 @@ type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], 
 _SOURCE_PROGRESS_RECORD_INTERVAL = 128
 """Parsed-record cadence for in-source progress updates and GIL yields."""
 
+_ANSWERING_PHASE = "answering"
+"""Phase shown from the moment an answer-now request is observed until it prints."""
+
 
 class SearchControl:
     """Thread-safe cooperative controls for an active search."""
@@ -93,7 +96,22 @@ class SearchControl:
 
 
 class AnswerNowInputListener:
-    """Listen for a blank Enter keypress and request a partial answer."""
+    """Listen for a blank Enter keypress and request a partial answer.
+
+    Parameters
+    ----------
+    control : SearchControl
+        Control the keypress requests a partial answer on.
+    stream : typing.TextIO or None, default None
+        Stream to read the keypress from. Defaults to :data:`sys.stdin`.
+    poll_interval : float, default 0.1
+        Seconds :func:`select.select` waits per poll on a selectable stream.
+    on_request : collections.abc.Callable or None, default None
+        Called on the listener thread once the user's keypress has been turned
+        into a request. Only the keypress publishes here, so a progress
+        reporter subscribing to it never mistakes an engine-internal
+        ``request_answer_now`` for something the user asked for.
+    """
 
     def __init__(
         self,
@@ -101,10 +119,12 @@ class AnswerNowInputListener:
         *,
         stream: t.TextIO | None = None,
         poll_interval: float = 0.1,
+        on_request: cabc.Callable[[], None] | None = None,
     ) -> None:
         self._control = control
         self._stream = stream if stream is not None else sys.stdin
         self._poll_interval = poll_interval
+        self._on_request = on_request
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -138,6 +158,8 @@ class AnswerNowInputListener:
                 return
             if line.strip() == "":
                 self._control.request_answer_now()
+                if self._on_request is not None:
+                    self._on_request()
                 return
             if not selectable:
                 return
@@ -312,6 +334,10 @@ class ConsoleSearchProgress:
         self._total: int | None = None
         self._matches = 0
         self._finished = False
+        # Not reset by start(): the listener runs before the engine calls
+        # start(), so a newline already queued in the tty buffer would be
+        # latched and then thrown away.
+        self._answer_now_pending = False
 
     def start(self, query: SearchQuery) -> None:
         """Begin progress reporting for ``query``."""
@@ -393,6 +419,26 @@ class ConsoleSearchProgress:
     def record_added(self, record: SearchRecord) -> None:
         """Ignore the per-record broadcast; counter is tracked via ``result_added``."""
 
+    def answer_now_pending(self) -> None:
+        """Show the answering phase from the moment the request is observed.
+
+        Collecting and ranking what has been gathered can run for seconds
+        before :meth:`answer_now` prints, so the phase is pinned here rather
+        than at the end of that work. The pin is sticky: sources still
+        draining keep calling :meth:`set_status` with ``"scanning"``, and
+        reverting to it would tell the user their keypress was dropped.
+
+        Discovery is excluded. Nothing has been read yet, so the request
+        cannot be honoured with anything, and the reminder on screen there is
+        about cancelling rather than answering.
+        """
+        if not self._enabled:
+            return
+        with self._lock:
+            self._answer_now_pending = True
+            if self._current is not None:
+                self._phase = _ANSWERING_PHASE
+
     def set_status(
         self,
         phase: str,
@@ -405,7 +451,8 @@ class ConsoleSearchProgress:
         if not self._enabled:
             return
         with self._lock:
-            self._phase = phase
+            pin = self._answer_now_pending and current is not None
+            self._phase = _ANSWERING_PHASE if pin else phase
             self._current = current
             self._total = total
             self._detail = detail
@@ -548,10 +595,16 @@ class ConsoleSearchProgress:
             pass
 
     def _summary(self, *, max_width: int | None = None) -> str:
+        snapshot = self._snapshot()
+        with self._lock:
+            # Re-offering "press enter" after the request lands invites a
+            # second press the listener has already stopped reading. The
+            # discovery-phase reminder is about Ctrl-C, which stays true.
+            retired = self._answer_now_pending and snapshot.current is not None
         return format_search_progress_line(
-            self._snapshot(),
+            snapshot,
             colors=self._colors,
-            answer_now_hint=self._answer_now_hint,
+            answer_now_hint=self._answer_now_hint and not retired,
             max_width=max_width,
         )
 
