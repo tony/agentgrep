@@ -92,6 +92,9 @@ The shared commands are:
   pane; use `/maximize results` or `/maximize detail` to be explicit.
 - `/minimize` restores the normal results/detail split.
 - `/screenshot` captures the current screen as an automatically named SVG.
+- `/status` or `/version` reports the running version, whether it is a release
+  or development build, and the git ref when agentgrep is running from a
+  checkout. `agentgrep --version` reports the same thing from the shell.
 
 The engine offers `/deep` and `/exhaustive` as request-local follow-ups. When
 the last search offered the matching escalation they apply its patch; otherwise
