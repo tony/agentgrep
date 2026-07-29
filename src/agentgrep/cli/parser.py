@@ -466,6 +466,46 @@ class ParserBundle:
     search_parser: argparse.ArgumentParser
 
 
+class _VersionAction(argparse.Action):
+    """Print the release version plus build provenance, then exit.
+
+    Argparse's own ``version`` action wants the string at parser-construction
+    time, which would make every ``agentgrep`` invocation — ``--help``
+    included — pay for reading the version and probing git. This action resolves
+    both inside ``__call__``, so only ``--version`` pays.
+    """
+
+    def __init__(
+        self,
+        option_strings: cabc.Sequence[str],
+        dest: str = argparse.SUPPRESS,
+        default: str = argparse.SUPPRESS,
+        help: str | None = None,  # noqa: A002  (argparse's own parameter name)
+    ) -> None:
+        super().__init__(
+            option_strings=list(option_strings),
+            dest=dest,
+            default=default,
+            nargs=0,
+            help=help,
+        )
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        """Write ``prog version`` to stdout and exit successfully."""
+        del namespace, values, option_string
+        from agentgrep import _version
+
+        line = _version.format_version_line(_version.build_provenance())
+        sys.stdout.write(f"{parser.prog} {line}\n")
+        parser.exit()
+
+
 class _GrepLimitAction(argparse.Action):
     """Store grep cap aliases in one canonical ``limit`` namespace field."""
 
@@ -535,6 +575,11 @@ def create_parser(
         choices=["auto", "always", "never"],
         default="auto",
         help="when to use colors: auto (default), always, or never",
+    )
+    _ = parser.add_argument(
+        "--version",
+        action=_VersionAction,
+        help="show the released version (plus the git ref in a checkout) and exit",
     )
     subparsers = parser.add_subparsers(dest="command")
 

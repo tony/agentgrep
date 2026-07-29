@@ -19,6 +19,7 @@ from rich.segment import Segment, Segments
 from textual.app import generate_datetime_filename
 from textual.screen import Screen
 
+from agentgrep import _version
 from agentgrep.results import apply_search_request_patch, offered_depth_actions
 from agentgrep.ui import _runtime, commands, theme as ui_theme
 
@@ -103,6 +104,27 @@ def _export_screenshot_frame(
     except BaseException:
         screenshot.close()
         raise
+
+
+@_runtime.offload
+def _resolve_build_provenance(
+    call_from_thread: t.Callable[..., object],
+    present: t.Callable[[_version.BuildProvenance], None],
+) -> None:
+    """Probe the build provenance off the pump, then hand it back to present.
+
+    :func:`agentgrep._version.build_provenance` spawns ``git describe``, which
+    must not happen on the UI thread. This worker body is its only caller
+    inside the explorer, and ``@offload`` asserts it never runs on that thread.
+
+    Parameters
+    ----------
+    call_from_thread : typing.Callable
+        Textual's worker-to-pump call gate, captured before offload.
+    present : typing.Callable
+        Pump-only presenter invoked with the resolved provenance.
+    """
+    call_from_thread(present, _version.build_provenance())
 
 
 class LayoutScreen(_SCREEN_BASE):
@@ -591,6 +613,66 @@ class LayoutScreen(_SCREEN_BASE):
             title=title,
             filename=generate_datetime_filename(title, ".svg"),
             segments=tuple(console.render(screen_render)),
+        )
+
+    @_runtime.pump_only
+    def report_build_status(self) -> bool:
+        """Report the running version and how it was built.
+
+        The version is cheap, but the ``git describe`` that turns it into a
+        build ref is a subprocess, so this never resolves one: a provenance
+        another ``/status`` already resolved is reported straight from the
+        process-wide cache, and an unresolved one is handed to a ``thread=True``
+        worker whose notification arrives when the probe returns.
+
+        Returns
+        -------
+        bool
+            Whether the report was shown or its resolution was started.
+        """
+        resolved = _version.cached_build_provenance()
+        if resolved is not None:
+            self._present_build_status(resolved)
+            return True
+        try:
+            _ = self.run_worker(
+                functools.partial(
+                    _resolve_build_provenance,
+                    self.app.call_from_thread,
+                    self._present_build_status,
+                ),
+                name="build-status",
+                group="build-status",
+                description="resolve build provenance",
+                exit_on_error=False,
+                thread=True,
+                exclusive=True,
+            )
+        except RuntimeError:
+            return False
+        return True
+
+    @_runtime.pump_only
+    def _present_build_status(self, provenance: _version.BuildProvenance) -> None:
+        """Show one build-status notification while this layout is still live.
+
+        Streaming chrome needs a generation token so a stale result cannot
+        overwrite a newer one; this does not, because the provenance is fixed
+        for the life of the process and a late notification carries the same
+        text a fresh one would. The mount check exists only so a torn-down
+        layout does not notify.
+
+        Parameters
+        ----------
+        provenance : agentgrep._version.BuildProvenance
+            Release version and git ref resolved off the pump.
+        """
+        if not self.is_mounted or not self.is_attached:
+            return
+        self.notify(
+            _version.format_build_status(provenance),
+            title="Build",
+            timeout=10,
         )
 
     @_runtime.pump_only

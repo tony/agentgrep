@@ -42,6 +42,21 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Ask agentgrep which version it is running (#154)
+
+`agentgrep --version` prints the released version, and `agentgrep.__version__`
+exposes it to a library consumer. Run from a git checkout, both also name the
+commit, so a development build a few commits past a release identifies itself
+rather than reporting a release number that is no longer true of it.
+
+#### The explorer reports its build with `/status` (#154)
+
+`/status`, aliased `/version`, shows the version, whether this is a release or a
+development build, and the git ref — so a bug filed from inside the explorer can
+say exactly what was running. See {ref}`tui` for details.
+
 ## agentgrep 0.1.0a45 (2026-07-27)
 
 agentgrep 0.1.0a45 tunes the Textual explorer's narrow-terminal layout. When a

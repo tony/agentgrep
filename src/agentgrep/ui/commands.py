@@ -126,6 +126,17 @@ def _run_screenshot(app: t.Any, args: str) -> bool:
     return bool(app.request_screenshot())
 
 
+def _run_status(app: t.Any, args: str) -> bool:
+    """Report the running version, whether it is a release, and its git ref.
+
+    The layout owns the work because resolving the git ref is a subprocess: it
+    reports an already-resolved provenance immediately, and otherwise hands the
+    probe to a worker so the UI keeps drawing.
+    """
+    del args
+    return bool(app.report_build_status())
+
+
 def _run_theme(app: t.Any, args: str) -> bool:
     """Open or select one of agentgrep's owned themes."""
     return bool(app.select_theme(args))
@@ -180,6 +191,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("help", (), "List slash commands", _run_help),
     SlashCommand("keys", (), "Toggle key bindings help", _run_keys),
     SlashCommand("screenshot", (), "Save a clean screenshot", _run_screenshot),
+    SlashCommand("status", ("version",), "Show version and build provenance", _run_status),
     SlashCommand(
         "theme",
         (),
