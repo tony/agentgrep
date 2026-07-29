@@ -1,27 +1,20 @@
-"""Release version and build provenance for agentgrep.
+"""Report which version of agentgrep is running, and from which commit.
 
-The released version is the static ``project.version`` literal in
-``pyproject.toml``: hatchling copies it into the built distribution's metadata,
-so a wheel and a checkout report the same number without a dynamic-version build
-plugin.
+The version is the ``project.version`` literal in ``pyproject.toml``, or the
+installed distribution's metadata for a wheel. A checkout knows one thing the
+literal cannot — which commit — so :func:`build_provenance` adds
+``git describe``, falling back to what the installer recorded when there is no
+working tree or no ``git``. Every failure path is silent: no ref, and nothing
+on stderr.
 
-A checkout carries one more fact the literal cannot: *which* commit is running.
-:func:`build_provenance` enriches the release version with ``git describe`` so a
-developer six commits past the tag sees that, rather than a bare release number
-that is true of the tag alone. The probe is best-effort and silent — a wheel with
-no repository, a machine with no ``git``, and a failing ``git`` command all
-degrade to the plain release version with nothing on stderr.
+:func:`build_provenance` spawns a subprocess, so the TUI must not call it
+directly; the Textual UI runs on one thread and anything slow there freezes
+keystrokes and the spinner. Resolve it in a worker, and read
+:func:`cached_build_provenance` from the UI, which only reads a variable.
 
-The probe spawns a subprocess, so it must never run on the Textual message pump
-(ADR 0011 NB-1/NB-2). The split is structural: :func:`build_provenance` blocks
-and belongs in a worker or on the CLI's main thread, while
-:func:`cached_build_provenance` is an O(1) cache read a pump callable may make.
-
-This module imports only cheap standard-library namespaces at module scope
-(``logging``, ``pathlib``, ``typing``), so the eager ``import agentgrep`` path
-keeps the ``agentgrep --help`` cold-start budget ADR 0010 records. ``tomllib``,
-``shutil``, ``subprocess``, and ``importlib.metadata`` are imported inside the
-functions that need them, which nothing reaches until a version is asked for.
+``tomllib``, ``shutil``, ``subprocess``, and ``importlib.metadata`` are
+imported inside the functions that use them, so ``import agentgrep`` stays
+cheap for callers that never ask for a version.
 """
 
 from __future__ import annotations
@@ -66,19 +59,27 @@ class BuildProvenance(t.NamedTuple):
         code was imported from, such as ``"v0.1.0a45-6-gcab6f56b"``. ``None``
         when there is no checkout to describe, no ``git`` to describe it with,
         or the command failed.
+    install_kind : str, default "unknown"
+        What the installer recorded about where this distribution came from:
+        ``"release"`` for a published artifact, ``"development"`` for an
+        editable, local-source, or VCS install, ``"unknown"`` when nothing was
+        recorded. Consulted only when :attr:`git_ref` is ``None``, so a
+        checkout with no usable ``git`` is not mistaken for a release.
     """
 
     release: str
     git_ref: str | None
+    install_kind: str = "unknown"
 
     @property
     def is_release_build(self) -> bool:
         """Report whether the running code is exactly the released version.
 
         A ref is a release build only when it names the release's own tag with
-        no distance and no ``-dirty`` suffix. An absent ref is reported as a
-        release build: an installed distribution has no repository to disagree
-        with its metadata.
+        no distance and no ``-dirty`` suffix. With no ref to judge, the
+        installer's own record decides: a wheel has no repository to disagree
+        with its metadata, but an editable or VCS install is a development
+        build whether or not ``git`` was available to describe it.
 
         Examples
         --------
@@ -90,8 +91,12 @@ class BuildProvenance(t.NamedTuple):
         False
         >>> BuildProvenance("0.1.0a45", None).is_release_build
         True
+        >>> BuildProvenance("0.1.0a45", None, "development").is_release_build
+        False
         """
-        return self.git_ref is None or self.git_ref == f"v{self.release}"
+        if self.git_ref is not None:
+            return self.git_ref == f"v{self.release}"
+        return self.install_kind != "development"
 
     @property
     def build_kind(self) -> str:
@@ -118,8 +123,11 @@ def format_version_line(provenance: BuildProvenance) -> str:
     Returns
     -------
     str
-        The bare PEP 440 release version for a release build, or the release
-        version followed by a parenthesized development ref.
+        The bare PEP 440 release version, or that version followed by a
+        parenthesized development ref. A development build whose ref could not
+        be read renders bare too — there is nothing to name, and ``--version``
+        is the wrong surface to say so. :func:`format_build_status` reports the
+        build kind explicitly.
 
     Examples
     --------
@@ -127,10 +135,12 @@ def format_version_line(provenance: BuildProvenance) -> str:
     '0.1.0a45'
     >>> format_version_line(BuildProvenance("0.1.0a45", None))
     '0.1.0a45'
+    >>> format_version_line(BuildProvenance("0.1.0a45", None, "development"))
+    '0.1.0a45'
     >>> format_version_line(BuildProvenance("0.1.0a45", "v0.1.0a45-6-gcab6f56b"))
     '0.1.0a45 (dev: v0.1.0a45-6-gcab6f56b)'
     """
-    if provenance.is_release_build:
+    if provenance.git_ref is None or provenance.is_release_build:
         return provenance.release
     return f"{provenance.release} (dev: {provenance.git_ref})"
 
@@ -177,8 +187,8 @@ _cached_provenance: BuildProvenance | None = None
 def release_version() -> str:
     """Return the static released version, reading it at most once per process.
 
-    Blocking: reads ``pyproject.toml`` or installed distribution metadata on
-    first call. Never call it from a Textual pump callable (ADR 0011 NB-1).
+    Reads ``pyproject.toml`` or installed distribution metadata on the first
+    call, so it blocks. Do not call it from the TUI thread.
 
     Returns
     -------
@@ -195,9 +205,8 @@ def release_version() -> str:
 def build_provenance() -> BuildProvenance:
     """Resolve the release version and the git ref, caching the result.
 
-    Blocking: spawns ``git describe`` on first call in a checkout. Call it from
-    a ``thread=True`` worker or the CLI's main thread, never from a pump
-    callable (ADR 0011 NB-1/NB-2); a pump callable reads
+    Spawns ``git describe`` on the first call in a checkout, so it blocks. Call
+    it from a worker thread or the CLI's main thread; the TUI reads
     :func:`cached_build_provenance` instead.
 
     Returns
@@ -212,7 +221,20 @@ def build_provenance() -> BuildProvenance:
     # A racing second resolve computes the same immutable answer, so the
     # assignment is left unlocked: waiting on a lock is itself blocking work,
     # and the loser of the race would only wait to learn what it computed.
-    resolved = BuildProvenance(release=release_version(), git_ref=_git_describe())
+    install_kind, install_ref = _install_provenance()
+    if _checkout_root() is not None:
+        # A working tree is a development build whether or not git could
+        # describe it; without this a checkout on a machine with no git would
+        # fall back to the install record and could claim to be a release.
+        install_kind = "development"
+    git_ref = _git_describe()
+    if git_ref is None:
+        git_ref = install_ref
+    resolved = BuildProvenance(
+        release=release_version(),
+        git_ref=git_ref,
+        install_kind=install_kind,
+    )
     _cached_provenance = resolved
     return resolved
 
@@ -220,9 +242,8 @@ def build_provenance() -> BuildProvenance:
 def cached_build_provenance() -> BuildProvenance | None:
     """Return the already-resolved provenance, or ``None`` when unresolved.
 
-    O(1) and free of I/O, so a Textual pump callable may call it (ADR 0011
-    NB-1): it either reports what a worker has already resolved or says that
-    nothing has.
+    Reads one variable and does no I/O, so the TUI thread may call it: it
+    either reports what a worker has already resolved, or says nothing has.
 
     Returns
     -------
@@ -314,6 +335,51 @@ def _installed_version() -> str:
     except importlib.metadata.PackageNotFoundError:
         logger.debug("installed distribution metadata not found")
         return UNKNOWN_VERSION
+
+
+def _install_provenance() -> tuple[str, str | None]:
+    """Classify how this distribution was installed, from its PEP 610 record.
+
+    ``git describe`` answers "which commit" only where there is a checkout and
+    a ``git`` to run. The installer's own ``direct_url.json`` answers the
+    coarser "was this published or not" everywhere, including a flat-layout
+    editable install the ``src``-layout probe cannot recognize, and a
+    ``pip install git+URL`` that has no working tree at all.
+
+    The record's ``url`` is deliberately never read: for the common editable
+    case it is a local filesystem path.
+
+    Returns
+    -------
+    tuple[str, str | None]
+        Build kind — ``"release"``, ``"development"``, or ``"unknown"`` — and
+        the commit id when the installer recorded a VCS origin.
+    """
+    import importlib.metadata
+
+    try:
+        origin = importlib.metadata.distribution(DISTRIBUTION_NAME).origin
+    except importlib.metadata.PackageNotFoundError:
+        # Never installed — a source tree run straight off sys.path.
+        return "unknown", None
+    except ValueError:
+        # A truncated direct_url.json from an interrupted install raises out of
+        # json.loads. Provenance is a reporting nicety and must not be able to
+        # break a caller, and claiming a published wheel on a record that says
+        # nothing of the sort would be worse than admitting ignorance.
+        logger.debug("install record unreadable", exc_info=True)
+        return "unknown", None
+    if origin is None:
+        return "release", None
+    vcs_info = getattr(origin, "vcs_info", None)
+    if vcs_info is not None:
+        ref = getattr(vcs_info, "commit_id", "") or getattr(vcs_info, "requested_revision", "")
+        return "development", str(ref) or None
+    if getattr(origin, "dir_info", None) is not None:
+        return "development", None
+    if getattr(origin, "archive_info", None) is not None:
+        return "release", None
+    return "unknown", None
 
 
 def _git_describe() -> str | None:

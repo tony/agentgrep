@@ -7,10 +7,12 @@ leave that plain release version behind, silently.
 
 from __future__ import annotations
 
+import importlib.metadata
 import pathlib
 import shutil
 import subprocess
 import tomllib
+import types
 import typing as t
 
 import packaging.version
@@ -200,18 +202,128 @@ def test_probe_is_silent_when_git_exits_non_zero(
     assert captured.err == ""
 
 
-def test_provenance_without_a_ref_reports_the_plain_release(
+def test_a_checkout_without_a_ref_is_still_a_development_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every degraded probe path collapses to the released version alone."""
+    """No ref is not the same as a release: a working tree is never published.
+
+    A developer whose machine has no ``git`` still gets an honest answer. The
+    version line stays the bare release, because there is no ref to name.
+    """
     monkeypatch.setattr(_version, "_cached_provenance", None)
     monkeypatch.setattr(_version, "_git_describe", lambda: None)
 
     provenance = _version.build_provenance()
 
     assert provenance.git_ref is None
-    assert provenance.is_release_build
+    assert not provenance.is_release_build
+    assert provenance.build_kind == "development"
     assert _version.format_version_line(provenance) == agentgrep.__version__
+
+
+def test_an_installed_wheel_without_a_ref_reports_a_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off a checkout, an absent install record means a published artifact."""
+    monkeypatch.setattr(_version, "_cached_provenance", None)
+    monkeypatch.setattr(_version, "_checkout_root", lambda: None)
+    monkeypatch.setattr(_version, "_git_describe", lambda: None)
+    monkeypatch.setattr(_version, "_install_provenance", lambda: ("release", None))
+
+    provenance = _version.build_provenance()
+
+    assert provenance.is_release_build
+    assert provenance.build_kind == "release"
+
+
+def test_a_vcs_install_supplies_the_ref_when_git_cannot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``pip install git+URL`` has no working tree but records its commit."""
+    monkeypatch.setattr(_version, "_cached_provenance", None)
+    monkeypatch.setattr(_version, "_checkout_root", lambda: None)
+    monkeypatch.setattr(_version, "_git_describe", lambda: None)
+    monkeypatch.setattr(
+        _version,
+        "_install_provenance",
+        lambda: ("development", "cab6f56b9f6d"),
+    )
+
+    provenance = _version.build_provenance()
+
+    assert provenance.git_ref == "cab6f56b9f6d"
+    assert not provenance.is_release_build
+
+
+class _StubDistribution:
+    """Stand-in for the object ``importlib.metadata.distribution`` returns."""
+
+    def __init__(self, origin: object) -> None:
+        self.origin = origin
+
+
+@pytest.mark.parametrize(
+    ("test_id", "origin", "expected"),
+    [
+        ("wheel", None, ("release", None)),
+        (
+            "editable",
+            types.SimpleNamespace(dir_info=types.SimpleNamespace(editable=True)),
+            ("development", None),
+        ),
+        (
+            "local_source_tree",
+            types.SimpleNamespace(dir_info=types.SimpleNamespace(editable=False)),
+            ("development", None),
+        ),
+        (
+            "vcs",
+            types.SimpleNamespace(vcs_info=types.SimpleNamespace(commit_id="deadbeef")),
+            ("development", "deadbeef"),
+        ),
+        (
+            "direct_archive",
+            types.SimpleNamespace(archive_info=types.SimpleNamespace()),
+            ("release", None),
+        ),
+        ("unrecognized", types.SimpleNamespace(), ("unknown", None)),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+def test_install_records_classify_by_pep610_origin(
+    test_id: str,
+    origin: object,
+    expected: tuple[str, str | None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each ``direct_url.json`` shape maps to one build kind and ref."""
+    del test_id
+    monkeypatch.setattr(
+        importlib.metadata,
+        "distribution",
+        lambda _name: _StubDistribution(origin),
+    )
+
+    assert _version._install_provenance() == expected
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [importlib.metadata.PackageNotFoundError(), ValueError("truncated direct_url.json")],
+    ids=["not_installed", "unreadable_record"],
+)
+def test_an_unusable_install_record_reports_unknown(
+    raised: Exception,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing or corrupt record admits ignorance instead of claiming release."""
+
+    def _raise(_name: str) -> object:
+        raise raised
+
+    monkeypatch.setattr(importlib.metadata, "distribution", _raise)
+
+    assert _version._install_provenance() == ("unknown", None)
 
 
 def test_provenance_resolves_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:

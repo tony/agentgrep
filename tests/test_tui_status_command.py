@@ -218,9 +218,11 @@ def test_status_worker_hands_the_resolved_provenance_back_to_the_pump(
     assert callback == presented.append
     # Presentation happens on the pump, where the marshalled callback lands.
     t.cast("cabc.Callable[..., None]", callback)(*args)
-    assert presented == [
-        _version.BuildProvenance(_version.release_version(), "v9.9.9-3-gfeedface"),
-    ]
+    # Identity, not reconstruction: the pump must receive the very object the
+    # worker resolved, and the assertion stays true as provenance gains fields.
+    assert presented == [_version.cached_build_provenance()]
+    assert presented[0].git_ref == "v9.9.9-3-gfeedface"
+    assert presented[0].release == _version.release_version()
 
 
 def test_status_reports_a_cached_provenance_without_a_worker(
