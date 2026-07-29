@@ -66,6 +66,9 @@ type SourceProgressCallback = cabc.Callable[[int, int, SourceHandle, int, int], 
 _SOURCE_PROGRESS_RECORD_INTERVAL = 128
 """Parsed-record cadence for in-source progress updates and GIL yields."""
 
+_ANSWERING_PHASE = "answering"
+"""Phase shown from the moment an answer-now request is observed until it prints."""
+
 
 class SearchControl:
     """Thread-safe cooperative controls for an active search."""
@@ -93,7 +96,22 @@ class SearchControl:
 
 
 class AnswerNowInputListener:
-    """Listen for a blank Enter keypress and request a partial answer."""
+    """Listen for a blank Enter keypress and request a partial answer.
+
+    Parameters
+    ----------
+    control : SearchControl
+        Control the keypress requests a partial answer on.
+    stream : typing.TextIO or None, default None
+        Stream to read the keypress from. Defaults to :data:`sys.stdin`.
+    poll_interval : float, default 0.1
+        Seconds :func:`select.select` waits per poll on a selectable stream.
+    on_request : collections.abc.Callable or None, default None
+        Called on the listener thread once the user's keypress has been turned
+        into a request. Only the keypress publishes here, so a progress
+        reporter subscribing to it never mistakes an engine-internal
+        ``request_answer_now`` for something the user asked for.
+    """
 
     def __init__(
         self,
@@ -101,10 +119,12 @@ class AnswerNowInputListener:
         *,
         stream: t.TextIO | None = None,
         poll_interval: float = 0.1,
+        on_request: cabc.Callable[[], None] | None = None,
     ) -> None:
         self._control = control
         self._stream = stream if stream is not None else sys.stdin
         self._poll_interval = poll_interval
+        self._on_request = on_request
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -138,6 +158,8 @@ class AnswerNowInputListener:
                 return
             if line.strip() == "":
                 self._control.request_answer_now()
+                if self._on_request is not None:
+                    self._on_request()
                 return
             if not selectable:
                 return
@@ -312,6 +334,10 @@ class ConsoleSearchProgress:
         self._total: int | None = None
         self._matches = 0
         self._finished = False
+        # Not reset by start(): the listener runs before the engine calls
+        # start(), so a newline already queued in the tty buffer would be
+        # latched and then thrown away.
+        self._answer_now_pending = False
 
     def start(self, query: SearchQuery) -> None:
         """Begin progress reporting for ``query``."""
@@ -393,6 +419,26 @@ class ConsoleSearchProgress:
     def record_added(self, record: SearchRecord) -> None:
         """Ignore the per-record broadcast; counter is tracked via ``result_added``."""
 
+    def answer_now_pending(self) -> None:
+        """Show the answering phase from the moment the request is observed.
+
+        Collecting and ranking what has been gathered can run for seconds
+        before :meth:`answer_now` prints, so the phase is pinned here rather
+        than at the end of that work. The pin is sticky: sources still
+        draining keep calling :meth:`set_status` with ``"scanning"``, and
+        reverting to it would tell the user their keypress was dropped.
+
+        Discovery is excluded. Nothing has been read yet, so the request
+        cannot be honoured with anything, and the reminder on screen there is
+        about cancelling rather than answering.
+        """
+        if not self._enabled:
+            return
+        with self._lock:
+            self._answer_now_pending = True
+            if self._current is not None:
+                self._phase = _ANSWERING_PHASE
+
     def set_status(
         self,
         phase: str,
@@ -405,7 +451,8 @@ class ConsoleSearchProgress:
         if not self._enabled:
             return
         with self._lock:
-            self._phase = phase
+            pin = self._answer_now_pending and current is not None
+            self._phase = _ANSWERING_PHASE if pin else phase
             self._current = current
             self._total = total
             self._detail = detail
@@ -548,10 +595,16 @@ class ConsoleSearchProgress:
             pass
 
     def _summary(self, *, max_width: int | None = None) -> str:
+        snapshot = self._snapshot()
+        with self._lock:
+            # Re-offering "press enter" after the request lands invites a
+            # second press the listener has already stopped reading. The
+            # discovery-phase reminder is about Ctrl-C, which stays true.
+            retired = self._answer_now_pending and snapshot.current is not None
         return format_search_progress_line(
-            self._snapshot(),
+            snapshot,
             colors=self._colors,
-            answer_now_hint=self._answer_now_hint,
+            answer_now_hint=self._answer_now_hint and not retired,
             max_width=max_width,
         )
 
@@ -672,6 +725,91 @@ class ProgressSnapshot:
     source_records_seen: int | None = None
 
 
+class _ProgressVariant(t.NamedTuple):
+    """One rung of the progress-line width ladder.
+
+    Attributes
+    ----------
+    include_detail : bool
+        Whether the free-form phase detail is rendered.
+    include_hint : bool
+        Whether the interrupt reminder is rendered at all.
+    short_hint : bool
+        Whether that reminder uses its abbreviated spelling.
+    include_matches : bool
+        Whether the accepted-result counter is rendered.
+    include_elapsed : bool
+        Whether the elapsed-seconds clock is rendered.
+    """
+
+    include_detail: bool
+    include_hint: bool
+    short_hint: bool
+    include_matches: bool
+    include_elapsed: bool
+
+
+# Rungs the formatter walks when no interrupt reminder was requested. The second
+# rung is also what a too-narrow terminal truncates.
+_PROGRESS_VARIANTS_PLAIN = (
+    _ProgressVariant(
+        include_detail=True,
+        include_hint=False,
+        short_hint=False,
+        include_matches=True,
+        include_elapsed=True,
+    ),
+    _ProgressVariant(
+        include_detail=False,
+        include_hint=False,
+        short_hint=False,
+        include_matches=True,
+        include_elapsed=True,
+    ),
+)
+
+# Rungs the formatter walks when an interrupt reminder was requested. The
+# reminder is the affordance the user cannot discover any other way, so it
+# outranks the detail, the match counter, and the clock.
+_PROGRESS_VARIANTS_HINTED = (
+    _ProgressVariant(
+        include_detail=True,
+        include_hint=True,
+        short_hint=False,
+        include_matches=True,
+        include_elapsed=True,
+    ),
+    _ProgressVariant(
+        include_detail=False,
+        include_hint=True,
+        short_hint=False,
+        include_matches=True,
+        include_elapsed=True,
+    ),
+    _ProgressVariant(
+        include_detail=False,
+        include_hint=True,
+        short_hint=True,
+        include_matches=True,
+        include_elapsed=True,
+    ),
+    _ProgressVariant(
+        include_detail=False,
+        include_hint=True,
+        short_hint=True,
+        include_matches=False,
+        include_elapsed=True,
+    ),
+    _ProgressVariant(
+        include_detail=False,
+        include_hint=True,
+        short_hint=True,
+        include_matches=False,
+        include_elapsed=False,
+    ),
+)
+
+
 def format_search_progress_line(
     snapshot: ProgressSnapshot,
     *,
@@ -679,7 +817,7 @@ def format_search_progress_line(
     answer_now_hint: bool = False,
     max_width: int | None = None,
 ) -> str:
-    """Format the single-line progress summary used by both the CLI and the TUI.
+    """Format the single-line progress summary the CLI writes to stderr.
 
     Parameters
     ----------
@@ -688,10 +826,12 @@ def format_search_progress_line(
     colors : SearchColors
         An :class:`AnsiColors` instance (used by the CLI chrome).
     answer_now_hint : bool, default False
-        When ``True``, append the ``[Press enter, answer now]`` reminder.
+        When ``True``, append an interrupt reminder — answering early once
+        scanning has started, cancelling while it has not.
     max_width : int or None, default None
         Maximum visible terminal cells for the returned line. When set, the
-        formatter drops optional detail and hint segments before truncating.
+        formatter drops the detail, then abbreviates the reminder, then drops
+        the match counter and the clock, before truncating.
 
     Returns
     -------
@@ -699,23 +839,32 @@ def format_search_progress_line(
         ``"Searching <q> | <phase> N/M sources | K matches | T.Ts"`` with
         each segment styled through ``colors``.
     """
-    variants = (
-        (True, answer_now_hint),
-        (False, answer_now_hint),
-        (False, False),
-    )
-    for include_detail, include_hint in variants:
+    variants = _PROGRESS_VARIANTS_HINTED if answer_now_hint else _PROGRESS_VARIANTS_PLAIN
+    for variant in variants:
         line = _format_search_progress_line(
             snapshot,
             colors=colors,
-            answer_now_hint=include_hint,
-            include_detail=include_detail,
+            answer_now_hint=variant.include_hint,
+            include_detail=variant.include_detail,
+            short_hint=variant.short_hint,
+            include_matches=variant.include_matches,
+            include_elapsed=variant.include_elapsed,
         )
         if max_width is None or _visible_width(line) <= max_width:
             return line
     if max_width is None:
         return line
-    return _hard_truncate_ansi(line, max_width)
+    # Narrower than every rung: truncate the counters rather than the reminder,
+    # because a half-eaten reminder reads worse than none at all.
+    return _hard_truncate_ansi(
+        _format_search_progress_line(
+            snapshot,
+            colors=colors,
+            answer_now_hint=False,
+            include_detail=False,
+        ),
+        max_width,
+    )
 
 
 def _format_search_progress_line(
@@ -724,8 +873,34 @@ def _format_search_progress_line(
     colors: SearchColors,
     answer_now_hint: bool,
     include_detail: bool,
+    short_hint: bool = False,
+    include_matches: bool = True,
+    include_elapsed: bool = True,
 ) -> str:
-    """Build one progress-line variant."""
+    """Build one progress-line variant.
+
+    Parameters
+    ----------
+    snapshot : ProgressSnapshot
+        Frozen view of progress counters.
+    colors : SearchColors
+        Styling applied to each segment.
+    answer_now_hint : bool
+        Whether to append the interrupt reminder.
+    include_detail : bool
+        Whether to render the free-form phase detail.
+    short_hint : bool, default False
+        Whether the reminder uses its abbreviated spelling.
+    include_matches : bool, default True
+        Whether to render the accepted-result counter.
+    include_elapsed : bool, default True
+        Whether to render the elapsed-seconds clock.
+
+    Returns
+    -------
+    str
+        One rendered variant, unbounded in width.
+    """
     label_part = f"{colors.heading('Searching')} {colors.highlight(snapshot.query_label)}"
     detail_part = colors.muted(snapshot.detail) if include_detail and snapshot.detail else None
     if snapshot.current is not None and snapshot.total is not None:
@@ -742,15 +917,56 @@ def _format_search_progress_line(
     ]
     if detail_part:
         parts.append(detail_part)
-    parts.extend(
-        [
-            colors.warning(format_match_count(snapshot.matches)),
-            colors.muted(f"{snapshot.elapsed:.1f}s"),
-        ],
-    )
+    if include_matches:
+        parts.append(colors.warning(format_match_count(snapshot.matches)))
+    if include_elapsed:
+        parts.append(colors.muted(f"{snapshot.elapsed:.1f}s"))
     if answer_now_hint:
-        parts.append(colors.white("[Press enter, answer now]"))
+        parts.append(colors.white(_progress_hint(snapshot, short=short_hint)))
     return " | ".join(parts)
+
+
+def _progress_hint(snapshot: ProgressSnapshot, *, short: bool) -> str:
+    """Return the interrupt reminder for ``snapshot``.
+
+    U+21B5 keeps the abbreviated answer-now spelling one cell wide; it is
+    already shipped in the TUI input widgets.
+
+    Parameters
+    ----------
+    snapshot : ProgressSnapshot
+        Frozen view of progress counters. Before scanning starts nothing has
+        been read, so answering returns an empty result and discovery cannot
+        observe the request at all — that phase offers cancelling instead.
+    short : bool
+        When ``True``, return the abbreviated spelling that fits a narrow pane.
+
+    Returns
+    -------
+    str
+        Bracketed reminder text, without styling.
+
+    Examples
+    --------
+    >>> scanning = ProgressSnapshot(
+    ...     query_label="tmux",
+    ...     phase="scanning",
+    ...     current=12,
+    ...     total=40,
+    ...     detail=None,
+    ...     matches=0,
+    ...     elapsed=1.0,
+    ... )
+    >>> _progress_hint(scanning, short=False)
+    '[Press enter, answer now]'
+    >>> _progress_hint(scanning, short=True)
+    '[↵ answer]'
+    >>> _progress_hint(dataclasses.replace(scanning, current=None), short=True)
+    '[^C cancel]'
+    """
+    if snapshot.current is None:
+        return "[^C cancel]" if short else "[Ctrl-C to cancel]"
+    return "[↵ answer]" if short else "[Press enter, answer now]"
 
 
 def noop_search_progress() -> SearchProgress:

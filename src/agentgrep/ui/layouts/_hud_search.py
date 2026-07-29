@@ -10,7 +10,7 @@ from collections import abc as cabc
 
 from textual.worker import Worker, WorkerCancelled
 
-from agentgrep._engine.orchestration import clear_haystack_cache
+from agentgrep._engine.orchestration import clear_haystack_cache, search_record_sort_key
 from agentgrep._types import StreamingAppLike
 from agentgrep.progress import (
     ProgressSnapshot,
@@ -501,6 +501,9 @@ class _HudSearchBase(_HudDetailInteractionBase):
             effort=self._user_effort,
             scope_provenance=self._user_scope_provenance,
             conversation_limit=self._user_conversation_limit,
+            # An uncapped explorer query declares scan order so it runs on the
+            # streaming driver; a capped one keeps its order so the cap stays exact.
+            order=("scan" if self.search_query.limit is None else self.search_query.order),
         )
         result = build_query_from_input(text, base, default_registry())
         if result.query is not None:
@@ -532,6 +535,10 @@ class _HudSearchBase(_HudDetailInteractionBase):
         filter_generation = self._filter_generation
         filter_matcher = self._filter_matcher
         if records:
+            # Scan order arrives file-order within a source, so each batch is sorted
+            # newest-first; sources dispatch mtime-descending, making the stream as a
+            # whole read newest-first.
+            records = sorted(records, key=search_record_sort_key, reverse=True)
             self.all_records.extend(records)
             self._records_generation += 1
         # Results are arriving — collapse the centered searching panel to

@@ -17,6 +17,7 @@ import pathlib
 import re
 import textwrap
 import typing as t
+import unicodedata
 
 from rich.text import Text as _RichText
 
@@ -587,32 +588,120 @@ def _hard_truncate(text: str, max_width: int) -> str:
     return text[: max_width - 1] + "…"
 
 
+def _char_cells(char: str) -> int:
+    r"""Return how many terminal cells ``char`` occupies when displayed.
+
+    ``rich.cells.cell_len`` is already importable here and is more accurate for
+    grapheme clusters, but it undercounts some combining scripts. Undercounting
+    is the direction that wraps a status line and strands a row; this rule only
+    ever over-reserves.
+
+    Parameters
+    ----------
+    char : str
+        A single character.
+
+    Returns
+    -------
+    int
+        ``0`` for a combining mark, which renders on top of the preceding
+        character; ``2`` for East Asian Wide and Fullwidth characters; ``1``
+        otherwise.
+
+    Examples
+    --------
+    >>> _char_cells("a")
+    1
+    >>> _char_cells("会")
+    2
+    >>> _char_cells("́")
+    0
+    """
+    if unicodedata.combining(char):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+
+
 def _visible_width(text: str) -> int:
-    """Return display width after stripping ANSI CSI escape sequences."""
-    return len(ANSI_CSI_RE.sub("", text))
+    r"""Return display cells occupied after stripping ANSI CSI escape sequences.
+
+    Parameters
+    ----------
+    text : str
+        Text that may carry ANSI CSI escape sequences.
+
+    Returns
+    -------
+    int
+        Terminal cells the text occupies. Wide characters count two, so a
+        caller sizing a single-line status against the terminal width does not
+        overflow it and wrap.
+
+    Examples
+    --------
+    >>> _visible_width("plain ascii")
+    11
+    >>> _visible_width("会话记录")
+    8
+    >>> _visible_width("\x1b[36m会話\x1b[0m")
+    4
+    """
+    return sum(_char_cells(char) for char in ANSI_CSI_RE.sub("", text))
 
 
 def _hard_truncate_ansi(text: str, max_width: int) -> str:
-    """Truncate ANSI-colored text to ``max_width`` visible cells."""
+    """Truncate ANSI-colored text to at most ``max_width`` display cells.
+
+    A character whose cell cost would exceed the remaining budget is rejected
+    rather than appended: admitting it would emit a two-cell character into a
+    one-cell remainder and return a string wider than ``max_width``.
+
+    Parameters
+    ----------
+    text : str
+        Text that may carry ANSI CSI escape sequences.
+    max_width : int
+        Cell budget for the result, ellipsis included. ``0`` or less yields an
+        empty string.
+
+    Returns
+    -------
+    str
+        ``text`` unchanged when it already fits, otherwise a prefix ending in
+        ``…``. Escape sequences are carried through for free and a trailing
+        reset is appended when any were kept, so a truncation cannot leak color
+        into whatever the caller writes next.
+
+    Examples
+    --------
+    >>> _hard_truncate_ansi("abcdef", 4)
+    'abc…'
+    >>> _hard_truncate_ansi("会话记录", 5)
+    '会话…'
+    """
     if max_width <= 0:
         return ""
     if _visible_width(text) <= max_width:
         return text
     if max_width == 1:
         return "…"
+    budget = max_width - 1
     output: list[str] = []
     visible = 0
     index = 0
     saw_escape = False
-    while index < len(text) and visible < max_width - 1:
+    while index < len(text):
         match = ANSI_CSI_RE.match(text, index)
         if match is not None:
             output.append(match.group(0))
             index = match.end()
             saw_escape = True
             continue
+        cells = _char_cells(text[index])
+        if visible + cells > budget:
+            break
         output.append(text[index])
-        visible += 1
+        visible += cells
         index += 1
     output.append("…")
     if saw_escape:

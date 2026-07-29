@@ -57,6 +57,28 @@ rather than reporting a release number that is no longer true of it.
 development build, and the git ref — so a bug filed from inside the explorer can
 say exactly what was running. See {ref}`tui` for details.
 
+### Fixes
+
+#### The explorer shows results while a wide search is still running (#151)
+
+A `scope:all` search in the Textual explorer showed an empty canvas until the
+whole scan finished. Results now stream in as each source is read,
+newest-first. A search run under an explicit result limit is unchanged.
+
+#### The search progress line stays inside its terminal (#151)
+
+A query or filename with wide characters drew a progress line wider than the
+terminal, stranding a row of scrollback on each redraw. The line now measures
+itself as the terminal does, and abbreviates its interrupt reminder rather than
+dropping it in a narrow pane.
+
+#### A long search acknowledges the key you pressed (#151)
+
+Pressing Enter during a wide search set the request immediately but left the
+progress line reading "scanning" for seconds. The line now confirms the
+keypress on the next frame, and offers Ctrl-C instead while the search is still
+finding files, where answering early has nothing to return.
+
 ## agentgrep 0.1.0a45 (2026-07-27)
 
 agentgrep 0.1.0a45 tunes the Textual explorer's narrow-terminal layout. When a
