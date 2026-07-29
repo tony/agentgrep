@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a46 (Yet to be released)
+## agentgrep 0.1.0a47 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a46 (2026-07-28)
+
+agentgrep 0.1.0a46 makes a running install identify itself, and keeps a wide
+search legible while it runs. `agentgrep --version`, `agentgrep.__version__`,
+and a new `/status` command in the explorer report the version and, from a git
+checkout, the commit the running code came from. A `scope:all` search in the
+explorer now shows matches as each source is read rather than after the whole
+scan finishes, and the CLI's progress line fits the terminal it is drawn in,
+keeps its interrupt reminder visible in a narrow pane, and confirms a keypress
+instead of appearing to drop it. See {ref}`tui` for details.
 
 ### What's new
 
