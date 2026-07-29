@@ -70,6 +70,11 @@ except ImportError:
     # .JSONDecodeError; the runtime None check guards the absent case.
     _orjson = None  # ty: ignore[invalid-assignment]
 
+# Release version and git provenance live in agentgrep._version. Importing it
+# does no work; ``__version__`` is resolved lazily by the ``__getattr__`` below,
+# so ``import agentgrep`` still reads no files.
+from agentgrep import _version
+
 # Records, payloads, and shared vocabulary live in agentgrep.records.
 # Structural typing shims live in agentgrep._types.
 # Text-presentation helpers live in agentgrep._text.
@@ -725,6 +730,7 @@ __all__ = (
     "UIArgs",
     "VersionDetectionConfidence",
     "VersionDetectionStrategy",
+    "__version__",
     "add_common_agent_options",
     "add_output_mode_options",
     "aiter_search_events",
@@ -903,6 +909,40 @@ __all__ = (
     "truncate_lines",
     "which_first",
 )
+
+#: The released version, such as ``"0.1.0a45"`` — the static ``pyproject.toml``
+#: literal, unchanged by which commit is running so a consumer can parse it as
+#: PEP 440. Build provenance (the ``git describe`` ref of a checkout) is a
+#: separate fact, reported by ``agentgrep --version`` and the explorer's
+#: ``/status``. Declared here as an annotation only; ``__getattr__`` resolves it
+#: on first access so importing agentgrep reads no files.
+__version__: str
+
+
+def __getattr__(name: str) -> str:
+    """Resolve lazily computed module attributes (PEP 562).
+
+    Parameters
+    ----------
+    name : str
+        Attribute requested from the :mod:`agentgrep` namespace.
+
+    Returns
+    -------
+    str
+        The released version, for ``__version__``.
+
+    Raises
+    ------
+    AttributeError
+        For every other name, so normal attribute and submodule lookup is
+        unaffected.
+    """
+    if name == "__version__":
+        return _version.release_version()
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
