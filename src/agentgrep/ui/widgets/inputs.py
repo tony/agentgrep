@@ -14,6 +14,7 @@ import typing as t
 
 from rich.highlighter import Highlighter
 from textual import events
+from textual.actions import SkipAction
 from textual.binding import Binding, BindingType
 from textual.content import Content
 from textual.geometry import Region
@@ -49,6 +50,17 @@ def _consume_key(event: events.Key) -> None:
     event.prevent_default()
 
 
+def _has_copyable_selection(widget: Input) -> bool:
+    """Return ``True`` when ctrl+c has something in *this box* to copy.
+
+    Deliberately consults only the input's own selection, never the screen's:
+    the chord acts on whatever holds focus, so a detail highlight the user
+    forgot about must not silently disable ctrl+c-clears-the-box. Reading a
+    reactive attribute is O(1), so this stays pump-safe.
+    """
+    return bool(str(getattr(widget, "selected_text", "")))
+
+
 def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:
     """Route a ctrl+c keypress through the app's staged-exit handler.
 
@@ -57,8 +69,12 @@ def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:
     staging itself — clear the input text first, then confirm-exit (or close
     the find bar) on an empty box — lives on the app
     (:meth:`_handle_input_ctrl_c`) so the rule is written once.
+
+    A live selection is left alone: staging a clear there would delete the
+    user's typed query in answer to the copy key, and ``Input``'s own ctrl+c
+    copy binding is what should run instead.
     """
-    if str(getattr(event, "key", "")) != "ctrl+c":
+    if str(getattr(event, "key", "")) != "ctrl+c" or _has_copyable_selection(widget):
         return False
     _consume_key(event)
     t.cast("t.Any", widget.screen)._handle_input_ctrl_c(widget)
@@ -77,6 +93,20 @@ class _BoundedInput(Input):
     def validate_value(self, value: str) -> str:
         """Clamp every reactive assignment to the interactive text budget."""
         return value[:INPUT_MAX_LENGTH]
+
+    @_runtime.pump_only
+    def action_copy(self) -> None:
+        """Copy the input's own selection with the layout's clipboard notice.
+
+        Overrides ``Input.action_copy`` so a copy from the search box reports
+        the same "sent ... (OSC 52)" toast as a copy from the detail pane
+        instead of succeeding silently. Skipping with no selection lets the
+        screen's copy binding claim the chord.
+        """
+        selected = self.selected_text
+        if not selected:
+            raise SkipAction
+        t.cast("t.Any", self.screen).send_to_clipboard(selected, label="selection")
 
 
 class FilterInput(_BoundedInput):
@@ -141,8 +171,11 @@ class FilterInput(_BoundedInput):
         value = str(getattr(self, "value", ""))
         dropdown = t.cast("t.Any", getattr(self.screen, "_filter_dropdown", None))
         dropdown_open = dropdown is not None and bool(dropdown.display)
-        if dropdown_open and key in {"escape", "ctrl+c"}:
-            # Dismiss the dropdown, keep editing — don't quit.
+        if dropdown_open and (
+            key == "escape" or (key == "ctrl+c" and not _has_copyable_selection(self))
+        ):
+            # Dismiss the dropdown, keep editing — don't quit. A ctrl+c with a
+            # live selection means copy; escape still dismisses either way.
             _consume_key(event)
             dropdown.display = False
             return
@@ -369,8 +402,11 @@ class SearchInput(_BoundedInput):
         value = str(getattr(self, "value", ""))
         dropdown = t.cast("t.Any", getattr(self.screen, "_enum_dropdown", None))
         dropdown_open = dropdown is not None and bool(dropdown.display)
-        if dropdown_open and key in {"escape", "ctrl+c"}:
-            # Dismiss the dropdown, keep editing — don't quit or stop search.
+        if dropdown_open and (
+            key == "escape" or (key == "ctrl+c" and not _has_copyable_selection(self))
+        ):
+            # Dismiss the dropdown, keep editing — don't quit or stop search. A
+            # ctrl+c with a live selection means copy; escape still dismisses.
             _consume_key(event)
             dropdown.display = False
             return
