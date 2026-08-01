@@ -21,7 +21,7 @@ from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui.app import build_streaming_ui_app
 
-pytestmark = pytest.mark.tui
+pytestmark = [pytest.mark.tui, pytest.mark.slow]
 
 
 def _make_record(text: str) -> SearchRecord:
