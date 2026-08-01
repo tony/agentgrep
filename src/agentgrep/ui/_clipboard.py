@@ -131,10 +131,6 @@ class CopySelectionGuard:
     is the only way the once-per-session tmux caveat can be session-wide.
     """
 
-    #: Class-level default so a mixin with no ``__init__`` still reads cleanly;
-    #: the first copy shadows it with an instance attribute.
-    _clipboard_hint_shown = False
-
     @_runtime.pump_only
     def get_selected_text(self) -> str | None:
         """Resolve native selection text consistently across Textual versions."""
@@ -163,12 +159,13 @@ class CopySelectionGuard:
             ``True`` when the payload is a bounded prefix of the record text.
         """
         screen = t.cast("t.Any", self)
-        screen.app.copy_to_clipboard(text)
+        app = screen.app
+        app.copy_to_clipboard(text)
         screen.notify(copy_notice(text, label=label, truncated=truncated))
-        if self._clipboard_hint_shown:
+        if getattr(app, "_agentgrep_clipboard_hint_shown", False):
             return
-        self._clipboard_hint_shown = True
         if (hint := tmux_clipboard_hint()) is not None:
+            app._agentgrep_clipboard_hint_shown = True
             screen.notify(hint, title="Clipboard", severity="warning")
 
     @_runtime.pump_only
