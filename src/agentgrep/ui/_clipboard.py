@@ -136,6 +136,12 @@ class CopySelectionGuard:
     _clipboard_hint_shown = False
 
     @_runtime.pump_only
+    def get_selected_text(self) -> str | None:
+        """Resolve native selection text consistently across Textual versions."""
+        selected = t.cast("t.Any", super()).get_selected_text()
+        return None if selected is None else selected.rstrip("\n")
+
+    @_runtime.pump_only
     def send_to_clipboard(self, text: str, *, label: str, truncated: bool = False) -> None:
         """Copy ``text`` and report what was sent, never that it arrived.
 

@@ -22,7 +22,9 @@ import functools
 import typing as t
 from collections import abc as cabc
 
+from textual._cells import cell_width_to_column_index
 from textual.binding import BindingType
+from textual.geometry import Offset
 from textual.selection import Selection
 from textual.widgets import Footer, Log, Static
 
@@ -58,25 +60,58 @@ _APPLY_CHUNK_SIZE = 200
 class _SelectableLog(Log):
     """A ``Log`` with correct multi-line extraction at the Textual 3.2 floor."""
 
+    def _mouse_cell_selection(self) -> Selection | None:
+        """Return the active mouse drag in content-cell coordinates."""
+        if not self.is_mounted:
+            return None
+        screen = t.cast("t.Any", self.screen)
+        if (state := getattr(screen, "_select_state", None)) is not None:
+            end = getattr(state, "end", None)
+            if (
+                end is None
+                or state.start.content_widget is not self
+                or end.content_widget is not self
+            ):
+                return None
+            screen_offsets = (state.start.pointer_start_offset, state.screen_offset)
+        else:
+            start = getattr(screen, "_select_start", None)
+            end = getattr(screen, "_select_end", None)
+            if start is None or end is None or start[0] is not self or end[0] is not self:
+                return None
+            screen_offsets = (start[1], end[1])
+        origin = self.content_region.offset
+        offsets = sorted(
+            (offset - origin + self.scroll_offset for offset in screen_offsets),
+            key=lambda offset: offset.transpose,
+        )
+        return Selection(offsets[0], offsets[1] + Offset(1, 0))
+
     @_runtime.pump_only
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Return the retained plain text covered by ``selection``."""
         if not self.lines:
             return "", "\n"
-        start_y = 0 if selection.start is None else max(0, selection.start.y)
+        cell_selection = self._mouse_cell_selection()
+        active_selection = selection if cell_selection is None else cell_selection
+        start_y = 0 if active_selection.start is None else max(0, active_selection.start.y)
         end_y = (
             len(self.lines) - 1
-            if selection.end is None
-            else min(selection.end.y, len(self.lines) - 1)
+            if active_selection.end is None
+            else min(active_selection.end.y, len(self.lines) - 1)
         )
         if start_y > end_y:
             return "", "\n"
         selected_lines: list[str] = []
         for y in range(start_y, end_y + 1):
-            if (span := selection.get_span(y)) is None:
+            if (span := active_selection.get_span(y)) is None:
                 continue
             start_x, end_x = span
-            line = self.lines[y]
+            line = self._process_line(self.lines[y])
+            if cell_selection is not None:
+                start_x = cell_width_to_column_index(line, start_x, 8)
+                if end_x != -1:
+                    end_x = cell_width_to_column_index(line, end_x, 8)
             selected_lines.append(line[start_x:] if end_x == -1 else line[start_x:end_x])
         return "\n".join(selected_lines), "\n"
 

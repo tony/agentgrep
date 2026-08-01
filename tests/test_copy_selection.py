@@ -302,3 +302,37 @@ async def test_greplog_mouse_selection_copies_without_quitting(
         layout._write_chunk([_make_record("third")])
 
         assert not app.screen.selections
+
+
+async def test_greplog_mouse_selection_tracks_rendered_cells(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Copy the rendered glyph under display-cell mouse coordinates."""
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(
+            tmp_path,
+            _empty_query(),
+            control=SearchControl(),
+            layout="greplog",
+        ),
+    )
+    async with app.run_test(size=(100, 20)) as pilot:
+        await pilot.pause()
+        log = app.screen._log
+
+        for text, start, end, expected in (
+            ("a界b", (1, 0), (2, 0), "界"),
+            ("a\tb", (8, 0), (9, 0), "b"),
+        ):
+            app.screen.clear_selection()
+            log.clear()
+            log.write(text)
+            await pilot.pause()
+
+            assert await pilot.mouse_down(log, offset=start)
+            assert await pilot.hover(log, offset=end)
+            assert await pilot.mouse_up(log, offset=end)
+            await pilot.pause()
+
+            assert app.screen.get_selected_text() == expected
