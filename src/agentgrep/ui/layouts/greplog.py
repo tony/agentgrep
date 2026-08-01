@@ -22,6 +22,7 @@ import functools
 import typing as t
 from collections import abc as cabc
 
+from textual import events
 from textual._cells import cell_width_to_column_index
 from textual.binding import BindingType
 from textual.geometry import Offset
@@ -60,6 +61,13 @@ _APPLY_CHUNK_SIZE = 200
 class _SelectableLog(Log):
     """A ``Log`` with correct multi-line extraction at the Textual 3.2 floor."""
 
+    _mouse_start_scroll: Offset | None = None
+
+    @_runtime.pump_only
+    def on_mouse_down(self, _event: events.MouseDown) -> None:
+        """Retain the content scroll origin for this selection drag."""
+        self._mouse_start_scroll = self.scroll_offset
+
     def _mouse_cell_selection(self) -> Selection | None:
         """Return the active mouse drag in content-cell coordinates."""
         if not self.is_mounted:
@@ -73,16 +81,25 @@ class _SelectableLog(Log):
                 or end.content_widget is not self
             ):
                 return None
-            screen_offsets = (state.start.pointer_start_offset, state.screen_offset)
+            start_screen = (
+                state.start.container_initial_offset + state.start.container_pointer_delta
+            )
+            end_screen = state.screen_offset
         else:
             start = getattr(screen, "_select_start", None)
             end = getattr(screen, "_select_end", None)
             if start is None or end is None or start[0] is not self or end[0] is not self:
                 return None
-            screen_offsets = (start[1], end[1])
+            start_screen, end_screen = start[1], end[1]
         origin = self.content_region.offset
+        start_scroll = self.scroll_offset
+        if self._mouse_start_scroll is not None:
+            start_scroll = self._mouse_start_scroll
         offsets = sorted(
-            (offset - origin + self.scroll_offset for offset in screen_offsets),
+            (
+                start_screen - origin + start_scroll,
+                end_screen - origin + self.scroll_offset,
+            ),
             key=lambda offset: offset.transpose,
         )
         return Selection(offsets[0], offsets[1] + Offset(1, 0))

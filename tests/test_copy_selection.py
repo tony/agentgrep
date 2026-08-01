@@ -399,3 +399,37 @@ async def test_greplog_mouse_selection_tracks_rendered_cells(
             await pilot.pause()
 
             assert app.screen.get_selected_text() == expected
+
+
+async def test_greplog_drag_keeps_anchor_while_scrolling(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Scrolling during a drag keeps its original content-row anchor."""
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(
+            tmp_path,
+            _empty_query(),
+            control=SearchControl(),
+            layout="greplog",
+        ),
+    )
+    async with app.run_test(size=(60, 15)) as pilot:
+        await pilot.pause()
+        log = app.screen._log
+        log.auto_scroll = False
+        log.write("\n".join(f"L{index:02d}" for index in range(50)))
+        await pilot.pause()
+        log.scroll_to(y=10, animate=False)
+        await pilot.pause()
+
+        assert await pilot.mouse_down(log, offset=(0, 0))
+        log.scroll_to(y=15, animate=False)
+        await pilot.pause()
+        assert await pilot.hover(log, offset=(2, 2))
+        assert await pilot.mouse_up(log, offset=(2, 2))
+        await pilot.pause()
+
+        assert app.screen.get_selected_text() == "\n".join(
+            f"L{index:02d}" for index in range(10, 18)
+        )
