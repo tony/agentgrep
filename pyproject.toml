@@ -36,6 +36,14 @@ dependencies = [
 # agentgrep runs without it; stdlib json stays the semantic source of truth
 # (see docs/dev/adr/0002).
 speedups = ["orjson>=3.10"]
+otel = [
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+    "opentelemetry-instrumentation-sqlite3>=0.63b1",
+    "opentelemetry-sdk>=1.42.1",
+    "pyroscope-io>=1.0.12",
+    "pyroscope-otel>=1.0.1",
+]
 
 [project.urls]
 "Bug Tracker" = "https://github.com/tony/agentgrep/issues"
@@ -85,6 +93,12 @@ dev = [
   # rich are already in the runtime graph via the project itself / textual.
   "click>=8.1",
   "typer>=0.12",
+  "pyroscope-io>=1.0.12",
+  "pyroscope-otel>=1.0.1",
+  "opentelemetry-api>=1.42.1",
+  "opentelemetry-sdk>=1.42.1",
+  "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+  "opentelemetry-instrumentation-sqlite3>=0.63b1",
 ]
 docs = [
   "gp-sphinx==0.1.0a37",
@@ -271,12 +285,27 @@ convention = "numpy"
 # typer.Option / typer.Argument calls are metadata, not real callables —
 # B008 does not apply. E501 is suppressed because a few error messages
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
-# more naturally as one line than wrapped.
-"scripts/benchmark.py" = ["B008", "E501"]
+# more naturally as one line than wrapped. The runner also imports telemetry
+# from arbitrary checked-out revisions, where any import failure must degrade
+# to the uninstrumented benchmark path.
+"scripts/benchmark.py" = ["B008", "E501", "BLE001"]
 # The config swap restores the original bytes on any failure of the write or
 # the revalidation that follows it. Narrowing the handler would let some
 # failure modes leave a third-party CLI's config half-rewritten.
 "scripts/mcp_swap.py" = ["T201", "BLE001"]
+# Acceptance scripts intentionally print their machine-readable result and
+# retry arbitrary probes until the shared deadline expires.
+"scripts/otel_acceptance.py" = ["T201", "BLE001"]
+# Dashboard panels embed PromQL expressions as f-strings; E501 is suppressed
+# because the queries read more naturally as single lines than wrapped.
+"scripts/lgtm/generate_dashboards.py" = ["E501", "T201"]
+# Telemetry is an optional best-effort boundary. Backend import, setup, export,
+# and teardown failures must degrade to the dependency-light no-op facade.
+"src/agentgrep/_telemetry.py" = ["BLE001"]
+"src/agentgrep/_telemetry_otel.py" = ["BLE001"]
+# Inbound trace context crosses optional MCP and FastMCP internals. Any context
+# access or extraction failure must degrade to an unparented request.
+"src/agentgrep/mcp/middleware.py" = ["BLE001"]
 # The documentation harness exists to run the Python examples embedded in the
 # docs; `exec` of a compiled example in an isolated namespace is its whole
 # job, not an untrusted-input hazard. Whatever an example raises is the result

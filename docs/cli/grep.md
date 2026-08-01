@@ -107,9 +107,9 @@ only the deduplicated paths. `-c` emits `path:N` per matching
 record with the count of matching lines (or just `N` when exactly
 one record matched), matching `rg -c`.
 
-The terminal reducers `-c`, `-l`, and the supported `-v -c` form replace the
-match-event stream with counts or paths. You cannot combine them with `--json`
-or `--ndjson`; choose structured events or reducer text output.
+The terminal reducers `-c` and `-l` replace the match-event stream with counts
+or paths. You cannot combine them with `--json` or `--ndjson`; choose structured
+events or reducer text output.
 
 ## Live streaming
 
@@ -120,7 +120,7 @@ priority. Direct terminal output flushes each accepted match because stdout is
 a TTY. A pipe is block-buffered; set `PYTHONUNBUFFERED=1` when a downstream
 process must observe each NDJSON event immediately.
 
-The eager output modes (`--json`, `-c`, `-l`, `-v`) buffer
+The eager output modes (`--json`, `-c`, `-l`) buffer
 because their output shape needs the final tally or cross-record
 deduplication. Ranked relevance and global-newest search also buffer when the
 engine must establish a global frontier.
@@ -239,20 +239,19 @@ agentgrep grep: error: pattern cannot be empty
 The check applies to every term — a valid pattern followed by an
 empty one (`agentgrep grep foo ''`) still fails.
 
-`-v` / `--invert-match` for plain text output is not yet
-implemented and is refused at parse time:
+`-v` / `--invert-match` selects lines that do not match the pattern.
+Because a nonmatching record cannot be found by a positive text
+prefilter, inverted grep enumerates candidate records first and applies
+line-level inversion after parsing:
 
 ```console
 $ agentgrep grep -v bliss
-usage: agentgrep grep [...]
-agentgrep grep: error: --invert-match for text output is not yet
-implemented (see https://github.com/tony/agentgrep/issues/8); use -c
 ```
 
-The flag is still honored under `-c` (returns `0` if any record
-matched, `1` if none), since it reduces to a "did anything match?"
-question that the engine's current output supports. Tracking issue:
-[tony/agentgrep#8](https://github.com/tony/agentgrep/issues/8).
+`-c` counts selected nonmatching lines. `-l` lists files with at least
+one selected nonmatching line. `-o -v` follows `rg` by printing the whole
+selected line, and `--vimgrep -v` prints `path:line:text` without a
+column because there is no positive submatch offset.
 
 (cli-grep-dedupe)=
 
