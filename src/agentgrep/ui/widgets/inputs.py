@@ -92,6 +92,15 @@ def _disarm_confirm_exit(widget: Input) -> None:
 class _BoundedInput(Input):
     """Input whose reactive value invariant also covers programmatic writes."""
 
+    BINDINGS: t.ClassVar[list[BindingType]] = [
+        Binding(
+            "ctrl+c,super+c,ctrl+shift+c,shift+super+c",
+            "copy",
+            "Copy selected text",
+            show=False,
+        ),
+    ]
+
     @_runtime.pump_only
     def validate_value(self, value: str) -> str:
         """Clamp every reactive assignment to the interactive text budget."""

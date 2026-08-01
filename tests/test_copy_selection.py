@@ -155,6 +155,29 @@ async def test_screen_selection_beats_focused_input_clearing(
         assert not app.screen.selections
 
 
+async def test_focused_input_supports_every_copy_chord(tmp_path: pathlib.Path) -> None:
+    """Each advertised copy chord copies a focused input selection."""
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        search = app.query_one("#search")
+        search.value = "before needle after"
+        search.focus()
+
+        for key in ("ctrl+c", "super+c", "ctrl+shift+c", "shift+super+c"):
+            search.selection = type(search.selection)(7, 13)
+            app._clipboard = f"PRESET-{key}"
+
+            await pilot.press(key)
+            await pilot.pause()
+
+            assert app.clipboard == "needle", key
+            assert search.value == "before needle after", key
+
+
 async def test_record_switch_drops_a_stale_selection(tmp_path: pathlib.Path) -> None:
     """Selecting in one record and switching to another clears the highlight.
 
