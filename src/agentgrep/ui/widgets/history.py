@@ -32,6 +32,7 @@ from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._clipboard import CopySelectionGuard
 from agentgrep.ui._history import DISPLAY_LIMIT, HistoryEntry
 from agentgrep.ui.format import format_relative_time
 from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
@@ -149,7 +150,7 @@ def _score_and_deliver(
         return
 
 
-class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual generic base needs a runtime subscript
+class HistoryRecall(CopySelectionGuard, ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual generic base needs a runtime subscript
     """Two-pane Ctrl-R recall over the persisted search-input history."""
 
     AUTO_FOCUS = "#history-filter"

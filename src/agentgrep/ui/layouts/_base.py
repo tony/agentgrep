@@ -22,6 +22,7 @@ from textual.screen import Screen
 from agentgrep import _version
 from agentgrep.results import apply_search_request_patch, offered_depth_actions
 from agentgrep.ui import _runtime, commands, theme as ui_theme
+from agentgrep.ui._clipboard import CopySelectionGuard
 
 if t.TYPE_CHECKING:
     from agentgrep.records import SearchQuery
@@ -127,7 +128,7 @@ def _resolve_build_provenance(
     call_from_thread(present, _version.build_provenance())
 
 
-class LayoutScreen(_SCREEN_BASE):
+class LayoutScreen(CopySelectionGuard, _SCREEN_BASE):
     """A swappable explorer layout that consumes a shared :class:`UiContext`.
 
     Parameters
