@@ -20,6 +20,52 @@ from agentgrep.records import (
     SourceHandle,
 )
 
+_CATALOG_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+)
+
+
+def _catalog_uuid_path_token(source: SourceHandle) -> str | None:
+    """Return a UUID only from the source family's documented path suffix."""
+    path = source.path
+    token: str | None = None
+    match (source.agent, source.store, source.adapter_id):
+        case (
+            "cursor-cli",
+            "cursor-cli.transcripts",
+            "cursor_cli.transcripts_jsonl.v1",
+        ) if (
+            len(path.parents) >= 2
+            and path.parents[1].name == "agent-transcripts"
+            and path.name == f"{path.parent.name}.jsonl"
+        ):
+            token = path.parent.name
+        case (
+            "cursor-cli",
+            "cursor-cli.chats",
+            "cursor_cli.chats_protobuf.v1",
+        ) if len(path.parents) >= 3 and path.parents[2].name == "chats" and path.name == "store.db":
+            token = path.parent.name
+        case (
+            "antigravity-cli",
+            "antigravity-cli.transcript",
+            "antigravity_cli.transcript_jsonl.v1",
+        ) if (
+            len(path.parents) >= 4
+            and path.parents[0].name == "logs"
+            and path.parents[1].name == ".system_generated"
+            and path.parents[3].name == "brain"
+            and path.name == "transcript_full.jsonl"
+        ):
+            token = path.parents[2].name
+        case (
+            "antigravity-cli",
+            "antigravity-cli.conversations",
+            "antigravity_cli.conversations_sqlite_protobuf.v1",
+        ) if path.parent.name == "conversations" and path.suffix == ".db":
+            token = path.stem
+    return token if token is not None and _CATALOG_UUID_RE.fullmatch(token) else None
+
 
 def _record_origin(
     *,

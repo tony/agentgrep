@@ -12,6 +12,7 @@ from agentgrep.adapters._common import (
     _unix_to_isoformat,
 )
 from agentgrep.adapters._extract import (
+    _record_position,
     flatten_content_value,
 )
 from agentgrep.adapters._generic import (
@@ -23,7 +24,7 @@ from agentgrep.origin import (
     decode_project_dir,
 )
 from agentgrep.readers import (
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     as_optional_str,
     open_readonly_sqlite,
     read_json_file,
@@ -81,16 +82,17 @@ def parse_grok_prompt_history(
     """
     session_origin = _grok_project_dir_origin(source.path.parent)
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    for event in events:
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -112,6 +114,10 @@ def parse_grok_prompt_history(
             conversation_id=session_id,
             metadata={"is_bash": mapping.get("is_bash", False)},
             origin=session_origin,
+            identity_namespace=("grok.session" if session_id is not None else None),
+            position=_record_position(
+                ordinal=positioned_event.source_ordinal(),
+            ),
         )
 
 
@@ -141,16 +147,17 @@ def parse_grok_chat_history(
     conversation_id = source.path.parent.name
     session_origin = _grok_project_dir_origin(source.path.parent.parent)
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    for event in events:
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -175,6 +182,7 @@ def parse_grok_chat_history(
             session_id=conversation_id,
             conversation_id=conversation_id,
             origin=session_origin,
+            position=_record_position(ordinal=positioned_event.source_ordinal()),
         )
 
 
@@ -218,6 +226,8 @@ def parse_grok_session_search_db(
                 session_id=session_id,
                 conversation_id=session_id,
                 origin=_record_origin(cwd=as_optional_str(cwd_raw)),
+                identity_namespace=("grok.session" if session_id is not None else None),
+                position=_record_position(native_id=session_id),
             )
     except sqlite3.DatabaseError:
         return
@@ -246,6 +256,7 @@ def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
         return
     child_session_id = as_optional_str(mapping.get("child_session_id"))
     parent_session_id = as_optional_str(mapping.get("parent_session_id"))
+    session_id = child_session_id or parent_session_id
     subagent_type = as_optional_str(mapping.get("subagent_type"))
     metadata: dict[str, object] = {}
     if subagent_type:
@@ -262,9 +273,11 @@ def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
         title=description or "Grok subagent",
         role="user",
         timestamp=as_optional_str(mapping.get("started_at")),
-        session_id=child_session_id,
-        conversation_id=child_session_id or parent_session_id,
+        session_id=session_id,
+        conversation_id=session_id,
         metadata=metadata,
+        identity_namespace=("grok.session" if session_id is not None else None),
+        position=_record_position(native_id=mapping.get("subagent_id")),
     )
 
 

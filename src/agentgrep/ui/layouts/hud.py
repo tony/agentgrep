@@ -65,6 +65,7 @@ from agentgrep.ui.widgets.welcome import (
 
 if t.TYPE_CHECKING:
     from agentgrep._engine.matching import CompiledRecordMatcher
+    from agentgrep.identity import RecordIdentity
     from agentgrep.ui.workflows import Workflow
 
 
@@ -81,7 +82,7 @@ class HudLayout(_HudSearchBase):
     # untouched and remain readline-compatible.
     BINDINGS: t.ClassVar[list[BindingType]] = [
         ("tab", "app.focus_next", "Switch focus"),
-        ("q", "app.quit", "Quit"),
+        ("q", "confirm_quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
         COPY_SELECTION_BINDING,
@@ -111,6 +112,10 @@ class HudLayout(_HudSearchBase):
     synchronous; only a large, uncached body — parse, pretty-print, and
     syntax-highlight — is heavy enough to stall the event loop.
     """
+
+    # Detail width below which compact labels keep fixed-width identity
+    # handles on one visual row after the Static's horizontal padding.
+    _DETAIL_COMPACT_IDENTITY_WIDTH: t.ClassVar[int] = 42
 
     # Body width (cells) below which the detail pane moves from the
     # right (side-by-side) to the bottom (stacked) — each side wants
@@ -164,6 +169,7 @@ class HudLayout(_HudSearchBase):
         self._detail_body: StaticLike | None = None
         self._detail_row: SlowSourceDiagnosticsRow | None = None
         self._chrome_generation: int = 0
+        self._detail_generation: int = 0
         self._last_detail_text: str = ""
         self._last_right_text: str = ""
         self._detail_visible: bool = False
@@ -212,6 +218,10 @@ class HudLayout(_HudSearchBase):
         self._detail_body_cache: collections.OrderedDict[
             _DetailCacheKey,
             tuple[SearchRecord, object, str, str],
+        ] = collections.OrderedDict()
+        self._detail_identity_cache: collections.OrderedDict[
+            int,
+            tuple[SearchRecord, RecordIdentity],
         ] = collections.OrderedDict()
         self._presented_detail_cache_key: _DetailCacheKey | None = None
         self._detail_build_generation = 0
@@ -263,13 +273,6 @@ class HudLayout(_HudSearchBase):
             int,
             tuple[str, int, int],
         ] = collections.OrderedDict()
-        # Staged ctrl-c in inputs: clear the text first, then (on an empty
-        # box) a first ctrl-c arms "press ctrl-c again to exit" in the gutter
-        # and a second within the window quits. The gutter is a flash-layer
-        # Static docked at the bottom.
-        self._confirm_exit_pending: bool = False
-        self._confirm_exit_timer: object | None = None
-        self._ctrlc_gutter: t.Any = None
 
     def _get_start_time(self) -> float | None:
         return self._started_at
@@ -487,7 +490,6 @@ class HudLayout(_HudSearchBase):
         )
         t.cast("t.Any", self._detail_find_input).display = False
         t.cast("t.Any", self._detail_find_input).cursor_blink = False
-        self._ctrlc_gutter = t.cast("t.Any", streaming.query_one("#ctrlc-gutter"))
         self._enum_dropdown = t.cast("t.Any", streaming.query_one("#enum-dropdown"))
         self._enum_dropdown.display = False
         self._filter_dropdown = t.cast("t.Any", streaming.query_one("#filter-dropdown"))
@@ -760,6 +762,7 @@ class HudLayout(_HudSearchBase):
             timer.stop()
         self._resize_debounce_timer = self.set_timer(0.05, self._after_resize)
 
+    @_runtime.pump_only
     def _after_resize(self) -> None:
         """Refresh chrome and re-flow the width-baked detail body on a resize."""
         # Recompute (not just repaint) because the result viewport's new height
@@ -778,6 +781,15 @@ class HudLayout(_HudSearchBase):
         # quantizes), mirroring the filter path. Raw source and the visual
         # overlay are plain Text that Textual re-wraps for free -- skip them.
         record = self._current_detail_record
+        if record is not None:
+            identity = self._cached_detail_identity(record)
+            self._replace_detail_header(
+                self._build_detail_header(
+                    record,
+                    identity,
+                    width=self._detail_render_width(),
+                ),
+            )
         if record is not None and not self._detail_visual_active and not self._detail_raw_mode:
             detail_key = self._detail_cache_key(self.search_query.terms, record)
             if detail_key != self._presented_detail_cache_key:
@@ -791,6 +803,7 @@ class HudLayout(_HudSearchBase):
         """``Esc``: cooperative early-exit of the worker (no-op when finished)."""
         self._cancel_active_action()
 
+    @_runtime.pump_only
     def action_smart_quit(self) -> None:
         """``Ctrl-C`` outside an input: cancel an in-flight action; else stage exit.
 
@@ -801,11 +814,13 @@ class HudLayout(_HudSearchBase):
         gutter as the inputs, so the warning shows whichever pane holds focus.
         """
         if self._has_active_actions():
+            self._disarm_confirm_exit()
             self._cancel_active_action()
             return
-        self._arm_or_confirm_exit()
+        self._arm_or_confirm_exit("ctrl-c")
 
     # --- staged ctrl-c in the inputs --------------------------------
+    @_runtime.pump_only
     def _handle_input_ctrl_c(self, widget: object) -> None:
         """Staged ctrl-c from a focused input.
 
@@ -824,43 +839,7 @@ class HudLayout(_HudSearchBase):
         if self._has_active_actions():
             self._cancel_active_action()
             return
-        self._arm_or_confirm_exit()
-
-    def _arm_or_confirm_exit(self) -> None:
-        """Arm the confirm-exit gutter, or quit if it is already armed.
-
-        Shared by the focused-input path (:meth:`_handle_input_ctrl_c`) and the
-        non-input binding (:meth:`action_smart_quit`) so the "press ctrl-c again
-        to exit" gutter behaves identically in every pane. The first call shows
-        the gutter and starts a 2 s disarm timer; a second call within that
-        window exits.
-        """
-        if self._confirm_exit_pending:
-            self.app.exit()
-            return
-        self._confirm_exit_pending = True
-        self._set_ctrlc_gutter("press ctrl-c again to exit")
-        if self._confirm_exit_timer is not None:
-            t.cast("t.Any", self._confirm_exit_timer).stop()
-        self._confirm_exit_timer = self.set_timer(2.0, self._disarm_confirm_exit)
-
-    def _disarm_confirm_exit(self) -> None:
-        """Cancel a pending confirm-exit and hide the gutter (idempotent)."""
-        if not self._confirm_exit_pending:
-            return
-        self._confirm_exit_pending = False
-        if self._confirm_exit_timer is not None:
-            t.cast("t.Any", self._confirm_exit_timer).stop()
-            self._confirm_exit_timer = None
-        self._set_ctrlc_gutter("")
-
-    def _set_ctrlc_gutter(self, message: str) -> None:
-        """Show ``message`` in the bottom gutter, or hide it when empty."""
-        if self._ctrlc_gutter is None:
-            return
-        gutter = t.cast("t.Any", self._ctrlc_gutter)
-        gutter.update(message)
-        gutter.set_class(bool(message), "-shown")
+        self._arm_or_confirm_exit("ctrl-c")
 
     # Directional pane focus (tmux-style ``ctrl+hjkl``). Routing is
     # layout-aware: side-by-side the detail pane sits to the right of

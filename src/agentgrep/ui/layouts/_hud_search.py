@@ -106,6 +106,8 @@ class _HudSearchBase(_HudDetailInteractionBase):
         callers that replace or clear a running search must signal the
         old control first so the new worker starts with a clean slate.
         """
+        self.workers.cancel_group(self, "detail")
+        self._detail_generation += 1
         self._query_error_active = False
         self.control = SearchControl()
         self._filter_generation += 1
@@ -113,6 +115,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
         self._detail_build_generation += 1
         clear_haystack_cache()
         self._detail_body_cache.clear()
+        self._detail_identity_cache.clear()
         self._presented_detail_cache_key = None
         if self._detail_scroll is not None:
             self._detail_scroll.clear_record_memory()
@@ -883,6 +886,8 @@ class _HudSearchBase(_HudDetailInteractionBase):
                     self.show_detail(record)
             else:
                 find_had_focus = self.app.focused is self._detail_find_input
+                self.workers.cancel_group(self, "detail")
+                self._detail_generation += 1
                 if self._detail_find_active:
                     self._remember_detail_find()
                 self._detail_build_generation += 1

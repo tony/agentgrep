@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import collections.abc as cabc
-import dataclasses
 import json
 import sqlite3
 import typing as t
 
 from agentgrep.adapters._common import (
+    _catalog_uuid_path_token,
     _discovered_origin,
     _record_origin,
 )
 from agentgrep.adapters._extract import (
+    _record_position,
     build_search_record,
     flatten_summary_bullets,
     iter_message_candidates,
@@ -25,11 +26,11 @@ from agentgrep.origin import (
     origin_cwd_hash,
 )
 from agentgrep.readers import (
+    _iter_jsonl_positioned,
     as_optional_str,
     decode_sqlite_value,
     isoformat_from_mtime_ns,
     iter_conversation_summaries,
-    iter_jsonl,
     iter_protobuf_text_fields,
     open_readonly_sqlite,
     read_json_file,
@@ -60,26 +61,24 @@ def parse_cursor_cli_transcript(
     the repo the user would then filter on.
     """
     conversation_id = source.path.stem
+    native_session_id = _catalog_uuid_path_token(source)
     fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     session_origin = _discovered_origin(source)
-    seen: set[tuple[str | None, str, str | None, str | None]] = set()
-    for event in iter_jsonl(source.path):
-        for candidate in iter_message_candidates(
-            event,
+    for positioned_event in _iter_jsonl_positioned(source.path):
+        candidates = iter_message_candidates(
+            positioned_event.value,
             fallback_conversation_id=conversation_id,
             fallback_origin=session_origin,
-        ):
-            if candidate.timestamp is None and fallback_timestamp is not None:
-                candidate = dataclasses.replace(candidate, timestamp=fallback_timestamp)
-            key = (
-                candidate.role,
-                candidate.text,
-                candidate.timestamp,
-                candidate.conversation_id,
+        )
+        for within_line, candidate in enumerate(candidates):
+            candidate.timestamp = candidate.timestamp or fallback_timestamp
+            candidate.session_id = native_session_id or candidate.session_id
+            candidate.identity_namespace = (
+                "cursor.session" if native_session_id is not None else None
             )
-            if key in seen:
-                continue
-            seen.add(key)
+            candidate.position = _record_position(
+                ordinal=positioned_event.source_ordinal(within_line),
+            )
             yield build_search_record(source, candidate)
 
 
@@ -112,6 +111,7 @@ def parse_cursor_ai_tracking_db(
             ]
             if not text_parts:
                 continue
+            native_conversation_id = as_optional_str(conversation_id)
             yield SearchRecord(
                 kind="history",
                 agent=source.agent,
@@ -123,8 +123,13 @@ def parse_cursor_ai_tracking_db(
                 role="assistant",
                 timestamp=as_optional_str(updated_at),
                 model=as_optional_str(model),
-                conversation_id=as_optional_str(conversation_id),
+                session_id=native_conversation_id,
+                conversation_id=native_conversation_id,
                 metadata={"mode": as_optional_str(mode) or ""},
+                identity_namespace=(
+                    "cursor.session" if native_conversation_id is not None else None
+                ),
+                position=_record_position(native_id=native_conversation_id),
             )
     except sqlite3.DatabaseError:
         return
@@ -249,6 +254,7 @@ def parse_cursor_cli_chats_db(
     ``cwd_hash`` is never manufactured by hashing a path recovered elsewhere.
     """
     session_uuid = source.path.parent.name
+    native_session_id = _catalog_uuid_path_token(source)
     timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     origin = _record_origin(cwd_hash=origin_cwd_hash(source.path.parent.parent.name))
     connection = open_readonly_sqlite(source.path)
@@ -283,6 +289,9 @@ def parse_cursor_cli_chats_db(
                     session_id=session_uuid,
                     conversation_id=session_uuid,
                     origin=origin,
+                    identity_namespace=(
+                        "cursor.session" if native_session_id is not None else None
+                    ),
                 )
     except sqlite3.DatabaseError:
         return

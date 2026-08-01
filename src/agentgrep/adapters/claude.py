@@ -15,7 +15,11 @@ from agentgrep.adapters._common import (
     _unix_millis_to_isoformat,
 )
 from agentgrep.adapters._extract import (
+    _record_position,
     build_search_record,
+    extract_message_id,
+    extract_parent_message_id,
+    extract_session_id,
     iter_message_candidates,
 )
 from agentgrep.adapters._generic import (
@@ -26,7 +30,7 @@ from agentgrep.adapters._generic import (
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
 from agentgrep.readers import (
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     as_optional_str,
     decode_sqlite_value,
     isoformat_from_mtime_ns,
@@ -51,34 +55,37 @@ def parse_claude_project_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Claude Code project JSONL files using lightweight heuristics."""
     conversation_id = source.path.stem
-    seen: set[tuple[str | None, str, str | None, str | None]] = set()
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    for event in events:
+    for positioned_event in events:
+        event = positioned_event.value
         if isinstance(event, dict) and event.get("isCompactSummary") is True:
             # `/compact` machine summaries are derived recaps, not user turns.
             continue
-        for candidate in iter_message_candidates(
+        mapping = t.cast("dict[str, object]", event) if isinstance(event, dict) else None
+        session_id = extract_session_id(mapping) if mapping is not None else None
+        candidates = iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
-        ):
-            key = (
-                candidate.role,
-                candidate.text,
-                candidate.timestamp,
-                candidate.conversation_id,
+        )
+        for within_line, candidate in enumerate(candidates):
+            candidate.session_id = session_id or candidate.session_id
+            candidate.identity_namespace = "claude.session" if session_id is not None else None
+            candidate.position = _record_position(
+                native_id=extract_message_id(mapping) if mapping is not None else None,
+                parent_native_id=(
+                    extract_parent_message_id(mapping) if mapping is not None else None
+                ),
+                ordinal=positioned_event.source_ordinal(within_line),
             )
-            if key in seen:
-                continue
-            seen.add(key)
             yield build_search_record(source, candidate)
 
 
@@ -262,7 +269,7 @@ def parse_claude_history_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Claude Code's global ``history.jsonl`` prompt audit log."""
     paste_cache_dir = source.path.parent / "paste-cache"
-    for event in iter_jsonl(source.path):
+    for raw_index, event in enumerate(iter_jsonl(source.path)):
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -289,6 +296,8 @@ def parse_claude_history_file(
             conversation_id=session_id,
             origin=_record_origin(cwd=_path_like_str(project)),
             metadata={"project": project or ""},
+            identity_namespace=("claude.session" if session_id is not None else None),
+            position=_record_position(ordinal=raw_index),
         )
 
 
@@ -386,6 +395,8 @@ def parse_claude_store_db(
                     timestamp=as_optional_str(timestamp),
                     session_id=session_id,
                     conversation_id=session_id or as_optional_str(uuid),
+                    identity_namespace=("claude.session" if session_id is not None else None),
+                    position=_record_position(native_id=uuid),
                 )
         if "assistant_messages" in tables:
             query = (
@@ -419,6 +430,8 @@ def parse_claude_store_db(
                     model=as_optional_str(model),
                     session_id=session_id,
                     conversation_id=session_id or as_optional_str(uuid),
+                    identity_namespace=("claude.session" if session_id is not None else None),
+                    position=_record_position(native_id=uuid),
                 )
         if "conversation_summaries" in tables:
             query = (
@@ -451,6 +464,7 @@ def parse_claude_store_db(
                     timestamp=as_optional_str(updated_at),
                     session_id=session_id,
                     conversation_id=session_id or as_optional_str(leaf_uuid),
+                    identity_namespace=("claude.session" if session_id is not None else None),
                 )
     except sqlite3.DatabaseError:
         return
@@ -492,6 +506,7 @@ def parse_claude_usage_facet(
         session_id=session_id,
         conversation_id=session_id,
         metadata={"coverage": source.coverage.value},
+        identity_namespace=("claude.session" if session_id is not None else None),
     )
 
 
