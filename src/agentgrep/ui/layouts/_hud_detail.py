@@ -121,8 +121,11 @@ class _HudDetailBase(LayoutScreen):
         # Showing a record means results exist — leave the bare-canvas state.
         self._set_empty_state(empty=False)
         # A record switch cancels any in-flight visual select (its cursor +
-        # anchor index the outgoing body's lines).
-        self._reset_detail_visual()
+        # anchor index the outgoing body's lines) and any native selection
+        # anchored on the outgoing body. A repaint of the same record -- a
+        # resize or theme change re-enters here -- leaves a selection the user
+        # is still holding alone.
+        self._reset_detail_visual(record_changed=record is not self._current_detail_record)
         self._current_detail_record = record
         self._detail_build_generation += 1
         detail_generation = self._detail_build_generation

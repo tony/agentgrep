@@ -270,15 +270,43 @@ class _HudDetailInteractionBase(_HudDetailBase):
         else:
             self._paint_detail_body()
 
-    def _reset_detail_visual(self) -> None:
-        """Drop visual state on a record switch or fresh search (clears highlight)."""
+    def _reset_detail_visual(self, *, record_changed: bool = True) -> None:
+        """Drop visual state on a record switch or fresh search (clears highlight).
+
+        Parameters
+        ----------
+        record_changed : bool
+            Whether a different record is being presented. A repaint of the
+            same record -- a resize or a theme change -- passes ``False`` so it
+            keeps a selection the user is still holding.
+        """
         if self._detail_visual_active:
             self._detail_visual_active = False
             with contextlib.suppress(Exception):
                 self.screen.clear_selection()
+        elif record_changed:
+            self._clear_stale_body_selection()
         self._detail_visual_anchor = (0, 0)
         self._detail_visual_cursor = (0, 0)
         self._detail_visual_lines = ()
+
+    def _clear_stale_body_selection(self) -> None:
+        """Drop a native (mouse) selection anchored on the outgoing record.
+
+        ``#detail-body`` is one reused widget, so Textual's offsets outlive the
+        switch and re-target the *incoming* body's characters at the outgoing
+        body's coordinates. The highlight migrates with them, so a copy returns
+        text from a record the user never selected.
+
+        Reading ``_detail_body`` before the pane is composed is not an error
+        worth raising here, hence the guard: this runs on every record switch,
+        including the first.
+        """
+        if self._detail_body is None:
+            return
+        with contextlib.suppress(Exception):
+            if self._detail_body in self.screen.selections:
+                self.screen.clear_selection()
 
     @_runtime.pump_only
     def _follow_detail_visual_cursor(self) -> None:
