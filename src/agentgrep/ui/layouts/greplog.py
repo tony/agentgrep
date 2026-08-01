@@ -1,6 +1,6 @@
 """``GrepLogLayout`` — an append-only streaming grep-log layout (ADR 0013).
 
-The second layout: a query input over a :class:`~textual.widgets.RichLog`
+The second layout: a query input over a :class:`~textual.widgets.Log`
 scrollback, like ``grep`` piping matches as they arrive. It consumes the *same*
 engine seam and the *same* normalized records as the HUD, but composes a single
 log (no results-list / detail split) and presents records as appended lines —
@@ -23,7 +23,8 @@ import typing as t
 from collections import abc as cabc
 
 from textual.binding import BindingType
-from textual.widgets import Footer, RichLog, Static
+from textual.selection import Selection
+from textual.widgets import Footer, Log, Static
 
 from agentgrep._text import format_compact_path
 from agentgrep.progress import (
@@ -54,8 +55,34 @@ if t.TYPE_CHECKING:
 _APPLY_CHUNK_SIZE = 200
 
 
+class _SelectableLog(Log):
+    """A ``Log`` with correct multi-line extraction at the Textual 3.2 floor."""
+
+    @_runtime.pump_only
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Return the retained plain text covered by ``selection``."""
+        if not self.lines:
+            return "", "\n"
+        start_y = 0 if selection.start is None else max(0, selection.start.y)
+        end_y = (
+            len(self.lines) - 1
+            if selection.end is None
+            else min(selection.end.y, len(self.lines) - 1)
+        )
+        if start_y > end_y:
+            return "", "\n"
+        selected_lines: list[str] = []
+        for y in range(start_y, end_y + 1):
+            if (span := selection.get_span(y)) is None:
+                continue
+            start_x, end_x = span
+            line = self.lines[y]
+            selected_lines.append(line[start_x:] if end_x == -1 else line[start_x:end_x])
+        return "\n".join(selected_lines), "\n"
+
+
 class GrepLogLayout(LayoutScreen):
-    """A query input over an append-only :class:`RichLog` of streamed records."""
+    """A query input over an append-only :class:`Log` of streamed records."""
 
     ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[log]"
 
@@ -112,7 +139,7 @@ class GrepLogLayout(LayoutScreen):
             highlighter=self._query_highlighter,
         )
         yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
-        yield RichLog(id="greplog", highlight=False, markup=False, wrap=False, max_lines=5000)
+        yield _SelectableLog(id="greplog", highlight=False, max_lines=5000)
         yield Static("", id="greplog-status", markup=False)
         yield Footer()
 
@@ -268,7 +295,7 @@ class GrepLogLayout(LayoutScreen):
         self._filter_scan_generation = None
         self._search_done = False
         if self._log is not None:
-            self._log.clear()
+            self._clear_log()
         if self._status is not None:
             self._status.update("searching…")
         # Bumps the generation that discards a replaced run's late events.
@@ -318,7 +345,7 @@ class GrepLogLayout(LayoutScreen):
         end = len(self._records)
         if start >= end:
             if repaint and self._log is not None:
-                self._log.clear()
+                self._clear_log()
             self._filter_scanned_count = end
             return
         active_matcher = self._filter_matcher if matcher is None else matcher
@@ -351,7 +378,7 @@ class GrepLogLayout(LayoutScreen):
         self._search_done = True
         self._run_summary = None
         if self._log is not None:
-            self._log.clear()
+            self._clear_log()
         if self._status is not None:
             self._status.update("")
         self._search_emit = self._make_gated_emit()
@@ -488,7 +515,22 @@ class GrepLogLayout(LayoutScreen):
     def _write_chunk(self, chunk: cabc.Sequence[SearchRecord]) -> None:
         """Append one bounded slice of records to the log (pump-side)."""
         if chunk:
-            self._log.write("\n".join(_format_log_line(record) for record in chunk))
+            max_lines = self._log.max_lines
+            if max_lines is not None and self._log.line_count + len(chunk) > max_lines:
+                self._clear_log_selection()
+            text = "\n".join(_format_log_line(record) for record in chunk)
+            separator = "\n" if self._log.line_count else ""
+            self._log.write(f"{separator}{text}")
+
+    def _clear_log_selection(self) -> None:
+        """Drop native offsets before retained log rows move or disappear."""
+        if self._log.is_mounted and self._log in self.screen.selections:
+            self.screen.clear_selection()
+
+    def _clear_log(self) -> None:
+        """Clear the log and any native selection anchored to its rows."""
+        self._clear_log_selection()
+        self._log.clear()
 
     @_runtime.offload
     def _run_log_filter(
@@ -550,7 +592,7 @@ class GrepLogLayout(LayoutScreen):
         if generation != self._filter_generation or self._log is None:
             return
         if repaint:
-            self._log.clear()
+            self._clear_log()
 
         def write_chunk_if_live(chunk: cabc.Sequence[SearchRecord]) -> None:
             if generation == self._filter_generation:

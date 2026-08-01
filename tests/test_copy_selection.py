@@ -257,3 +257,48 @@ async def test_same_record_width_change_drops_the_selection(
 
         assert layout._presented_detail_cache_key != before
         assert not app.screen.selections
+
+
+async def test_greplog_mouse_selection_copies_without_quitting(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The grep log exposes dragged text and clears offsets before pruning."""
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(
+            tmp_path,
+            _empty_query(),
+            control=SearchControl(),
+            layout="greplog",
+        ),
+    )
+    async with app.run_test(size=(100, 20)) as pilot:
+        await pilot.pause()
+        layout = app.screen
+        log = layout._log
+        log.write("alpha one\nbeta two")
+        await pilot.pause()
+
+        assert await pilot.mouse_down(log, offset=(0, 0))
+        assert await pilot.hover(log, offset=(4, 0))
+        assert await pilot.mouse_up(log, offset=(4, 0))
+        await pilot.pause()
+        assert app.screen.get_selected_text() == "alpha"
+
+        app._clipboard = "PRESET"
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert app.clipboard == "alpha"
+        assert app.is_running
+        assert not app.screen.selections
+
+        log.max_lines = 2
+        log.clear()
+        layout._write_chunk([_make_record("first"), _make_record("second")])
+        app.screen.selections = {log: Selection(Offset(0, 0), Offset(5, 0))}
+        assert app.screen.get_selected_text()
+
+        layout._write_chunk([_make_record("third")])
+
+        assert not app.screen.selections
