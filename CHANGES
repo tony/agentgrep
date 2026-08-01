@@ -36,11 +36,19 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a47 (Yet to be released)
+## agentgrep 0.1.0a48 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a47 (2026-08-01)
+
+agentgrep 0.1.0a47 makes copying from the Textual explorer follow the
+highlight. Mouse-selected screen text and selected input text now copy with
+familiar chords, selections no longer outlive the text they mark, and
+notifications describe OSC 52 delivery honestly instead of promising
+clipboard success. See {ref}`tui-copying` for details.
 
 ### What's new
 
