@@ -97,6 +97,36 @@ async def test_unselectable_body_never_clobbers_clipboard(tmp_path: pathlib.Path
         assert app.clipboard == "PRESET"
 
 
+async def test_screen_selection_uses_shared_clipboard_sender(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A native screen copy reports the shared OSC-52 delivery notice."""
+    monkeypatch.delenv("TMUX", raising=False)
+    record = _make_record("selected body\n")
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        layout = await _present(app, pilot, [record], record)
+
+        selection = Selection(Offset(0, 0), Offset(8, 0))
+        app.screen.selections = {layout._detail_body: selection}
+        assert app.screen.get_selected_text() == "selected"
+        app._notifications.clear()
+
+        app.screen.action_copy_text()
+        await pilot.pause()
+
+        assert app.clipboard == "selected"
+        assert [str(notification.message) for notification in app._notifications] == [
+            "sent selection to the clipboard (8 chars, OSC 52)"
+        ]
+        assert not app.screen.selections
+
+
 async def test_record_switch_drops_a_stale_selection(tmp_path: pathlib.Path) -> None:
     """Selecting in one record and switching to another clears the highlight.
 

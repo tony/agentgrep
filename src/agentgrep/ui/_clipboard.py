@@ -179,7 +179,8 @@ class CopySelectionGuard:
         also matches the detail pane's own ``y`` yank, which exits visual mode.
         """
         screen = t.cast("t.Any", self)
-        if not screen.get_selected_text():
+        selection = screen.get_selected_text()
+        if not selection:
             raise SkipAction
-        t.cast("t.Any", super()).action_copy_text()
+        self.send_to_clipboard(selection, label="selection")
         screen.clear_selection()
