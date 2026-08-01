@@ -73,7 +73,12 @@ def _build_layout(home: pathlib.Path, layout_name: str) -> t.Any:
     # ``report_build_status`` captures ``self.app.call_from_thread`` on the
     # pump, exactly as the screenshot worker does. Parenting the layout is how
     # Textual resolves ``.app`` for a node that is not mounted.
-    layout._parent = App[None]()
+    owner = App[None]()
+    layout._parent = owner
+    # ``MessagePump._parent`` stores a weakref, so the layout alone does not
+    # keep ``owner`` alive; a collection between construction and the assertion
+    # makes ``.app`` raise ``NoActiveAppError``.
+    layout._status_command_test_app = owner
     return layout
 
 
