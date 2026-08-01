@@ -31,7 +31,7 @@ from textual.timer import Timer
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui import _clipboard, _runtime, theme as ui_theme
 from agentgrep.ui._clipboard import CopySelectionGuard
 from agentgrep.ui._history import DISPLAY_LIMIT, HistoryEntry
 from agentgrep.ui.format import format_relative_time
@@ -467,14 +467,21 @@ class HistoryRecall(CopySelectionGuard, ModalScreen[t.Optional[str]]):  # noqa: 
         self.dismiss(None)
 
     def action_filter_clear_or_cancel(self) -> None:
-        """Staged ctrl-c: clear the filter if it has text, else close the modal.
+        """Staged ctrl-c: copy a selection, else clear the filter, else close.
 
-        Mirrors the app's input ctrl-c (text → clear; empty → close), but the
-        modal's "exit" is closing itself. Setting ``value = ""`` re-fires
-        ``Input.Changed`` → :meth:`on_input_changed` → ``_refilter("")``, so the
-        full list repaints with no manual re-trigger.
+        Mirrors the app's input ctrl-c (selection → copy; text → clear; empty →
+        close), but the modal's "exit" is closing itself. The binding is
+        ``priority=True`` so it shadows ``Input``'s own ctrl+c copy, which is
+        why the copy case is handled here rather than fallen through to --
+        shadowing has to reimplement what it shadows. Setting ``value = ""``
+        re-fires ``Input.Changed`` → :meth:`on_input_changed` →
+        ``_refilter("")``, so the full list repaints with no manual re-trigger.
         """
         filter_input = self.query_one("#history-filter", Input)
+        if selected := filter_input.selected_text:
+            self.app.copy_to_clipboard(selected)
+            self.notify(_clipboard.copy_notice(selected, label="selection"))
+            return
         if filter_input.value:
             filter_input.value = ""
             return
