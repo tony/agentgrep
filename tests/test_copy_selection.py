@@ -20,6 +20,7 @@ from textual.selection import Selection
 from agentgrep.progress import SearchControl
 from agentgrep.records import SearchQuery, SearchRecord
 from agentgrep.ui.app import build_streaming_ui_app
+from agentgrep.ui.widgets.history import HistoryRecall
 
 pytestmark = [pytest.mark.tui, pytest.mark.slow]
 
@@ -176,6 +177,40 @@ async def test_focused_input_supports_every_copy_chord(tmp_path: pathlib.Path) -
 
             assert app.clipboard == "needle", key
             assert search.value == "before needle after", key
+
+
+async def test_history_filter_supports_every_copy_chord(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each advertised copy chord copies a HistoryRecall filter selection."""
+    monkeypatch.delenv("TMUX", raising=False)
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.push_screen(HistoryRecall(()))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        field = app.screen.query_one("#history-filter")
+        field.value = "before needle after"
+        field.focus()
+
+        for key in ("ctrl+c", "super+c", "ctrl+shift+c", "shift+super+c"):
+            field.selection = type(field.selection)(7, 13)
+            app._clipboard = f"PRESET-{key}"
+            app._notifications.clear()
+
+            await pilot.press(key)
+            await pilot.pause()
+
+            assert app.clipboard == "needle", key
+            assert field.value == "before needle after", key
+            assert [str(item.message) for item in app._notifications] == [
+                "sent selection to the clipboard (6 chars, OSC 52)"
+            ], key
 
 
 async def test_record_switch_drops_a_stale_selection(tmp_path: pathlib.Path) -> None:

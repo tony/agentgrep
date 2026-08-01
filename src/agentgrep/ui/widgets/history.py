@@ -35,7 +35,7 @@ from agentgrep.ui import _runtime, theme as ui_theme
 from agentgrep.ui._clipboard import CopySelectionGuard
 from agentgrep.ui._history import DISPLAY_LIMIT, HistoryEntry
 from agentgrep.ui.format import format_relative_time
-from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
+from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH, _BoundedInput
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -225,7 +225,7 @@ class HistoryRecall(CopySelectionGuard, ModalScreen[t.Optional[str]]):  # noqa: 
                 yield OptionList(id="history-list", markup=False)
                 with VerticalScroll(id="history-preview-scroll"):
                     yield Static("", id="history-preview")
-            yield Input(
+            yield _BoundedInput(
                 placeholder="Search history",
                 id="history-filter",
                 max_length=_ROW_TEXT_MAX_CHARS,
