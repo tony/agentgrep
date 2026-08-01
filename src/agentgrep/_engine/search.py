@@ -27,6 +27,14 @@ The generator owns these invariants:
   exits early via :attr:`agentgrep.SearchControl.request_answer_now`
   still fires ``SearchFinished`` so cleanup is uniform.
 
+Cache-served searches keep the same envelope with zero sources: when
+the DB cache answers the query, the stream is ``SearchStarted`` with
+``source_count=0``, one ``RecordEmitted`` per cached record, then
+``SearchFinished`` — no ``SourceStarted``/``SourceFinished`` pairs
+fire because no source is scanned. ``source_count=0`` therefore means
+either "nothing discovered" or "served from cache"; the
+``search.cache.decision`` profile span disambiguates the two.
+
 Cancellation honors the existing :class:`agentgrep.SearchControl`
 primitive — call :meth:`agentgrep.SearchControl.request_answer_now`
 to break out at the next per-record boundary. Async consumers wrap
@@ -46,7 +54,10 @@ import threading
 import time
 import typing as t
 
-from agentgrep._engine.orchestration import discover_sources_for_search
+from agentgrep._engine.orchestration import (
+    _db_search_result,
+    discover_sources_for_search,
+)
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.readers import select_backends
 from agentgrep.records import BackendSelection, SearchQuery
@@ -155,6 +166,49 @@ def iter_search_events(
     start_time = time.monotonic()
     validated_request = build_logical_search_plan(query).request
     active_progress.start(query)
+
+    cache_handled, cache_records = _db_search_result(query, runtime)
+    if cache_handled:
+        from agentgrep.results import RunCoverage, build_search_summary
+
+        yield _events.SearchStarted(source_count=0)
+        match_count = 0
+        for record in cache_records:
+            if active_control.answer_now_requested():
+                break
+            match_count += 1
+            yield _events.RecordEmitted(record=record)
+        elapsed_seconds = time.monotonic() - start_time
+        summary = build_search_summary(
+            query,
+            effort=validated_request.effort,
+            coverage=RunCoverage(
+                sources_discovered=0,
+                sources_eligible=0,
+                sources_planned=0,
+                sources_attempted=0,
+                sources_completed=0,
+                sources_bounded=0,
+                sources_skipped=0,
+                sources_unsupported=0,
+                sources_failed=0,
+                sources_cancelled=0,
+                records_seen=len(cache_records),
+                matches_seen=len(cache_records),
+            ),
+            match_count=match_count,
+            elapsed_seconds=elapsed_seconds,
+            answer_now=active_control.answer_now_requested(),
+        )
+        _finish_progress_with_summary(active_progress, summary)
+        active_progress.close()
+        yield _events.SearchFinished(
+            match_count=match_count,
+            elapsed_seconds=elapsed_seconds,
+            summary=summary,
+        )
+        return
+
     discovered_sources = []
     sources = []
     routing_plan = None

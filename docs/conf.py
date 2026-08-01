@@ -123,6 +123,7 @@ conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
 conf["doctest_global_setup"] = (
     "import pathlib\n"
     "from agentgrep import format_timestamp_tig\n"
+    "from agentgrep.db import normalize_record_text, text_hash\n"
     "from agentgrep.store_catalog import gemini_project_hash"
 )
 

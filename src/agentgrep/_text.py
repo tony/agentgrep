@@ -33,6 +33,7 @@ else:
 __all__ = [
     "ANSI_CSI_RE",
     "CLI_DESCRIPTION",
+    "DB_DESCRIPTION",
     "DETAIL_BODY_MAX_CHARS",
     "DETAIL_BODY_MAX_LINES",
     "FIND_DESCRIPTION",
@@ -357,6 +358,34 @@ CLI_DESCRIPTION = build_description(
         ),
     ),
 )
+
+DB_DESCRIPTION = build_description(
+    """
+    Manage the persistent DB index used as a local cache and
+    normalized source ledger. The DB index is derived state: source
+    stores remain the truth.
+    """,
+    (
+        (
+            "db",
+            (
+                "agentgrep db",
+                "agentgrep db sync",
+                "agentgrep db sync --agent codex --scope prompts",
+                "agentgrep db status --json",
+                "agentgrep db explain --ndjson",
+            ),
+        ),
+        (
+            "db",
+            (
+                "agentgrep db sync",
+                "agentgrep db status --json",
+                "agentgrep db explain",
+            ),
+        ),
+    ),
+)
 FIND_DESCRIPTION = build_description(
     """
     Find known prompt, history, and store paths without parsing message text.
@@ -472,6 +501,27 @@ GREP_DESCRIPTION = build_description(
                 "agentgrep grep 'role:user TODO'",
                 "agentgrep grep 'cwd:~/work/django-project deploy'",
                 "agentgrep grep 'fixme OR todo'",
+            ),
+        ),
+    ),
+)
+
+
+DB_DESCRIPTION = build_description(
+    """
+    Manage the persistent DB index used as a local cache and
+    normalized source ledger. The DB index is derived state: source
+    stores remain the truth.
+    """,
+    (
+        (
+            "db",
+            (
+                "agentgrep db",
+                "agentgrep db sync",
+                "agentgrep db sync --agent codex --scope prompts",
+                "agentgrep db status --json",
+                "agentgrep db explain --ndjson",
             ),
         ),
     ),

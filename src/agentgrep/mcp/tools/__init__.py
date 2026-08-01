@@ -14,6 +14,7 @@ def register_tools(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> Non
     """Register every ``agentgrep`` MCP tool on ``mcp``."""
     from agentgrep.mcp.tools import (
         catalog_tools,
+        db_tools,
         diagnostic_tools,
         discovery_tools,
         search_tools,
@@ -23,3 +24,4 @@ def register_tools(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> Non
     discovery_tools.register(mcp)
     catalog_tools.register(mcp)
     diagnostic_tools.register(mcp)
+    db_tools.register(mcp)

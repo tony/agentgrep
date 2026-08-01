@@ -19,6 +19,12 @@ Cross-commit `hyperfine` sweeps across HEAD, trunk, ranges, lookback, tags, or e
 On-disk store layouts for Codex, Claude Code, Cursor, Gemini CLI, Antigravity, Grok CLI, Pi, OpenCode, and VS Code — useful for adapter authors and anyone tracing why a record was or wasn't found.
 :::
 
+:::{grid-item-card} DB index
+:link: db-index
+:link-type: doc
+SQLite cache and sync planner for the persistent DB index.
+:::
+
 :::{grid-item-card} Architecture decisions
 :link: adr/index
 :link-type: doc
@@ -32,5 +38,6 @@ Decision records for storage, parsing, and compatibility policies.
 
 benchmark
 storage-catalog
+db-index
 adr/index
 ```
