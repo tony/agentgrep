@@ -175,6 +175,8 @@ def parse_grok_chat_history(
             session_id=conversation_id,
             conversation_id=conversation_id,
             origin=session_origin,
+            # tool_use/tool_result (and assistant/system) are not user-typed.
+            metadata={} if record_type == "user" else {"human_typed": False},
         )
 
 

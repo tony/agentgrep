@@ -14,6 +14,7 @@ from agentgrep.adapters._common import (
 )
 from agentgrep.adapters._extract import (
     build_search_record,
+    candidate_is_human_typed,
     extract_message_text,
     extract_role,
     extract_timestamp,
@@ -287,7 +288,11 @@ def parse_cursor_state_db(
                     if entry_key in seen:
                         continue
                     seen.add(entry_key)
-                    yield build_search_record(source, candidate)
+                    yield build_search_record(
+                        source,
+                        candidate,
+                        human_typed=candidate_is_human_typed(candidate),
+                    )
     except sqlite3.DatabaseError:
         return
     finally:

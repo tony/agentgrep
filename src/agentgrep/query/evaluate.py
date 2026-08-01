@@ -327,6 +327,11 @@ def _field_matches_record(
                 case_sensitive=case_sensitive,
             )
         return _text_matches(record, node.value, case_sensitive=case_sensitive)
+    if spec.name == "human":
+        # Adapters tag tool results / agent output with human_typed=False;
+        # absence means a user-typed turn. ``human:true`` keeps the user's asks.
+        human_typed = record.metadata.get("human_typed", True) is not False
+        return human_typed == (node.value == "true")
     return False
 
 

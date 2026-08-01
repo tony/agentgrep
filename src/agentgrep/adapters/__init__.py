@@ -19,6 +19,7 @@ import typing as t
 from agentgrep.adapters._extract import (
     build_search_record,
     candidate_from_mapping,
+    candidate_is_human_typed,
     extract_conversation_id,
     extract_message_text,
     extract_model,
@@ -60,6 +61,7 @@ from agentgrep.adapters.claude import (
     _CLAUDE_PARSERS,
     CLAUDE_PASTE_HASH_RE,
     CLAUDE_PASTE_REF_RE,
+    claude_event_is_human_authored,
     claude_history_paste_text,
     expand_claude_history_pastes,
     parse_claude_history_file,
@@ -73,6 +75,7 @@ from agentgrep.adapters.claude import (
 )
 from agentgrep.adapters.codex import (
     _CODEX_PARSERS,
+    codex_event_is_human_authored,
     parse_codex_external_imports_file,
     parse_codex_goals_db,
     parse_codex_history_file,
@@ -131,7 +134,10 @@ __all__ = (
     "CLAUDE_PASTE_REF_RE",
     "build_search_record",
     "candidate_from_mapping",
+    "candidate_is_human_typed",
+    "claude_event_is_human_authored",
     "claude_history_paste_text",
+    "codex_event_is_human_authored",
     "expand_claude_history_pastes",
     "extract_conversation_id",
     "extract_message_text",

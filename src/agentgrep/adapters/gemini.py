@@ -13,6 +13,7 @@ from agentgrep.adapters._common import (
 from agentgrep.adapters._extract import (
     _origin_from_mapping,
     build_search_record,
+    candidate_is_human_typed,
     flatten_content_value,
 )
 from agentgrep.adapters._generic import (
@@ -209,7 +210,11 @@ def parse_gemini_chat_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source,
+            candidate,
+            human_typed=candidate_is_human_typed(candidate),
+        )
 
 
 def parse_gemini_chat_legacy_file(
@@ -251,7 +256,11 @@ def parse_gemini_chat_legacy_file(
         candidate = _gemini_message_record_to_candidate(mapping, session_id, session_origin)
         if candidate is None:
             continue
-        yield build_search_record(source, candidate)
+        yield build_search_record(
+            source,
+            candidate,
+            human_typed=candidate_is_human_typed(candidate),
+        )
 
 
 def parse_gemini_logs_file(
