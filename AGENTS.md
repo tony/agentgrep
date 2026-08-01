@@ -715,9 +715,9 @@ what:
 - Focused on a single topic
 ```
 
-Keep the subject ≤50 chars (excluding any trailing `(#NN)` PR ref); wrap
-body lines at ≤72 chars. Separate the `why:` and `what:` blocks with a
-blank line.
+Keep the subject ≤50 chars (excluding any trailing `(#NN)` PR ref);
+hard-wrap body lines at ≤72 chars; terminal wrapping does not count.
+Separate the `why:` and `what:` blocks with a blank line.
 
 Common commit types:
 - **feat**: New features or enhancements
@@ -735,14 +735,20 @@ Common commit types:
 
 Example:
 ```
-agentgrep(refactor[typecheck]): Satisfy ty diagnostics
+agentgrep(refactor[typecheck]): Fix ty diagnostics
 
-why: ty reports a few stricter diagnostics around TypedDict payloads, dynamic class bases, and monkeypatched imports. Making those cases explicit keeps the runtime behavior unchanged while letting the new ty gate run without suppressing broad categories of checks.
+why: ty reports a few stricter diagnostics around TypedDict payloads,
+dynamic class bases, and monkeypatched imports. Making those cases
+explicit keeps the runtime behavior unchanged while letting the new
+ty gate run without suppressing broad categories of checks.
 
 what:
-- Cast JSON TypedDict payloads only at untyped JSON container boundaries.
-- Mark the dynamic Textual App base with the targeted ty unsupported-base suppression.
-- Use pytest monkeypatch for import substitution tests instead of assigning over imported functions directly.
+- Cast JSON TypedDict payloads only at untyped JSON container
+  boundaries.
+- Mark the dynamic Textual App base with the targeted ty
+  unsupported-base suppression.
+- Use pytest monkeypatch for import substitution tests instead of
+  assigning over imported functions directly.
 ```
 #### Release commits
 
