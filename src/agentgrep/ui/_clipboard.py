@@ -119,11 +119,51 @@ def tmux_clipboard_hint(
 
 
 class CopySelectionGuard:
-    """Screen mixin that refuses to copy a selection resolving to no text.
+    """Screen mixin owning how the explorer delivers text to the clipboard.
 
-    Mix in ahead of the Textual screen base so this override wins:
+    Mix in ahead of the Textual screen base so the override wins:
     ``class Foo(CopySelectionGuard, ModalScreen[None])``.
+
+    Carries both halves so every screen family gets the same rules: the
+    empty-selection guard on :meth:`action_copy_text`, and the delivery and
+    wording in :meth:`send_to_clipboard`. A screen that shadows the copy chord
+    with a ``priority=True`` binding of its own still reaches the latter, which
+    is the only way the once-per-session tmux caveat can be session-wide.
     """
+
+    #: Class-level default so a mixin with no ``__init__`` still reads cleanly;
+    #: the first copy shadows it with an instance attribute.
+    _clipboard_hint_shown = False
+
+    @_runtime.pump_only
+    def send_to_clipboard(self, text: str, *, label: str, truncated: bool = False) -> None:
+        """Copy ``text`` and report what was sent, never that it arrived.
+
+        Every copy path funnels through here so one wording rule covers them
+        all. ``App.copy_to_clipboard`` writes one bare OSC-52 escape and returns
+        nothing, so success is not observable; the toast names the payload size
+        and the mechanism, and the first copy of a session inside tmux also
+        carries the ``set-clipboard`` caveat. Both the encode and the driver
+        write are bounded and the ``TMUX`` lookup is O(1), so nothing here
+        blocks the pump (ADR 0011 NB-1).
+
+        Parameters
+        ----------
+        text : str
+            Payload to deliver (already bounded by the caller).
+        label : str
+            What was copied, in user vocabulary (``"selection"``, ``"source"``).
+        truncated : bool
+            ``True`` when the payload is a bounded prefix of the record text.
+        """
+        screen = t.cast("t.Any", self)
+        screen.app.copy_to_clipboard(text)
+        screen.notify(copy_notice(text, label=label, truncated=truncated))
+        if self._clipboard_hint_shown:
+            return
+        self._clipboard_hint_shown = True
+        if (hint := tmux_clipboard_hint()) is not None:
+            screen.notify(hint, title="Clipboard", severity="warning")
 
     @_runtime.pump_only
     def action_copy_text(self) -> None:

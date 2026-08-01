@@ -31,7 +31,7 @@ from textual.timer import Timer
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from agentgrep.ui import _clipboard, _runtime, theme as ui_theme
+from agentgrep.ui import _runtime, theme as ui_theme
 from agentgrep.ui._clipboard import CopySelectionGuard
 from agentgrep.ui._history import DISPLAY_LIMIT, HistoryEntry
 from agentgrep.ui.format import format_relative_time
@@ -479,8 +479,7 @@ class HistoryRecall(CopySelectionGuard, ModalScreen[t.Optional[str]]):  # noqa: 
         """
         filter_input = self.query_one("#history-filter", Input)
         if selected := filter_input.selected_text:
-            self.app.copy_to_clipboard(selected)
-            self.notify(_clipboard.copy_notice(selected, label="selection"))
+            self.send_to_clipboard(selected, label="selection")
             return
         if filter_input.value:
             filter_input.value = ""

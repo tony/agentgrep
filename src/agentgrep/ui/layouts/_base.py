@@ -22,7 +22,7 @@ from textual.screen import Screen
 
 from agentgrep import _version
 from agentgrep.results import apply_search_request_patch, offered_depth_actions
-from agentgrep.ui import _clipboard, _runtime, commands, theme as ui_theme
+from agentgrep.ui import _runtime, commands, theme as ui_theme
 from agentgrep.ui._clipboard import CopySelectionGuard
 
 if t.TYPE_CHECKING:
@@ -181,7 +181,6 @@ class LayoutScreen(CopySelectionGuard, _SCREEN_BASE):
         self._dispatching_command = False
         self._enum_dropdown: t.Any = None
         self._screenshot_generation: int = 0
-        self._clipboard_hint_shown = False
         self._run_summary: RunSummary | None = None
         self._active_search_text = (
             ctx.initial_search_text
@@ -731,36 +730,6 @@ class LayoutScreen(CopySelectionGuard, _SCREEN_BASE):
             )
             return False
         return bool(self.app.select_theme(target))
-
-    # --- clipboard -----------------------------------------------------------
-    @_runtime.pump_only
-    def send_to_clipboard(self, text: str, *, label: str, truncated: bool = False) -> None:
-        """Copy ``text`` and report what was sent, never that it arrived.
-
-        Every copy chord and every ``y`` / ``Y`` / visual yank funnels through
-        here so one wording rule covers them all. ``App.copy_to_clipboard``
-        writes one bare OSC-52 escape and returns nothing, so success is not
-        observable; the toast names the payload size and the mechanism, and the
-        first copy of a session inside tmux also carries the ``set-clipboard``
-        caveat. Both the encode and the driver write are bounded and the
-        ``TMUX`` lookup is O(1), so the whole path is pump-safe (ADR 0011 NB-2).
-
-        Parameters
-        ----------
-        text : str
-            Payload to deliver (already bounded by the caller).
-        label : str
-            What was copied, in user vocabulary (``"selection"``, ``"source"``).
-        truncated : bool
-            ``True`` when the payload is a bounded prefix of the record text.
-        """
-        self.app.copy_to_clipboard(text)
-        self.notify(_clipboard.copy_notice(text, label=label, truncated=truncated))
-        if self._clipboard_hint_shown:
-            return
-        self._clipboard_hint_shown = True
-        if (hint := _clipboard.tmux_clipboard_hint()) is not None:
-            self.notify(hint, title="Clipboard", severity="warning")
 
     # --- input control defaults (the shared SearchInput reaches these) --------
     # SearchInput.on_key routes ctrl-c and the non-ctrl-c "disarm" through
