@@ -471,15 +471,21 @@ class HistoryRecall(CopySelectionGuard, ModalScreen[t.Optional[str]]):  # noqa: 
 
         Mirrors the app's input ctrl-c (selection → copy; text → clear; empty →
         close), but the modal's "exit" is closing itself. The binding is
-        ``priority=True`` so it shadows ``Input``'s own ctrl+c copy, which is
-        why the copy case is handled here rather than fallen through to --
-        shadowing has to reimplement what it shadows. Setting ``value = ""``
-        re-fires ``Input.Changed`` → :meth:`on_input_changed` →
+        ``priority=True``, so it is resolved before the merged binding list is
+        consulted at all: neither ``Input``'s own ctrl+c copy nor the screen's
+        can fall through to. Shadowing has to reimplement what it shadows, so
+        both selections are checked here -- the filter box first, since it holds
+        focus, then a mouse selection anywhere else in the modal. Setting
+        ``value = ""`` re-fires ``Input.Changed`` → :meth:`on_input_changed` →
         ``_refilter("")``, so the full list repaints with no manual re-trigger.
         """
         filter_input = self.query_one("#history-filter", Input)
         if selected := filter_input.selected_text:
             self.send_to_clipboard(selected, label="selection")
+            return
+        if screen_selection := self.get_selected_text():
+            self.send_to_clipboard(screen_selection, label="selection")
+            self.clear_selection()
             return
         if filter_input.value:
             filter_input.value = ""
