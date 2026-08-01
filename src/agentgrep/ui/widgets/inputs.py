@@ -51,14 +51,17 @@ def _consume_key(event: events.Key) -> None:
 
 
 def _has_copyable_selection(widget: Input) -> bool:
-    """Return ``True`` when ctrl+c has something in *this box* to copy.
+    """Return ``True`` when ctrl+c has a focused or native selection to copy.
 
-    Deliberately consults only the input's own selection, never the screen's:
-    the chord acts on whatever holds focus, so a detail highlight the user
-    forgot about must not silently disable ctrl+c-clears-the-box. Reading a
-    reactive attribute is O(1), so this stays pump-safe.
+    Mouse selection does not move focus away from a non-focusable body widget,
+    so the input and screen selection domains must both be consulted before
+    staged clearing claims the chord. The input's reactive selection is checked
+    first; resolving native screen text happens only for ctrl+c with no input
+    selection, matching Textual's own screen-copy action.
     """
-    return bool(str(getattr(widget, "selected_text", "")))
+    if str(getattr(widget, "selected_text", "")):
+        return True
+    return bool(t.cast("t.Any", widget.screen).get_selected_text())
 
 
 def _staged_ctrl_c(widget: Input, event: events.Key) -> bool:

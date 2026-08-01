@@ -127,6 +127,34 @@ async def test_screen_selection_uses_shared_clipboard_sender(
         assert not app.screen.selections
 
 
+async def test_screen_selection_beats_focused_input_clearing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Ctrl-C copies a fresh body selection without clearing the focused query."""
+    record = _make_record("fresh selection\n")
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        layout = await _present(app, pilot, [record], record)
+        search = app.query_one("#search")
+        search.value = "query"
+        search.focus()
+        selection = Selection(Offset(0, 0), Offset(5, 0))
+        app.screen.selections = {layout._detail_body: selection}
+        assert app.screen.get_selected_text() == "fresh"
+        app._clipboard = "PRESET"
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert search.value == "query"
+        assert app.clipboard == "fresh"
+        assert not app.screen.selections
+
+
 async def test_record_switch_drops_a_stale_selection(tmp_path: pathlib.Path) -> None:
     """Selecting in one record and switching to another clears the highlight.
 
