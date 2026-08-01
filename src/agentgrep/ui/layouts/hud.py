@@ -781,6 +781,10 @@ class HudLayout(_HudSearchBase):
         if record is not None and not self._detail_visual_active and not self._detail_raw_mode:
             detail_key = self._detail_cache_key(self.search_query.terms, record)
             if detail_key != self._presented_detail_cache_key:
+                # Native selections store line/column offsets into the old
+                # width-baked Text. Reflow changes that coordinate space even
+                # when the record itself is unchanged.
+                self._clear_stale_body_selection()
                 self.show_detail(record)
 
     def action_stop_search(self) -> None:

@@ -227,3 +227,33 @@ async def test_same_record_repaint_keeps_the_selection(tmp_path: pathlib.Path) -
         await pilot.pause()
 
         assert app.screen.selections
+
+
+async def test_same_record_width_change_drops_the_selection(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A width-baked rebuild drops offsets from the old coordinate space."""
+    record = _make_record(
+        "one two three four five six seven eight nine ten eleven twelve "
+        "thirteen fourteen fifteen sixteen\n"
+    )
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _empty_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        layout = await _present(app, pilot, [record], record)
+        before = layout._presented_detail_cache_key
+        assert before is not None
+        app.screen.selections = {layout._detail_body: Selection(Offset(0, 0), Offset(5, 0))}
+        assert app.screen.selections
+
+        monkeypatch.setattr(layout, "_detail_render_width", lambda: before[-1] + 20)
+        layout._after_resize()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert layout._presented_detail_cache_key != before
+        assert not app.screen.selections
