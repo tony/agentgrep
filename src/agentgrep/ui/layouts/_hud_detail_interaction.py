@@ -57,20 +57,15 @@ class _HudDetailInteractionBase(_HudDetailBase):
         """
         if self._current_detail_record is None:
             return
-        self.app.copy_to_clipboard(self._detail_body_text)
-        note = "copied source"
-        if len(record_text := self._current_detail_record.text) > len(self._detail_body_text):
-            del record_text
-            note = "copied source (truncated)"
-        self.notify(note)
+        truncated = len(self._current_detail_record.text) > len(self._detail_body_text)
+        self.send_to_clipboard(self._detail_body_text, label="source", truncated=truncated)
 
     @_runtime.pump_only
     def action_copy_detail_rendered(self) -> None:
         """Copy the flattened rendered text (``Y``): markdown flattened, JSON pretty."""
         if self._current_detail_record is None:
             return
-        self.app.copy_to_clipboard(self._detail_rendered_plain)
-        self.notify("copied rendered text")
+        self.send_to_clipboard(self._detail_rendered_plain, label="rendered text")
 
     # -- tmux copy-mode-vi visual select (native Textual selection) ----------
 
@@ -255,8 +250,7 @@ class _HudDetailInteractionBase(_HudDetailBase):
             )
         )
         self._cancel_detail_visual()
-        self.app.copy_to_clipboard(text)
-        self.notify("copied selection")
+        self.send_to_clipboard(text, label="selection")
 
     @_runtime.pump_only
     def _cancel_detail_visual(self) -> None:
