@@ -42,7 +42,7 @@ from agentgrep.ui._result_status import (
 )
 from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.highlighter import QueryHighlighter
-from agentgrep.ui.layouts._base import LayoutScreen
+from agentgrep.ui.layouts._base import COPY_SELECTION_BINDING, LayoutScreen
 from agentgrep.ui.widgets import CompletionDropdown, SearchInput, SearchRequested
 
 if t.TYPE_CHECKING:
@@ -71,6 +71,7 @@ class GrepLogLayout(LayoutScreen):
         ("tab", "app.focus_next", "Switch focus"),
         ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
+        COPY_SELECTION_BINDING,
         ("ctrl+c", "app.quit", "Quit"),
     ]
 

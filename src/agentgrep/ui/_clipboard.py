@@ -133,8 +133,13 @@ class CopySelectionGuard:
         unhandled, so it falls through to whatever else is bound to the same
         key -- which is what makes one chord able to both copy a live selection
         and quit when there is none.
+
+        Clearing the selection afterwards keeps ``ctrl+c`` a reliable abort:
+        one press copies, the next reaches the layout's stop/quit staging. It
+        also matches the detail pane's own ``y`` yank, which exits visual mode.
         """
         screen = t.cast("t.Any", self)
         if not screen.get_selected_text():
             raise SkipAction
         t.cast("t.Any", super()).action_copy_text()
+        screen.clear_selection()

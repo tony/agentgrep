@@ -31,6 +31,7 @@ from agentgrep.ui import _history, _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui.completion import QuerySuggester
 from agentgrep.ui.highlighter import QueryHighlighter
+from agentgrep.ui.layouts._base import COPY_SELECTION_BINDING
 from agentgrep.ui.layouts._hud_search import (
     _DetailCacheKey,
     _DetailFindBaseKey,
@@ -83,6 +84,7 @@ class HudLayout(_HudSearchBase):
         ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
+        COPY_SELECTION_BINDING,
         ("ctrl+c", "smart_quit", "Stop / Quit"),
         # Priority so the focused search Input cannot intercept recall.
         Binding("ctrl+r", "recall_history", "History", priority=True),

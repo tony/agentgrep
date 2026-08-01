@@ -22,6 +22,12 @@ from agentgrep.ui.widgets import DetailFindRequested
 
 _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 
+#: Keys that yank and leave visual mode. ``y`` / ``enter`` are the tmux
+#: copy-mode-vi verbs; the rest mirror ``COPY_SELECTION_BINDING`` so the chord
+#: that copies a mouse selection also copies a visual one. In visual mode the
+#: detail pane consumes these before the layout's ctrl+c reaches stop/quit.
+_VISUAL_YANK_KEYS = frozenset({"y", "enter", "ctrl+c", "super+c", "ctrl+shift+c", "shift+super+c"})
+
 
 class _HudDetailInteractionBase(_HudDetailBase):
     """Detail interaction base for the HUD layout."""
@@ -80,8 +86,9 @@ class _HudDetailInteractionBase(_HudDetailBase):
         Outside visual mode only ``v`` / ``space`` are claimed (they begin a
         selection); every other key falls through to the stock bindings. Inside
         visual mode the vi motions (``hjkl`` / ``0`` / ``$`` / ``g`` / ``G``)
-        move the selection cursor, ``y`` / ``enter`` yank, and ``escape`` /
-        ``q`` cancel. Each branch is O(1) plus a bounded re-render (NB-9).
+        move the selection cursor, ``y`` / ``enter`` and the copy chords yank,
+        and ``escape`` / ``q`` cancel. Each branch is O(1) plus a bounded
+        re-render (NB-9).
         """
         key = event.key
         char = event.character
@@ -92,7 +99,7 @@ class _HudDetailInteractionBase(_HudDetailBase):
             return False
         if key in {"escape", "q"}:
             self._cancel_detail_visual()
-        elif key in {"y", "enter"}:
+        elif key in _VISUAL_YANK_KEYS:
             self._yank_detail_visual()
         elif key in {"v", "space"}:
             self._detail_visual_anchor = self._detail_visual_cursor
