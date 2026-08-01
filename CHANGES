@@ -42,6 +42,45 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Copy the explorer's selection with Ctrl-C (#155)
+
+Select text in the Textual explorer with the mouse and press Ctrl-C to copy it.
+Cmd-C does the same, as do Ctrl-Shift-C and Cmd-Shift-C in terminals that
+forward them rather than claiming them. With nothing selected, Ctrl-C keeps its
+existing job — stop the running search, then quit — so one key covers both
+without a mode to remember.
+
+The detail pane's own verbs are unchanged: `y` copies the raw source, `Y` the
+rendered text, and `v` starts a tmux-style visual selection you yank with `y`.
+See {ref}`tui-copying` for details.
+
+### Fixes
+
+#### A copy no longer reports success it cannot observe (#155)
+
+agentgrep hands text to the terminal with an OSC 52 escape, which nothing
+acknowledges — yet the explorer said "copied source" either way. Inside tmux
+that claim was usually false, because tmux discards the sequence unless
+`set -g set-clipboard on` is configured, and macOS Terminal ignores it outright.
+The notification now reports what was sent rather than that it arrived, and
+names the tmux setting once per session when you are running inside one.
+
+#### Copying returns what you selected (#155)
+
+Selecting a record shown as JSON and copying it replaced the clipboard with an
+empty string, discarding whatever you had there. A selection also outlived the
+record it was made in, so copying after moving to another result returned text
+from a record you never highlighted. Both now behave as the highlight suggests.
+
+#### Ctrl-C in a search box copies instead of erasing the query (#155)
+
+Selecting part of a query and pressing Ctrl-C deleted the whole query and
+copied nothing, with no way to undo it. Ctrl-C now copies the selection when
+there is one, in the search bar, the in-list filter, and the Ctrl-R history
+modal, and still clears the box when there is not.
+
 ## agentgrep 0.1.0a46 (2026-07-28)
 
 agentgrep 0.1.0a46 makes a running install identify itself, and keeps a wide

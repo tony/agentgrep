@@ -31,6 +31,7 @@ from agentgrep.ui import _history, _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui.completion import QuerySuggester
 from agentgrep.ui.highlighter import QueryHighlighter
+from agentgrep.ui.layouts._base import COPY_SELECTION_BINDING
 from agentgrep.ui.layouts._hud_search import (
     _DetailCacheKey,
     _DetailFindBaseKey,
@@ -83,6 +84,7 @@ class HudLayout(_HudSearchBase):
         ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
         ("ctrl+backslash", "toggle_detail_progress", "Detail"),
+        COPY_SELECTION_BINDING,
         ("ctrl+c", "smart_quit", "Stop / Quit"),
         # Priority so the focused search Input cannot intercept recall.
         Binding("ctrl+r", "recall_history", "History", priority=True),
@@ -779,6 +781,10 @@ class HudLayout(_HudSearchBase):
         if record is not None and not self._detail_visual_active and not self._detail_raw_mode:
             detail_key = self._detail_cache_key(self.search_query.terms, record)
             if detail_key != self._presented_detail_cache_key:
+                # Native selections store line/column offsets into the old
+                # width-baked Text. Reflow changes that coordinate space even
+                # when the record itself is unchanged.
+                self._clear_stale_body_selection()
                 self.show_detail(record)
 
     def action_stop_search(self) -> None:

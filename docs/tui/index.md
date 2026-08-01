@@ -207,6 +207,34 @@ When the selected record carries {class}`~agentgrep.RecordOrigin`, the
 detail header also shows available cwd, repo, worktree, branch, and cwd
 hash values.
 
+(tui-copying)=
+
+## Copying
+
+Select text with the mouse and press `Ctrl-C` to copy it. `Cmd-C` works
+the same way, and `Ctrl-Shift-C` and `Cmd-Shift-C` do too in terminals
+that forward them rather than claiming them for their own copy. With
+nothing selected, `Ctrl-C` keeps its usual job — stop the running
+search, then quit — so the one key covers both without a mode.
+
+The detail pane also copies whole records without a mouse: `y` copies
+the raw source, `Y` copies the rendered text, and `v` starts a
+tmux-style visual selection you extend with `hjkl` and yank with `y`.
+Inside a search box, `Ctrl-C` copies the selection when you have one and
+clears the box when you do not.
+
+:::{note}
+agentgrep hands the text to your terminal with an OSC 52 escape, which
+is fire-and-forget: nothing reports back whether the terminal accepted
+it, so the toast says what was *sent*, not that it arrived.
+
+Two setups drop it silently. Inside **tmux**, OSC 52 is discarded unless
+your configuration sets `set -g set-clipboard on` — the shipped default
+is `external`, which does not accept it. **macOS Terminal** ignores the
+sequence outright; iTerm2, Ghostty, kitty, WezTerm and Alacritty accept
+it. If a paste comes back stale, that is where to look first.
+:::
+
 ## Completion
 
 Both the search bar and the in-list filter offer
@@ -223,8 +251,9 @@ Two surfaces drive it:
   accept it.
 - A **keyword dropdown** lists every candidate (field keywords for a
   bare token, enum values for a `field:` token). Press `↓` to step into
-  the list, `Enter` to accept the highlighted entry, and `Esc` or
-  `Ctrl-C` to dismiss it without changing your text. Accepting an entry
+  the list, `Enter` to accept the highlighted entry, and `Esc` to
+  dismiss it without changing your text (`Ctrl-C` dismisses it too,
+  unless you have text selected — then it copies). Accepting an entry
   rewrites only the trailing token and leaves the cursor in place — the
   rest of the query is untouched.
 

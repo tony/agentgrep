@@ -17,11 +17,13 @@ import typing as t
 from rich.console import Console
 from rich.segment import Segment, Segments
 from textual.app import generate_datetime_filename
+from textual.binding import Binding
 from textual.screen import Screen
 
 from agentgrep import _version
 from agentgrep.results import apply_search_request_patch, offered_depth_actions
 from agentgrep.ui import _runtime, commands, theme as ui_theme
+from agentgrep.ui._clipboard import CopySelectionGuard
 
 if t.TYPE_CHECKING:
     from agentgrep.records import SearchQuery
@@ -29,7 +31,31 @@ if t.TYPE_CHECKING:
     from agentgrep.ui._context import UiContext
     from agentgrep.ui.workflows import Workflow
 
-__all__ = ["LayoutScreen"]
+__all__ = ["COPY_SELECTION_BINDING", "LayoutScreen"]
+
+COPY_SELECTION_BINDING = Binding(
+    "ctrl+c,super+c,ctrl+shift+c,shift+super+c",
+    "screen.copy_text",
+    show=False,
+)
+"""Textual's copy-selected-text action, re-declared for the copy chords.
+
+``Screen.BINDINGS`` maps a copy chord to ``screen.copy_text`` already, but
+``DOMNode._merge_bindings`` assigns per expanded key across the MRO -- a key is
+replaced outright, not appended to -- so any layout that rebinds ``ctrl+c``
+silently drops the copy half. That is why this must be listed in *each layout's
+own* ``BINDINGS`` rather than inherited, and listed **before** that layout's
+``ctrl+c`` entry: Textual runs same-key bindings in declaration order, so
+:class:`~textual.actions.SkipAction` from an empty selection falls through to
+the layout's own stop/quit.
+
+``super+c`` is spelled out rather than inherited because Textual only added it
+to ``Screen.BINDINGS`` in 7.3.0, while this project's floor is 3.2.0 -- relying
+on the inherited pair would make Cmd-C work or not depending on the resolved
+dependency version. ``ctrl+shift+c`` and ``shift+super+c`` are best-effort:
+they arrive only from a terminal that speaks the Kitty keyboard protocol and
+does not claim them for its own copy.
+"""
 
 #: The ``Screen`` base, kept opaque to the type checker exactly as the former
 #: ``ExplorerApp`` base was: the large relocated view bodies are not yet fully
@@ -127,7 +153,7 @@ def _resolve_build_provenance(
     call_from_thread(present, _version.build_provenance())
 
 
-class LayoutScreen(_SCREEN_BASE):
+class LayoutScreen(CopySelectionGuard, _SCREEN_BASE):
     """A swappable explorer layout that consumes a shared :class:`UiContext`.
 
     Parameters

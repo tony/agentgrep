@@ -15,12 +15,13 @@ from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._clipboard import CopySelectionGuard
 from agentgrep.ui.highlighter import QueryHighlighter
 
 __all__ = ["ThemePicker"]
 
 
-class ThemePicker(ModalScreen[None]):
+class ThemePicker(CopySelectionGuard, ModalScreen[None]):
     """Preview and choose from agentgrep's bounded owned profile catalog."""
 
     AUTO_FOCUS = "#theme-picker-options"

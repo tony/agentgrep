@@ -22,6 +22,12 @@ from agentgrep.ui.widgets import DetailFindRequested
 
 _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 
+#: Keys that yank and leave visual mode. ``y`` / ``enter`` are the tmux
+#: copy-mode-vi verbs; the rest mirror ``COPY_SELECTION_BINDING`` so the chord
+#: that copies a mouse selection also copies a visual one. In visual mode the
+#: detail pane consumes these before the layout's ctrl+c reaches stop/quit.
+_VISUAL_YANK_KEYS = frozenset({"y", "enter", "ctrl+c", "super+c", "ctrl+shift+c", "shift+super+c"})
+
 
 class _HudDetailInteractionBase(_HudDetailBase):
     """Detail interaction base for the HUD layout."""
@@ -57,20 +63,15 @@ class _HudDetailInteractionBase(_HudDetailBase):
         """
         if self._current_detail_record is None:
             return
-        self.app.copy_to_clipboard(self._detail_body_text)
-        note = "copied source"
-        if len(record_text := self._current_detail_record.text) > len(self._detail_body_text):
-            del record_text
-            note = "copied source (truncated)"
-        self.notify(note)
+        truncated = len(self._current_detail_record.text) > len(self._detail_body_text)
+        self.send_to_clipboard(self._detail_body_text, label="source", truncated=truncated)
 
     @_runtime.pump_only
     def action_copy_detail_rendered(self) -> None:
         """Copy the flattened rendered text (``Y``): markdown flattened, JSON pretty."""
         if self._current_detail_record is None:
             return
-        self.app.copy_to_clipboard(self._detail_rendered_plain)
-        self.notify("copied rendered text")
+        self.send_to_clipboard(self._detail_rendered_plain, label="rendered text")
 
     # -- tmux copy-mode-vi visual select (native Textual selection) ----------
 
@@ -85,8 +86,9 @@ class _HudDetailInteractionBase(_HudDetailBase):
         Outside visual mode only ``v`` / ``space`` are claimed (they begin a
         selection); every other key falls through to the stock bindings. Inside
         visual mode the vi motions (``hjkl`` / ``0`` / ``$`` / ``g`` / ``G``)
-        move the selection cursor, ``y`` / ``enter`` yank, and ``escape`` /
-        ``q`` cancel. Each branch is O(1) plus a bounded re-render (NB-9).
+        move the selection cursor, ``y`` / ``enter`` and the copy chords yank,
+        and ``escape`` / ``q`` cancel. Each branch is O(1) plus a bounded
+        re-render (NB-9).
         """
         key = event.key
         char = event.character
@@ -97,7 +99,7 @@ class _HudDetailInteractionBase(_HudDetailBase):
             return False
         if key in {"escape", "q"}:
             self._cancel_detail_visual()
-        elif key in {"y", "enter"}:
+        elif key in _VISUAL_YANK_KEYS:
             self._yank_detail_visual()
         elif key in {"v", "space"}:
             self._detail_visual_anchor = self._detail_visual_cursor
@@ -255,8 +257,7 @@ class _HudDetailInteractionBase(_HudDetailBase):
             )
         )
         self._cancel_detail_visual()
-        self.app.copy_to_clipboard(text)
-        self.notify("copied selection")
+        self.send_to_clipboard(text, label="selection")
 
     @_runtime.pump_only
     def _cancel_detail_visual(self) -> None:
@@ -270,15 +271,43 @@ class _HudDetailInteractionBase(_HudDetailBase):
         else:
             self._paint_detail_body()
 
-    def _reset_detail_visual(self) -> None:
-        """Drop visual state on a record switch or fresh search (clears highlight)."""
+    def _reset_detail_visual(self, *, record_changed: bool = True) -> None:
+        """Drop visual state on a record switch or fresh search (clears highlight).
+
+        Parameters
+        ----------
+        record_changed : bool
+            Whether a different record is being presented. A repaint of the
+            same record -- a resize or a theme change -- passes ``False`` so it
+            keeps a selection the user is still holding.
+        """
         if self._detail_visual_active:
             self._detail_visual_active = False
             with contextlib.suppress(Exception):
                 self.screen.clear_selection()
+        elif record_changed:
+            self._clear_stale_body_selection()
         self._detail_visual_anchor = (0, 0)
         self._detail_visual_cursor = (0, 0)
         self._detail_visual_lines = ()
+
+    def _clear_stale_body_selection(self) -> None:
+        """Drop a native (mouse) selection anchored on the outgoing record.
+
+        ``#detail-body`` is one reused widget, so Textual's offsets outlive the
+        switch and re-target the *incoming* body's characters at the outgoing
+        body's coordinates. The highlight migrates with them, so a copy returns
+        text from a record the user never selected.
+
+        Reading ``_detail_body`` before the pane is composed is not an error
+        worth raising here, hence the guard: this runs on every record switch,
+        including the first.
+        """
+        if self._detail_body is None:
+            return
+        with contextlib.suppress(Exception):
+            if self._detail_body in self.screen.selections:
+                self.screen.clear_selection()
 
     @_runtime.pump_only
     def _follow_detail_visual_cursor(self) -> None:

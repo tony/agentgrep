@@ -32,9 +32,10 @@ from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from agentgrep.ui import _runtime, theme as ui_theme
+from agentgrep.ui._clipboard import CopySelectionGuard
 from agentgrep.ui._history import DISPLAY_LIMIT, HistoryEntry
 from agentgrep.ui.format import format_relative_time
-from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH
+from agentgrep.ui.widgets.inputs import INPUT_MAX_LENGTH, _BoundedInput
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -149,7 +150,7 @@ def _score_and_deliver(
         return
 
 
-class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual generic base needs a runtime subscript
+class HistoryRecall(CopySelectionGuard, ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual generic base needs a runtime subscript
     """Two-pane Ctrl-R recall over the persisted search-input history."""
 
     AUTO_FOCUS = "#history-filter"
@@ -224,7 +225,7 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
                 yield OptionList(id="history-list", markup=False)
                 with VerticalScroll(id="history-preview-scroll"):
                     yield Static("", id="history-preview")
-            yield Input(
+            yield _BoundedInput(
                 placeholder="Search history",
                 id="history-filter",
                 max_length=_ROW_TEXT_MAX_CHARS,
@@ -466,14 +467,26 @@ class HistoryRecall(ModalScreen[t.Optional[str]]):  # noqa: UP045 -- Textual gen
         self.dismiss(None)
 
     def action_filter_clear_or_cancel(self) -> None:
-        """Staged ctrl-c: clear the filter if it has text, else close the modal.
+        """Staged ctrl-c: copy a selection, else clear the filter, else close.
 
-        Mirrors the app's input ctrl-c (text → clear; empty → close), but the
-        modal's "exit" is closing itself. Setting ``value = ""`` re-fires
-        ``Input.Changed`` → :meth:`on_input_changed` → ``_refilter("")``, so the
-        full list repaints with no manual re-trigger.
+        Mirrors the app's input ctrl-c (selection → copy; text → clear; empty →
+        close), but the modal's "exit" is closing itself. The binding is
+        ``priority=True``, so it is resolved before the merged binding list is
+        consulted at all: neither ``Input``'s own ctrl+c copy nor the screen's
+        can fall through to. Shadowing has to reimplement what it shadows, so
+        both selections are checked here -- the filter box first, since it holds
+        focus, then a mouse selection anywhere else in the modal. Setting
+        ``value = ""`` re-fires ``Input.Changed`` → :meth:`on_input_changed` →
+        ``_refilter("")``, so the full list repaints with no manual re-trigger.
         """
         filter_input = self.query_one("#history-filter", Input)
+        if selected := filter_input.selected_text:
+            self.send_to_clipboard(selected, label="selection")
+            return
+        if screen_selection := self.get_selected_text():
+            self.send_to_clipboard(screen_selection, label="selection")
+            self.clear_selection()
+            return
         if filter_input.value:
             filter_input.value = ""
             return

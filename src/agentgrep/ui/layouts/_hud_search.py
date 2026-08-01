@@ -887,6 +887,9 @@ class _HudSearchBase(_HudDetailInteractionBase):
                     self._remember_detail_find()
                 self._detail_build_generation += 1
                 self._reset_detail_find_state()
+                # The body is about to be repainted with a placeholder; a
+                # selection left over the outgoing record must not survive it.
+                self._reset_detail_visual()
                 self._current_detail_record = None
                 self._detail_opened = False
                 self._presented_detail_cache_key = None

@@ -1,6 +1,6 @@
 """``GrepLogLayout`` — an append-only streaming grep-log layout (ADR 0013).
 
-The second layout: a query input over a :class:`~textual.widgets.RichLog`
+The second layout: a query input over a :class:`~textual.widgets.Log`
 scrollback, like ``grep`` piping matches as they arrive. It consumes the *same*
 engine seam and the *same* normalized records as the HUD, but composes a single
 log (no results-list / detail split) and presents records as appended lines —
@@ -22,8 +22,12 @@ import functools
 import typing as t
 from collections import abc as cabc
 
+from textual import events
+from textual._cells import cell_width_to_column_index
 from textual.binding import BindingType
-from textual.widgets import Footer, RichLog, Static
+from textual.geometry import Offset
+from textual.selection import Selection
+from textual.widgets import Footer, Log, Static
 
 from agentgrep._text import format_compact_path
 from agentgrep.progress import (
@@ -42,7 +46,7 @@ from agentgrep.ui._result_status import (
 )
 from agentgrep.ui._source_diagnostics import UiProgressSnapshot
 from agentgrep.ui.highlighter import QueryHighlighter
-from agentgrep.ui.layouts._base import LayoutScreen
+from agentgrep.ui.layouts._base import COPY_SELECTION_BINDING, LayoutScreen
 from agentgrep.ui.widgets import CompletionDropdown, SearchInput, SearchRequested
 
 if t.TYPE_CHECKING:
@@ -54,8 +58,83 @@ if t.TYPE_CHECKING:
 _APPLY_CHUNK_SIZE = 200
 
 
+class _SelectableLog(Log):
+    """A ``Log`` with correct multi-line extraction at the Textual 3.2 floor."""
+
+    _mouse_start_scroll: Offset | None = None
+
+    @_runtime.pump_only
+    def on_mouse_down(self, _event: events.MouseDown) -> None:
+        """Retain the content scroll origin for this selection drag."""
+        self._mouse_start_scroll = self.scroll_offset
+
+    def _mouse_cell_selection(self) -> Selection | None:
+        """Return the active mouse drag in content-cell coordinates."""
+        if not self.is_mounted:
+            return None
+        screen = t.cast("t.Any", self.screen)
+        if (state := getattr(screen, "_select_state", None)) is not None:
+            end = getattr(state, "end", None)
+            if (
+                end is None
+                or state.start.content_widget is not self
+                or end.content_widget is not self
+            ):
+                return None
+            start_screen = (
+                state.start.container_initial_offset + state.start.container_pointer_delta
+            )
+            end_screen = state.screen_offset
+        else:
+            start = getattr(screen, "_select_start", None)
+            end = getattr(screen, "_select_end", None)
+            if start is None or end is None or start[0] is not self or end[0] is not self:
+                return None
+            start_screen, end_screen = start[1], end[1]
+        origin = self.content_region.offset
+        start_scroll = self.scroll_offset
+        if self._mouse_start_scroll is not None:
+            start_scroll = self._mouse_start_scroll
+        offsets = sorted(
+            (
+                start_screen - origin + start_scroll,
+                end_screen - origin + self.scroll_offset,
+            ),
+            key=lambda offset: offset.transpose,
+        )
+        return Selection(offsets[0], offsets[1] + Offset(1, 0))
+
+    @_runtime.pump_only
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Return the retained plain text covered by ``selection``."""
+        if not self.lines:
+            return "", "\n"
+        cell_selection = self._mouse_cell_selection()
+        active_selection = selection if cell_selection is None else cell_selection
+        start_y = 0 if active_selection.start is None else max(0, active_selection.start.y)
+        end_y = (
+            len(self.lines) - 1
+            if active_selection.end is None
+            else min(active_selection.end.y, len(self.lines) - 1)
+        )
+        if start_y > end_y:
+            return "", "\n"
+        selected_lines: list[str] = []
+        for y in range(start_y, end_y + 1):
+            if (span := active_selection.get_span(y)) is None:
+                continue
+            start_x, end_x = span
+            line = self._process_line(self.lines[y])
+            if cell_selection is not None:
+                start_x = cell_width_to_column_index(line, start_x, 8)
+                if end_x != -1:
+                    end_x = cell_width_to_column_index(line, end_x, 8)
+            selected_lines.append(line[start_x:] if end_x == -1 else line[start_x:end_x])
+        return "\n".join(selected_lines), "\n"
+
+
 class GrepLogLayout(LayoutScreen):
-    """A query input over an append-only :class:`RichLog` of streamed records."""
+    """A query input over an append-only :class:`Log` of streamed records."""
 
     ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[log]"
 
@@ -71,6 +150,7 @@ class GrepLogLayout(LayoutScreen):
         ("tab", "app.focus_next", "Switch focus"),
         ("q", "app.quit", "Quit"),
         ("escape", "stop_search", "Stop search"),
+        COPY_SELECTION_BINDING,
         ("ctrl+c", "app.quit", "Quit"),
     ]
 
@@ -111,7 +191,7 @@ class GrepLogLayout(LayoutScreen):
             highlighter=self._query_highlighter,
         )
         yield CompletionDropdown(id="enum-dropdown", target_input_id="search")
-        yield RichLog(id="greplog", highlight=False, markup=False, wrap=False, max_lines=5000)
+        yield _SelectableLog(id="greplog", highlight=False, max_lines=5000)
         yield Static("", id="greplog-status", markup=False)
         yield Footer()
 
@@ -267,7 +347,7 @@ class GrepLogLayout(LayoutScreen):
         self._filter_scan_generation = None
         self._search_done = False
         if self._log is not None:
-            self._log.clear()
+            self._clear_log()
         if self._status is not None:
             self._status.update("searching…")
         # Bumps the generation that discards a replaced run's late events.
@@ -317,7 +397,7 @@ class GrepLogLayout(LayoutScreen):
         end = len(self._records)
         if start >= end:
             if repaint and self._log is not None:
-                self._log.clear()
+                self._clear_log()
             self._filter_scanned_count = end
             return
         active_matcher = self._filter_matcher if matcher is None else matcher
@@ -350,7 +430,7 @@ class GrepLogLayout(LayoutScreen):
         self._search_done = True
         self._run_summary = None
         if self._log is not None:
-            self._log.clear()
+            self._clear_log()
         if self._status is not None:
             self._status.update("")
         self._search_emit = self._make_gated_emit()
@@ -487,7 +567,22 @@ class GrepLogLayout(LayoutScreen):
     def _write_chunk(self, chunk: cabc.Sequence[SearchRecord]) -> None:
         """Append one bounded slice of records to the log (pump-side)."""
         if chunk:
-            self._log.write("\n".join(_format_log_line(record) for record in chunk))
+            max_lines = self._log.max_lines
+            if max_lines is not None and self._log.line_count + len(chunk) > max_lines:
+                self._clear_log_selection()
+            text = "\n".join(_format_log_line(record) for record in chunk)
+            separator = "\n" if self._log.line_count else ""
+            self._log.write(f"{separator}{text}")
+
+    def _clear_log_selection(self) -> None:
+        """Drop native offsets before retained log rows move or disappear."""
+        if self._log.is_mounted and self._log in self.screen.selections:
+            self.screen.clear_selection()
+
+    def _clear_log(self) -> None:
+        """Clear the log and any native selection anchored to its rows."""
+        self._clear_log_selection()
+        self._log.clear()
 
     @_runtime.offload
     def _run_log_filter(
@@ -549,7 +644,7 @@ class GrepLogLayout(LayoutScreen):
         if generation != self._filter_generation or self._log is None:
             return
         if repaint:
-            self._log.clear()
+            self._clear_log()
 
         def write_chunk_if_live(chunk: cabc.Sequence[SearchRecord]) -> None:
             if generation == self._filter_generation:
