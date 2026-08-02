@@ -302,8 +302,16 @@ async def test_mcp_terms_depth_directive_conflicts_with_explicit_prompts_scope()
     assert "targeted effort requires conversation or all scope" in raised.value.error.message
 
 
+@pytest.mark.slow
 async def test_registered_search_tool_accepts_inline_depth_term() -> None:
-    """Drive the registered MCP tool schema end to end with an inline term."""
+    """Drive the registered MCP tool schema end to end with an inline term.
+
+    A fresh ``Client(build_mcp_server())`` session belongs in the slow lane
+    (tests/AGENTS.md); ``test_mcp_terms_depth_directive_resolves_effort``
+    already proves the cheaper direct-``_search_async`` contract on the
+    default lane, so this one round trip is reserved for proving the real
+    registered tool schema specifically.
+    """
     async with Client(build_mcp_server()) as client:
         result = await client.call_tool_mcp(
             "search",
@@ -317,6 +325,7 @@ async def test_registered_search_tool_accepts_inline_depth_term() -> None:
     assert payload["request"]["scope"] == "all"
 
 
+@pytest.mark.slow
 async def test_registered_search_tool_reports_inferred_provenance_after_auto_widen() -> None:
     """Auto-widening scope for a directive must not report it as client-selected.
 
@@ -325,7 +334,8 @@ async def test_registered_search_tool_reports_inferred_provenance_after_auto_wid
     the argument-tracking middleware's real "did the client pass `scope`"
     signal: this call omits ``scope`` entirely and lets ``depth:targeted``
     widen it, which must still report ``"inferred"`` — the client selected
-    nothing, the directive did the widening.
+    nothing, the directive did the widening. A fresh ``Client`` session
+    belongs in the slow lane (tests/AGENTS.md), same as its sibling above.
     """
     async with Client(build_mcp_server()) as client:
         result = await client.call_tool_mcp(

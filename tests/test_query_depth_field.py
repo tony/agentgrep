@@ -569,6 +569,7 @@ def test_depth_field_works_through_compose_query_ast() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_cli_json_search_with_inline_depth_reads_transcripts(
     codex_transcript_home: pathlib.Path,
 ) -> None:
@@ -582,7 +583,11 @@ def test_cli_json_search_with_inline_depth_reads_transcripts(
     policy opens it. This drives the actual ``agentgrep`` entry point in a
     subprocess against that real fixture, proving the literal
     ``depth:exhaustive`` token — not a CLI flag — is what flips the read
-    policy for a real search run.
+    policy for a real search run. ``test_depth_field_works_through_the_cli_path``
+    already proves the cheaper parse/resolve-only contract on the default
+    lane; this adds the one thing that can't prove — that the engine
+    actually reads more files — so it stays slow rather than dropped
+    (tests/AGENTS.md: subprocess tests belong in the slow lane).
     """
     env = dict(os.environ)
     env["HOME"] = str(codex_transcript_home)
