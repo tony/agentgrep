@@ -95,7 +95,15 @@ def _request_has_origin_filter(request: SearchRequestModel) -> bool:
 def _normalize_request_depth(
     request: SearchRequestModel,
 ) -> tuple[SearchScopeName, SearchEffortName, int | None]:
-    """Normalize MCP effort, inferred scope, and targeted work bound."""
+    """Normalize MCP effort, inferred scope, and targeted work bound.
+
+    Only validates ``conversation_limit`` against the structured request —
+    an inline ``depth:``/``effort:`` term (resolved later, by
+    :func:`_compile_request_query`) can still change the effort this
+    function computed here. The targeted-effort requirement is re-checked
+    against the fully-resolved query in :func:`_search_async`, after that
+    later resolution has had its say.
+    """
     scope = request.scope
     effort = request.effort
     if effort is None:
@@ -113,9 +121,6 @@ def _normalize_request_depth(
     conversation_limit = request.conversation_limit
     if conversation_limit is not None and conversation_limit < 1:
         msg = "conversation_limit must be greater than 0"
-        raise ToolError(msg)
-    if conversation_limit is not None and effort != "targeted":
-        msg = "conversation_limit requires targeted effort"
         raise ToolError(msg)
     return scope, effort, conversation_limit
 
@@ -141,11 +146,14 @@ def _compile_request_query(
     ``scope:`` predicate, which is always allowed to widen the structured
     ``scope`` parameter (and has been since before this field existed).
     Effort is asymmetric because :func:`_normalize_request_depth` already
-    validated and normalized the structured ``effort`` — including deriving
-    ``conversation_limit`` — before this function runs; silently letting an
-    inline directive override it here would mean that earlier validation ran
-    against a value the request no longer uses. Requiring one syntax avoids
-    that ordering hazard instead of reordering the whole request pipeline.
+    validated and normalized the structured ``effort`` before this function
+    runs; silently letting an inline directive override it here would mean
+    that earlier validation ran against a value the request no longer uses.
+    Requiring one syntax avoids that ordering hazard instead of reordering
+    the whole request pipeline. ``conversation_limit`` has no such collision
+    to avoid — the client only ever states it once, in the structured
+    request — so it is validated by :func:`_search_async` against the fully
+    resolved query instead, after any inline directive has had its say.
 
     Returns the rebuilt query plus any non-fatal
     :class:`~agentgrep._query_gate.UnregisteredFieldToken` diagnostics for
@@ -212,8 +220,18 @@ def _compile_request_query(
             terms=compiled.text_terms,
             compiled=None if compiled.is_pure_text else compiled,
             scope=scope,
+            # Whether scope was *stated* by the client — a structured
+            # scope_provenance="explicit" or an inline scope: predicate —
+            # not whether the value changed. A depth: directive can widen
+            # or narrow scope on its own (resolve_request_modifiers'
+            # reconciliation); that's the client trusting the directive's
+            # own semantics, not selecting a scope, so it must not report
+            # as "explicit" the way the CLI/TUI's equivalent resolution
+            # already doesn't.
             scope_provenance=(
-                "explicit" if scope != base_query.scope else base_query.scope_provenance
+                "explicit"
+                if request.scope_provenance == "explicit" or "scope" in used_fields
+                else "inferred"
             ),
             effort=effort,
             origin_filter=origin_filter,
@@ -249,6 +267,12 @@ async def _search_async(
         ),
     )
     query, query_diagnostics = _compile_request_query(base_query, request)
+    # Deferred from _normalize_request_depth: an inline depth:/effort: term
+    # can change effort after that upfront pass ran, so conversation_limit
+    # is only validated here, against the fully-resolved query.
+    if query.conversation_limit is not None and query.effort != "targeted":
+        msg = "conversation_limit requires targeted effort"
+        raise ToolError(msg)
     records: list[SearchRecordLike] = []
     run_summary: RunSummary | None = None
     # The engine only stops scanning when this generator is finalized: its

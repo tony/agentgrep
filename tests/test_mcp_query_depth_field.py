@@ -140,6 +140,59 @@ async def test_mcp_effort_param_and_depth_term_collide() -> None:
     )
 
 
+async def test_mcp_conversation_limit_bounds_an_inline_targeted_directive(
+    codex_transcript_home: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``conversation_limit`` combines with an inline ``depth:targeted`` term.
+
+    Regression for an ordering bug: ``_normalize_request_depth`` used to
+    validate ``conversation_limit`` against its own upfront effort guess
+    (``prompt``, since no structured ``effort`` was set here) before the
+    inline directive ever resolved, rejecting this combination outright even
+    though the fully-resolved effort is ``targeted``.
+    """
+    monkeypatch.setattr(
+        pathlib.Path,
+        "home",
+        classmethod(lambda _cls: codex_transcript_home),
+    )
+
+    response = await _search_async(
+        SearchRequestModel(
+            terms=["depth:targeted", "deep-only"],
+            agent="codex",
+            scope="all",
+            case_sensitive=False,
+            conversation_limit=10,
+            limit=20,
+        ),
+    )
+
+    assert response.request.effort == "targeted"
+    assert response.request.conversation_limit == 10
+
+
+async def test_mcp_conversation_limit_still_conflicts_with_resolved_exhaustive() -> None:
+    """A ``conversation_limit`` still errors once the directive resolves to non-targeted.
+
+    Proves the check moved, not disappeared: ``depth:exhaustive`` has
+    nothing for ``conversation_limit`` to bound, using the effort the
+    directive actually resolves to rather than a pre-directive guess.
+    """
+    with pytest.raises(ToolError, match="conversation_limit requires targeted effort"):
+        await _search_async(
+            SearchRequestModel(
+                terms=["depth:exhaustive", "foo"],
+                agent="codex",
+                scope="all",
+                case_sensitive=False,
+                conversation_limit=10,
+                limit=20,
+            ),
+        )
+
+
 async def test_mcp_prompt_depth_value_conflicts_with_explicit_broad_scope() -> None:
     """``depth:prompt`` with an explicitly-selected broad scope is a clean error.
 
@@ -262,3 +315,27 @@ async def test_registered_search_tool_accepts_inline_depth_term() -> None:
     payload = result.structuredContent
     assert payload["request"]["effort"] == "targeted"
     assert payload["request"]["scope"] == "all"
+
+
+async def test_registered_search_tool_reports_inferred_provenance_after_auto_widen() -> None:
+    """Auto-widening scope for a directive must not report it as client-selected.
+
+    Drives the real registered tool schema (not a direct
+    ``SearchRequestModel`` construction) so ``scope_provenance`` reflects
+    the argument-tracking middleware's real "did the client pass `scope`"
+    signal: this call omits ``scope`` entirely and lets ``depth:targeted``
+    widen it, which must still report ``"inferred"`` — the client selected
+    nothing, the directive did the widening.
+    """
+    async with Client(build_mcp_server()) as client:
+        result = await client.call_tool_mcp(
+            "search",
+            {"terms": ["depth:targeted", "needle"]},
+        )
+
+    assert result.isError is False
+    assert result.structuredContent is not None
+    payload = result.structuredContent
+    assert payload["request"]["effort"] == "targeted"
+    assert payload["request"]["scope"] == "all"
+    assert payload["request"]["scope_provenance"] == "inferred"
