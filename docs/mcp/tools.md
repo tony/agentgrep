@@ -28,6 +28,11 @@ top-level `cwd`, `repo`, or `branch` to apply the same origin filters as
 query-language fields. A request with an origin filter and no terms is
 valid.
 
+An inline `depth:`/`effort:` term inside `terms` selects the same read
+policy as the `effort` parameter — see
+{ref}`library-query-language`. Setting both the `effort` parameter and an
+inline term in the same request is rejected; pick one.
+
 With targeted or exhaustive effort and omitted scope, the MCP tool infers
 `scope="all"`. It does not broaden explicit prompt scope: targeted effort with
 `scope="prompts"` is rejected. Targeted routing is proof-bound for Codex,

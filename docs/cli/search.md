@@ -164,6 +164,18 @@ For compatibility, explicit conversation and all scopes already imply
 the exhaustive reads those records require. A prompt-only scope cannot be
 combined with `--deep`.
 
+A `depth:` (alias `effort:`) query-language field selects the same read
+policy inline, composable with other predicates in one query — `deep` is
+accepted as a synonym for `targeted`:
+
+```console
+$ agentgrep search 'depth:exhaustive scope:all docs deploy'
+```
+
+`--deep`/`--exhaustive` and an inline `depth:`/`effort:` term cannot both
+appear in one command; pick one. See {ref}`library-query-language` for the
+full field.
+
 (cli-search-project-context)=
 
 ## Project context
