@@ -51,11 +51,14 @@ Constraints on this module:
   bare-term case, and must not import :mod:`agentgrep.query` to answer a
   yes/no question. That package's ``__init__`` eagerly imports the parser,
   compiler, date-math, and path-glob modules; measured with
-  ``python -X importtime``, importing it costs roughly 17ms on top of an
+  ``python -X importtime``, importing it costs roughly 30ms on top of an
   already-imported ``agentgrep`` package — a real fraction of the ~250ms
   ``agentgrep --help`` budget (AGENTS.md) for work a plain-term query never
   needs. This module only uses :mod:`re`, :mod:`dataclasses`, and
-  :mod:`difflib` (stdlib), so importing it is free.
+  :mod:`difflib` (stdlib), so importing it is free — including its own
+  duplicate copies of the tokenizer's ``_WORD_RE``/``_IDENT_RE`` regexes
+  (see :data:`_WORD_RE`), since importing even one ``agentgrep.query``
+  submodule pays that same package-init cost.
 - **The known-field set here is a hand-maintained mirror, not the source
   of truth.** :data:`QUERYABLE_FIELD_NAMES` is what :func:`has_query_syntax`
   checks on the CLI's cold-start path; :mod:`agentgrep.query.compile`
@@ -114,16 +117,67 @@ Kept in sync with :func:`agentgrep.query.registry.default_registry` by
 ``test_cli_query_field_names_mirror_the_registry``.
 """
 
-_IDENT_COLON_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*):")
-"""A bare identifier immediately followed by ``:``, not glued to a prior
-identifier character. Matches the same shape
-:func:`agentgrep.query.parser.tokenize` uses to decide ``ident:`` splits, so
-this gate and the tokenizer never disagree about what counts as
-field-predicate *shape*."""
+_WORD_RE = re.compile(r"[\w\-./~*?@:+]+", re.UNICODE)
+"""Characters allowed in a bare term or identifier.
 
-_TOKEN_VALUE_RE = re.compile(r"\S*")
-"""Everything up to the next whitespace, used to recover the full
-``ident:value`` token's text for a diagnostic message."""
+Duplicated, character-for-character, from
+:data:`agentgrep.query.parser._WORD_RE` rather than imported from it:
+``import agentgrep.query.parser`` always runs ``agentgrep/query/__init__.py``
+first (that's how Python package imports work), and that ``__init__``
+eagerly imports the parser, compiler, evaluator, date-math, and path-glob
+modules regardless of which single submodule triggered it — the same
+roughly-30ms cost cited in this module's own docstring above. There is no
+"import just the parser" shortcut once
+``agentgrep.query`` is a package with an eager ``__init__``, so this module
+keeps its own copy instead of paying that cost for a yes/no shape check.
+``test_query_gate_word_and_ident_regexes_mirror_the_tokenizer``
+(``tests/test_query_gate.py``) fails the build if this drifts from the real
+``_WORD_RE``.
+"""
+
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+"""Stricter identifier rule, duplicated from
+:data:`agentgrep.query.parser._IDENT_RE` for the same cold-start reason as
+:data:`_WORD_RE`. Kept in sync by the same drift guard."""
+
+
+def _leading_field_ident(run: str) -> str | None:
+    """Return ``run``'s own leading ``ident:`` prefix, or ``None``.
+
+    Mirrors :func:`agentgrep.query.parser.tokenize`'s exact two-part
+    decision for one maximal :data:`_WORD_RE` run: find the first ``:``
+    in the run, then require everything before it to fullmatch the
+    stricter :data:`_IDENT_RE` identifier shape. The tokenizer only
+    splits a run into ``ident`` + ``colon`` tokens when both hold; this
+    gate must agree, so it applies the identical rule to the identical
+    unit — the whole run, once — rather than re-scanning for another
+    ``:`` deeper inside it. That is what keeps a URI's own scheme
+    (``http`` in ``http://localhost:8080/api``) from ever exposing its
+    remainder's unrelated ``localhost:8080`` to a second, independent
+    check, and what keeps a hyphenated word like ``sub-path`` from being
+    torn apart into a bogus ``path:`` match the way a lookbehind-only
+    regex would.
+
+    Parameters
+    ----------
+    run : str
+        One maximal :data:`_WORD_RE` match — never contains whitespace
+        or any character outside that class.
+
+    Returns
+    -------
+    str | None
+        The identifier before the run's first ``:``, or ``None`` when
+        the run has no ``:`` at all, starts with ``:``, or the prefix
+        before it isn't a clean :data:`_IDENT_RE` identifier.
+    """
+    colon_index = run.find(":")
+    if colon_index <= 0:
+        return None
+    prefix = run[:colon_index]
+    if not _IDENT_RE.fullmatch(prefix):
+        return None
+    return prefix
 
 
 def has_query_syntax(
@@ -165,7 +219,11 @@ def has_query_syntax(
         return True
     if any(word in BOOLEAN_KEYWORDS for word in text.split()):
         return True
-    return any(match.group(1) in known_field_names for match in _IDENT_COLON_RE.finditer(text))
+    for match in _WORD_RE.finditer(text):
+        ident = _leading_field_ident(match.group(0))
+        if ident is not None and ident in known_field_names:
+            return True
+    return False
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -175,8 +233,9 @@ class UnregisteredFieldToken:
     Attributes
     ----------
     token : str
-        The full ``ident:value`` text as it appeared in the input, up to
-        the next whitespace.
+        The full ``ident:value`` text as it appeared in the input — the
+        whole matched :data:`_WORD_RE` run, which in practice runs to the
+        next whitespace since that class already excludes it.
     field : str
         Just the identifier before the colon (``token``'s prefix).
     suggestion : str | None
@@ -223,8 +282,17 @@ def unregistered_field_predicates(
     "did you mean" suggestion) alongside that search, instead of leaving a
     typo'd field name silent.
 
-    Two shapes are deliberately excluded, to keep the false-positive rate
-    low on plausible non-predicate literals:
+    Detection is anchored to :data:`_WORD_RE` runs, the same unit
+    :func:`agentgrep.query.parser.tokenize` scans: each run is checked once,
+    for its own leading ``ident:`` prefix only (see
+    :func:`_leading_field_ident`), never re-scanned for a second ``:``
+    deeper inside it. A ``scheme://host:port/path`` URI is one run whose
+    only candidate identifier is the scheme itself, so its remainder's
+    ``host:port`` is never independently examined — not "exempted", never
+    reached in the first place.
+
+    Two shapes are still deliberately excluded, to keep the false-positive
+    rate low on plausible non-predicate literals:
 
     - **``scheme://`` URIs** (``https://example.com``, ``git://host/repo``)
       — the identifier before the colon is a URL scheme, not a field-name
@@ -241,6 +309,8 @@ def unregistered_field_predicates(
     ----------
     text : str
         A chunk of user input, exactly as passed to :func:`has_query_syntax`.
+        May contain multiple whitespace-separated words; each is scanned
+        independently.
     known_field_names : frozenset[str]
         Field names (plus aliases) to treat as registered.
 
@@ -251,21 +321,21 @@ def unregistered_field_predicates(
         the order they appear in ``text``. Empty when none are found.
     """
     found: list[UnregisteredFieldToken] = []
-    for match in _IDENT_COLON_RE.finditer(text):
-        ident = match.group(1)
+    for match in _WORD_RE.finditer(text):
+        run = match.group(0)
+        ident = _leading_field_ident(run)
+        if ident is None:
+            continue
         if ident in known_field_names:
             continue
         if not ident.islower():
             continue
-        if text[match.end() : match.end() + 2] == "//":
+        if run[len(ident) + 1 : len(ident) + 3] == "//":
             continue
-        value_match = _TOKEN_VALUE_RE.match(text, match.end())
-        value_end = value_match.end() if value_match else match.end()
-        token = text[match.start() : value_end]
         close_matches = difflib.get_close_matches(ident, known_field_names, n=1)
         found.append(
             UnregisteredFieldToken(
-                token=token,
+                token=run,
                 field=ident,
                 suggestion=close_matches[0] if close_matches else None,
             ),

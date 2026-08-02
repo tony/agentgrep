@@ -17,6 +17,17 @@ unregistered field-predicate-shaped token as a non-fatal, suggestible
 diagnostic rather than silence. See ``tests/test_query_kind_field.py`` for
 the ``kind:`` field's own contract, and ``tests/test_query_diagnostics.py``
 for how the diagnostic reaches the CLI/MCP/TUI output surfaces.
+
+agentgrep#156 traced two further defects to the same module, both rooted in
+the same mismatch: the detection regex scanned the whole input string for
+*any* ``ident:`` shape, rather than being anchored to how
+:func:`agentgrep.query.parser.tokenize` actually decides field-predicate
+shape (a token's own leading prefix, once). A URL's port
+(``http://localhost:8080/api``) was independently re-examined as its own
+candidate after the scheme was exempted, and a hyphenated word
+(``sub-path:x``) matched a registered field's suffix even though
+``tokenize()`` never splits it. The tests below extending the URI-exemption
+and gate-baseline sections prove both are fixed.
 """
 
 from __future__ import annotations
@@ -27,12 +38,19 @@ import pytest
 
 from agentgrep import GrepArgs, SearchArgs, parse_args
 from agentgrep._query_gate import (
+    _IDENT_RE as _GATE_IDENT_RE,
+    _WORD_RE as _GATE_WORD_RE,
     QUERYABLE_FIELD_NAMES,
     has_query_syntax,
     unregistered_field_predicates,
 )
 from agentgrep.query import build_query_from_input, compose_query_ast, default_registry
 from agentgrep.query.ast import TermNode
+from agentgrep.query.parser import (
+    _IDENT_RE as _TOKENIZER_IDENT_RE,
+    _WORD_RE as _TOKENIZER_WORD_RE,
+    tokenize,
+)
 from agentgrep.records import SearchQuery
 
 if t.TYPE_CHECKING:
@@ -121,6 +139,45 @@ def test_a_registered_field_name_is_never_uri_exempted() -> None:
     assert has_query_syntax("agent://codex", known_field_names=frozenset({"agent"})) is True
 
 
+def test_has_query_syntax_agrees_with_the_tokenizer_for_a_hyphenated_word() -> None:
+    """agentgrep#156: the gate and the real tokenizer must decide identically.
+
+    ``path`` is registered, but ``sub-path`` is not a valid identifier
+    (``_IDENT_RE`` excludes ``-``), so ``tokenize()`` never splits
+    ``sub-path:x`` into an ``ident`` + ``colon`` pair — it stays one
+    literal ``term`` token. The gate's own docstring claims this can never
+    disagree; this test is the proof, not a restatement of the claim.
+    """
+    assert has_query_syntax("sub-path:x", known_field_names=frozenset({"path"})) is False
+
+    tokens = tokenize("sub-path:x")
+    kinds = [token.kind for token in tokens if token.kind != "eof"]
+    assert kinds == ["term"]
+    assert tokens[0].value == "sub-path:x"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A registered field name immediately after a ``.`` or ``/`` is
+        # not a predicate either — the tokenizer's own ``_IDENT_RE`` check
+        # runs against the run's *whole* prefix up to the first ``:``, and
+        # a ``.`` or ``/`` in that prefix fails it the same way ``-`` does.
+        "a.timestamp:x",
+        "a/model:x",
+    ],
+)
+def test_has_query_syntax_agrees_with_the_tokenizer_for_a_prefixed_field_name(
+    text: str,
+) -> None:
+    """A registered field name is only a predicate at the run's own start."""
+    assert has_query_syntax(text) is False
+
+    tokens = tokenize(text)
+    kinds = [token.kind for token in tokens if token.kind != "eof"]
+    assert kinds == ["term"]
+
+
 # ---------------------------------------------------------------------------
 # unregistered_field_predicates: diagnostic-only detection, never gates
 # whether the parser engages.
@@ -132,6 +189,26 @@ def test_unregistered_field_predicates_finds_a_lone_typo() -> None:
     (found,) = unregistered_field_predicates("bogusfield:xyz")
     assert found.token == "bogusfield:xyz"
     assert found.field == "bogusfield"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "bogusfield:xyz,",
+        "(bogusfield:xyz)",
+    ],
+)
+def test_unregistered_field_predicates_token_stops_at_the_word_boundary(
+    text: str,
+) -> None:
+    """Trailing punctuation outside ``_WORD_RE`` never joins the token.
+
+    The token is the matched word run itself, not everything up to the
+    next whitespace — a comma or a closing paren glued on with no space
+    was never part of the field-predicate shape.
+    """
+    (found,) = unregistered_field_predicates(text)
+    assert found.token == "bogusfield:xyz"
 
 
 def test_unregistered_field_predicates_suggests_a_close_registered_name() -> None:
@@ -153,11 +230,34 @@ def test_unregistered_field_predicates_has_no_suggestion_when_nothing_is_close()
         "https://example.com",
         "ftp://example.com",
         "git://example.com/repo.git",
+        # agentgrep#156: a port (or any second ``:``) in the URI's
+        # remainder must not be independently re-examined as its own
+        # field-predicate candidate once the scheme itself is exempted.
+        "http://localhost:8080/api",
+        "https://example.com:443/path",
+        "redis://foo:6379",
     ],
 )
 def test_unregistered_field_predicates_skips_uri_schemes(text: str) -> None:
     """A URL scheme is never mistaken for a typo'd field name."""
     assert unregistered_field_predicates(text) == ()
+
+
+def test_unregistered_field_predicates_never_rescans_a_uris_remainder() -> None:
+    """The whole URI is one ``_WORD_RE`` run, checked once, not per ``:``.
+
+    Before agentgrep#156's fix, the scheme exemption only checked the
+    matched scheme's own trailing characters, so a second ``ident:`` shape
+    later in the same URI (``localhost:8080``) was found and flagged
+    independently. Credentials (``user:pass@host``) are the same shape and
+    must be equally unexamined, and a second URL in the same input is its
+    own independent run, exempted on its own terms.
+    """
+    assert unregistered_field_predicates("redis://user:pass@host:6379") == ()
+    found = unregistered_field_predicates(
+        "http://localhost:8080/api https://example.com:443/path",
+    )
+    assert found == ()
 
 
 @pytest.mark.parametrize(
@@ -305,3 +405,17 @@ def test_cli_query_field_names_mirror_the_registry() -> None:
     live_field_names = _live_registry_field_names(default_registry())
 
     assert live_field_names == QUERYABLE_FIELD_NAMES
+
+
+def test_query_gate_word_and_ident_regexes_mirror_the_tokenizer() -> None:
+    """agentgrep#156: the gate's duplicated regexes must track the real ones.
+
+    ``agentgrep._query_gate`` keeps its own copies of
+    ``agentgrep.query.parser``'s ``_WORD_RE``/``_IDENT_RE`` instead of
+    importing the module (see ``_query_gate.py``'s cold-start rationale).
+    A drift here would silently reopen the exact disagreement agentgrep#156
+    fixed — the gate deciding field-predicate shape by a rule the real
+    tokenizer no longer uses.
+    """
+    assert _GATE_WORD_RE.pattern == _TOKENIZER_WORD_RE.pattern
+    assert _GATE_IDENT_RE.pattern == _TOKENIZER_IDENT_RE.pattern
