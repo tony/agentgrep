@@ -43,6 +43,8 @@ import pytest
 
 from agentgrep import GrepArgs, SearchArgs, parse_args
 from agentgrep.query import (
+    FieldRegistry,
+    FieldSpec,
     QueryCompileError,
     build_query_from_input,
     compile_query,
@@ -317,6 +319,39 @@ def test_depth_field_evaluates_as_vacuously_true() -> None:
     assert compiled.source_predicate(matching_source) is True
     assert compiled.source_predicate(other_source) is False
     assert compiled.record_predicate(matching_record) is True
+
+
+def test_any_request_layer_field_exists_predicate_is_vacuously_true() -> None:
+    """A ``field:*`` existence check on a request-layer field never rejects a record.
+
+    Generalizes beyond ``depth`` itself: a custom :class:`FieldRegistry` can
+    declare its own ``layer="request"`` field, and ``_evaluate_record`` must
+    still short-circuit ``FieldExistsNode`` for it by consulting the
+    registry rather than a hard-coded field-name set that only knows
+    ``depth`` — the same rule ``depth:*`` already gets, proven directly here
+    since ``depth:*`` alone under NOT/OR is a compile error and can't
+    otherwise reach evaluation as a bare positive predicate in one assert.
+    """
+    registry = FieldRegistry(
+        specs=(
+            *default_registry().specs,
+            FieldSpec(name="mode", kind="enum", layer="request", enum_values=("a", "b")),
+        ),
+    )
+    ast = parse_query("mode:* agent:codex", registry)
+    compiled = compile_query(ast, registry)
+    assert compiled.record_predicate is not None
+
+    record = SearchRecord(
+        kind="prompt",
+        agent="codex",
+        store="codex.history",
+        adapter_id="codex.history_jsonl.v1",
+        path=pathlib.Path("/tmp/history.jsonl"),
+        text="deploy the service",
+    )
+
+    assert compiled.record_predicate(record) is True
 
 
 # ---------------------------------------------------------------------------

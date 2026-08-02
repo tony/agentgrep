@@ -153,15 +153,19 @@ def _evaluate_record(
     if isinstance(node, TermNode):
         return _text_matches(record, node.value, case_sensitive=case_sensitive)
     if isinstance(node, FieldExistsNode):
+        spec = registry.get(node.field)
+        if spec is not None and spec.layer == "request":
+            # A request-wide directive filters no record; it is vacuously
+            # satisfied so the rest of an AND chain still decides the
+            # record's fate.
+            return True
         return _field_exists_on_record(node.field, record)
     if isinstance(node, FieldEqNode):
         spec = registry.get(node.field)
         if spec is None:
             return False
         if spec.layer == "request":
-            # A request-wide directive filters no record; it is vacuously
-            # satisfied so the rest of an AND chain still decides the
-            # record's fate.
+            # Same vacuous-true rule as the FieldExistsNode branch above.
             return True
         return _field_matches_record(
             node,
@@ -175,11 +179,21 @@ def _evaluate_record(
         spec = registry.get(node.field)
         if spec is None:
             return False
+        if spec.layer == "request":
+            # Same vacuous-true rule as the FieldExistsNode branch above;
+            # unreachable for depth (it doesn't declare comparison support),
+            # but a custom registry's request-layer field could.
+            return True
         return _field_cmp_matches_record(node, record, spec)
     if isinstance(node, FieldRangeNode):
         spec = registry.get(node.field)
         if spec is None:
             return False
+        if spec.layer == "request":
+            # Same vacuous-true rule as the FieldExistsNode branch above;
+            # unreachable for depth (it doesn't declare range support), but
+            # a custom registry's request-layer field could.
+            return True
         return _field_range_matches_record(node, record, spec)
     if isinstance(node, NotNode):
         return not _evaluate_record(
@@ -259,13 +273,15 @@ def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
     already admitted, and that layer owns the real ``mtime`` decision (the
     record carries no ``mtime_ns``). ``kind`` is a required, non-nullable
     ``SearchRecord`` field, so it is never absent. Nullable record fields
-    count as absent when ``None`` or empty. ``depth`` (the request-wide
-    read-policy directive) is likewise always "present" — it is vacuously
-    true rather than a per-record fact.
+    count as absent when ``None`` or empty. Request-layer fields (``depth``,
+    or any field a custom registry declares with that layer) never reach
+    this helper at all — :func:`_evaluate_record`'s ``FieldExistsNode``
+    branch resolves their vacuous-true rule itself, by layer, before calling
+    this field-name-keyed fallback.
     """
     if field in ORIGIN_QUERY_FIELDS:
         return bool(record_origin_field_values(record, field))
-    if field in {"agent", "store", "adapter_id", "mtime", "scope", "kind", "depth"}:
+    if field in {"agent", "store", "adapter_id", "mtime", "scope", "kind"}:
         return True
     if field == "path":
         return bool(str(record.path))
