@@ -73,6 +73,7 @@ Constraints on this module:
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import difflib
 import re
@@ -272,6 +273,44 @@ def unregistered_field_predicates(
     return tuple(found)
 
 
+def unregistered_field_predicates_in(
+    tokens: cabc.Sequence[str],
+    *,
+    known_field_names: frozenset[str] = QUERYABLE_FIELD_NAMES,
+) -> tuple[UnregisteredFieldToken, ...]:
+    """Scan every token in ``tokens`` for an unregistered field predicate.
+
+    A thin wrapper over :func:`unregistered_field_predicates` for callers
+    with more than one chunk of input — CLI positionals, or MCP request
+    terms — that deduplicates by field name across (and within) tokens, in
+    first-seen order, so a typo repeated across several terms is reported
+    once. Both the CLI's cold-start scan and the MCP ``search`` tool call
+    this instead of each keeping their own copy of the same loop.
+
+    Parameters
+    ----------
+    tokens : collections.abc.Sequence[str]
+        Raw text to scan — CLI argv positionals, or MCP request terms.
+    known_field_names : frozenset[str]
+        Field names (plus aliases) to treat as registered.
+
+    Returns
+    -------
+    tuple[UnregisteredFieldToken, ...]
+        One entry per distinct unregistered field name found, in
+        first-seen order.
+    """
+    found: list[UnregisteredFieldToken] = []
+    seen_fields: set[str] = set()
+    for token in tokens:
+        for entry in unregistered_field_predicates(token, known_field_names=known_field_names):
+            if entry.field in seen_fields:
+                continue
+            seen_fields.add(entry.field)
+            found.append(entry)
+    return tuple(found)
+
+
 __all__ = [
     "BOOLEAN_KEYWORDS",
     "QUERYABLE_FIELD_NAMES",
@@ -279,4 +318,5 @@ __all__ = [
     "UnregisteredFieldToken",
     "has_query_syntax",
     "unregistered_field_predicates",
+    "unregistered_field_predicates_in",
 ]

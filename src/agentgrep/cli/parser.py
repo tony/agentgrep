@@ -24,7 +24,7 @@ import typing as t
 from agentgrep._query_gate import (
     UnregisteredFieldToken,
     has_query_syntax,
-    unregistered_field_predicates,
+    unregistered_field_predicates_in,
 )
 from agentgrep._text import (
     CLI_DESCRIPTION,
@@ -1220,32 +1220,6 @@ def _query_syntax_present(positionals: cabc.Sequence[str]) -> bool:
     return any(has_query_syntax(token) for token in positionals)
 
 
-def _unregistered_field_diagnostics(
-    positionals: cabc.Sequence[str],
-) -> tuple[UnregisteredFieldToken, ...]:
-    """Scan every positional for a field-predicate-shaped, unregistered token.
-
-    Only meaningful when :func:`_query_syntax_present` is ``False`` for the
-    same ``positionals`` — otherwise the parser is engaged and an unknown
-    field already raises a hard error on its own. Deduplicates by field
-    name across positionals (and within one), in first-seen order, so a
-    typo repeated across several search terms is reported once.
-
-    Cheap: :func:`agentgrep._query_gate.unregistered_field_predicates` only
-    imports :mod:`re`/:mod:`dataclasses`/:mod:`difflib`, so this never pays
-    the query module's cold-start import cost.
-    """
-    found: list[UnregisteredFieldToken] = []
-    seen_fields: set[str] = set()
-    for token in positionals:
-        for entry in unregistered_field_predicates(token):
-            if entry.field in seen_fields:
-                continue
-            seen_fields.add(entry.field)
-            found.append(entry)
-    return tuple(found)
-
-
 def _maybe_compile_query(
     positionals: cabc.Sequence[str],
     *,
@@ -1296,7 +1270,7 @@ def _maybe_compile_query(
     traceback.
     """
     query_syntax = _query_syntax_present(positionals)
-    diagnostics = () if query_syntax else _unregistered_field_diagnostics(positionals)
+    diagnostics = () if query_syntax else unregistered_field_predicates_in(positionals)
     if not query_syntax and not extra_nodes:
         return None, tuple(positionals), None, diagnostics
     from agentgrep.query import (
