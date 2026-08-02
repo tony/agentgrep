@@ -1,4 +1,4 @@
-"""``depth:``/``effort:`` field contract (Strategy 1: formal query-language extension).
+"""``depth:``/``effort:`` field contract.
 
 Today four independent, non-composable mechanisms set the engine's read
 policy (:data:`~agentgrep.records.SearchEffort`): CLI ``--deep``/
@@ -109,7 +109,7 @@ def test_depth_field_resolves_search_query_effort(
     expected_effort: str,
     expected_scope: str,
 ) -> None:
-    """T1(a): ``build_query_from_input`` -> ``SearchQuery.effort``, no frontend."""
+    """``build_query_from_input`` resolves ``SearchQuery.effort``, no frontend involved."""
     result = build_query_from_input(query_text, _base_query(), default_registry())
 
     assert result.error is None
@@ -168,7 +168,7 @@ def test_resolve_request_modifiers_reads_the_inline_directive(
     expected_effort: str,
     expected_scope: str,
 ) -> None:
-    """T1(a'): the shared resolver directly, independent of any frontend."""
+    """The shared resolver reads the inline directive directly, independent of any frontend."""
     registry = default_registry()
     ast = parse_query(query_text, registry)
 
@@ -451,7 +451,7 @@ def test_depth_field_works_through_the_cli_path(
     expected_scope: str,
     expected_effort: str,
 ) -> None:
-    """T1(b): the CLI path (parse_args -> SearchArgs/GrepArgs).
+    """The CLI path (``parse_args`` -> ``SearchArgs``/``GrepArgs``) resolves the directive too.
 
     ``depth:targeted foo`` alone widens the implicit ``"prompts"`` default to
     ``"all"`` on its own — mirroring ``--deep`` alone (no ``--scope``) —
@@ -548,7 +548,7 @@ def test_depth_typo_errors_through_build_query_from_input() -> None:
 
 
 def test_depth_field_works_through_compose_query_ast() -> None:
-    """T1(c): the MCP-shaped path (compose_query_ast + resolve_request_modifiers)."""
+    """The MCP-shaped path (``compose_query_ast`` + ``resolve_request_modifiers``) resolves it."""
     registry = default_registry()
     _ast, user_ast = compose_query_ast(["depth:exhaustive", "foo"], (), registry)
 
