@@ -350,8 +350,7 @@ def _validate_ast(
 ) -> None:
     """Walk the AST and raise :class:`QueryCompileError` on any field-level error.
 
-    Catches the five classes of semantic error the closures would
-    otherwise raise lazily during evaluation:
+    Catches five classes of semantic error:
 
     - **unknown enum value**: ``agent:gpt4`` when ``gpt4`` isn't
       in the agent enum's ``enum_values``.
@@ -373,19 +372,22 @@ def _validate_ast(
       or an ``OR`` branch; plain AND composition (the common
       ``depth:targeted foo`` case) never sets it.
 
-    The walk is O(nodes) and runs once before the closures are
-    built. The first four classes above are also independently
-    re-checked inside the closures (:func:`agentgrep.query.evaluate._enum_eq`,
-    :func:`~agentgrep.query.evaluate._date_predicate_matches`, and the
-    comparison/range dispatch), so a direct caller (tests, library
-    consumers) who reaches a closure without calling this function first
-    still sees the same errors at call time — except for the fifth: a
-    request-layer field under ``NOT``/``OR`` evaluates as vacuously true (or
-    false) with no re-check, exactly like the pre-existing ``kind`` field's
-    enum membership (see the comment at its own evaluation branch), because
-    catching it there would mean threading ``under_boolean``-style position
-    tracking through the whole recursive evaluator for a case every real
-    caller already reaches through this walk first.
+    The walk is O(nodes) and runs once before the closures are built. It
+    is the only place all five classes are guaranteed to raise — the
+    closures themselves are not a reliable fallback. Re-checking is
+    real but partial and field-specific, not systematic: a source-layer
+    enum field's evaluation does independently re-verify membership
+    (:func:`agentgrep.query.evaluate._enum_eq`, reached from ``agent:``'s
+    own evaluation path), but :func:`~agentgrep.query.evaluate._date_predicate_matches`
+    catches a malformed date literal and silently returns ``False`` rather
+    than raising for *any* date-kind field, source-layer comparison/range
+    dispatch has no unsupported-operator guard at all, and a request-layer
+    field's vacuous-true short-circuit bypasses every one of these checks
+    unconditionally — it never reaches ``_enum_eq``, the date dispatch, or
+    the comparison/range dispatch in the first place. A direct caller
+    (tests, library consumers) who reaches a closure without calling this
+    function first should not assume they'll see the same errors at call
+    time.
     """
     if isinstance(node, FieldExistsNode):
         # Field-exists is valid for any registered field; the parser
