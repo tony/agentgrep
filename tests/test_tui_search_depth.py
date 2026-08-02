@@ -357,6 +357,43 @@ async def test_depth_offer_cursor_appears_on_first_focus() -> None:
         assert _depth_cursor_spans(offer) == []
 
 
+@pytest.mark.slow
+async def test_depth_offer_arrow_keys_release_focus_at_the_top_row() -> None:
+    """Up/down no longer wrap the two rows forever with no keyboard escape.
+
+    Before the fix, ``down`` wrapped 1 -> 0 -> 1 forever and ``up`` never
+    left row 0, so a keyboard user who arrived here (by Tab or by mouse
+    click) had no arrow-key way out — only an unhinted Tab.
+    """
+    app = _DepthOfferApp()
+    async with app.run_test() as pilot:
+        offer = app.query_one("#empty-depth", DepthOffer)
+        offer.show_offer(offered_depth_actions(_idle_query()))
+        offer.focus()
+        await pilot.pause()
+        assert offer.highlighted == 0
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert offer.highlighted == 1
+
+        # Clamped at the last row, not wrapped back to row 0.
+        await pilot.press("down")
+        await pilot.pause()
+        assert offer.highlighted == 1
+        assert app.focused is offer
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert offer.highlighted == 0
+        assert app.focused is offer
+
+        # Released at row 0, escaping to the previous focusable widget.
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is not offer
+
+
 def test_idle_depth_offer_matches_engine_authored_actions() -> None:
     """Author the pre-run offer from engine vocabulary, not TUI-local copy."""
     actions = offered_depth_actions(_idle_query())

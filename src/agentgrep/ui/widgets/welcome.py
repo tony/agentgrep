@@ -269,19 +269,22 @@ class DepthOffer(Static, can_focus=True):
 
     @_runtime.pump_only
     def action_cursor_down(self) -> None:
-        """Move the keyboard cursor to the next offered rung."""
-        self._move_cursor(1)
+        """Move the keyboard cursor down one rung, clamped at the last row."""
+        if self._rows:
+            self.highlighted = min(len(self._rows) - 1, self.highlighted + 1)
 
     @_runtime.pump_only
     def action_cursor_up(self) -> None:
-        """Move the keyboard cursor to the previous offered rung."""
-        self._move_cursor(-1)
+        """Move the cursor up, or release focus when already at row 0.
 
-    def _move_cursor(self, delta: int) -> None:
-        """Wrap the keyboard cursor within the selectable rows."""
-        if len(self._rows) < 2:
-            return
-        self.highlighted = (self.highlighted + delta) % len(self._rows)
+        Matches :meth:`SearchResultsList.action_cursor_up` — without this,
+        up/down wrapped within the two rows forever, the only escape being
+        an unhinted Tab.
+        """
+        if self.highlighted == 0:
+            self.app.action_focus_previous()
+        else:
+            self.highlighted -= 1
 
     @_runtime.pump_only
     def action_select_offer(self) -> None:
