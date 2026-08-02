@@ -58,6 +58,9 @@ if t.TYPE_CHECKING:
     from agentgrep.results import RunSummary
 
 _TARGETED_PROMPT_SCOPE_ERROR = "targeted effort requires conversation or all scope"
+_EFFORT_PARAM_TERM_COLLISION_ERROR = (
+    "cannot combine the effort parameter with a depth:/effort: term; pick one"
+)
 
 
 def _invalid_params_error(message: str) -> McpError:
@@ -128,7 +131,21 @@ def _compile_request_query(
     plain terms stay literal substrings. Origin filters are ANDed in as
     synthetic AST nodes via :func:`agentgrep.query.compose_query_ast`.
     A malformed query raises a :class:`ToolError` with the parse/compile
-    message.
+    message. Scope and effort are resolved together by
+    :func:`agentgrep.query.resolve_request_modifiers` — the same resolver
+    the CLI and TUI use — so an inline ``scope:``/``depth:``/``effort:``
+    predicate widens ``base_query`` identically everywhere.
+
+    An inline ``depth:``/``effort:`` term is rejected outright when the
+    structured ``effort`` request parameter was also set — unlike an inline
+    ``scope:`` predicate, which is always allowed to widen the structured
+    ``scope`` parameter (and has been since before this field existed).
+    Effort is asymmetric because :func:`_normalize_request_depth` already
+    validated and normalized the structured ``effort`` — including deriving
+    ``conversation_limit`` — before this function runs; silently letting an
+    inline directive override it here would mean that earlier validation ran
+    against a value the request no longer uses. Requiring one syntax avoids
+    that ordering hazard instead of reordering the whole request pipeline.
 
     Returns the rebuilt query plus any non-fatal
     :class:`~agentgrep._query_gate.UnregisteredFieldToken` diagnostics for
@@ -143,7 +160,8 @@ def _compile_request_query(
         compile_query,
         compose_query_ast,
         default_registry,
-        scope_widened_for_ast,
+        fields_in_ast,
+        resolve_request_modifiers,
     )
 
     origin_filter = RecordOrigin(
@@ -169,12 +187,25 @@ def _compile_request_query(
         message = f"invalid query: {exc}"
         raise ToolError(message) from exc
     diagnostics = () if user_ast is not None else unregistered_field_predicates_in(terms)
-    scope = scope_widened_for_ast(user_ast, base_query.scope)
-    effort = base_query.effort
-    if scope != "prompts" and effort not in {"targeted", "exhaustive"}:
-        effort = "exhaustive"
+    used_fields = fields_in_ast(user_ast) if user_ast is not None else set()
+    if request.effort is not None and "depth" in used_fields:
+        raise _invalid_params_error(_EFFORT_PARAM_TERM_COLLISION_ERROR)
+    try:
+        scope, effort = resolve_request_modifiers(
+            user_ast,
+            registry,
+            base_scope=base_query.scope,
+            base_effort=base_query.effort,
+            base_scope_explicit=request.scope_provenance == "explicit",
+        )
+    except QueryCompileError as exc:
+        message = f"invalid query: {exc}"
+        raise ToolError(message) from exc
     if effort == "targeted" and scope == "prompts":
         raise _invalid_params_error(_TARGETED_PROMPT_SCOPE_ERROR)
+    if effort == "prompt" and scope != "prompts":
+        msg = "prompt effort requires prompt scope"
+        raise ToolError(msg)
     return (
         dataclasses.replace(
             base_query,
@@ -313,7 +344,9 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
             "for a bounded approximate conversation search, or exhaustive for all "
             "eligible readable conversations. Scope controls returned record kinds. "
             "Terms accept agentgrep's query language (field predicates, booleans, "
-            "phrases, and wildcards); see agentgrep://query-language."
+            "phrases, and wildcards) including an inline depth:/effort: term as an "
+            "alternative to the effort parameter — combining both is an error; "
+            "see agentgrep://query-language."
         ),
     )
     async def search_tool(
