@@ -20,6 +20,7 @@ from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Footer, Static
 
+from agentgrep._query_gate import strip_depth_directive
 from agentgrep._types import (
     StaticLike,
     StreamingAppLike,
@@ -29,6 +30,7 @@ from agentgrep.query import default_registry
 from agentgrep.records import SearchRecord
 from agentgrep.ui import _history, _runtime, theme as ui_theme
 from agentgrep.ui._context import UiContext
+from agentgrep.ui._result_status import depth_offer_typed_directive
 from agentgrep.ui.completion import QuerySuggester
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.layouts._base import COPY_SELECTION_BINDING
@@ -545,9 +547,17 @@ class HudLayout(_HudSearchBase):
 
     @_runtime.pump_only
     def on_depth_offer_selected(self, message: DepthOfferSelected) -> None:
-        """Run the chosen engine depth action against the typed query."""
+        """Type the chosen depth action's ``depth:`` term into the query and submit it."""
         message.stop()
-        self.run_next_action(message.action_id)
+        directive = depth_offer_typed_directive(message.action_id)
+        if directive is None or self._search_input is None:
+            return
+        current = strip_depth_directive(self._search_input.value).strip()
+        text = f"{current} {directive}" if current else directive
+        self._search_input.load_query(text)
+        if self._dispatch_slash_text(text) is None:
+            self._remember_active_search_text(text)
+            self._workflow.on_query(self, text)
         # Starting the search hides the idle canvas, which blurs this panel and
         # leaves the screen with no focused widget. Hand focus back to the input
         # so the next keystroke is not silently discarded.

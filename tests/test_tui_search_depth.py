@@ -175,12 +175,42 @@ async def test_idle_canvas_depth_offer_starts_a_targeted_run(
         assert summary is not None
         assert summary.requested_effort == "targeted"
         assert summary.request.scope == "all"
+        assert layout._search_input.value == "needle depth:targeted"
         # Starting the search hides the idle canvas; focus must land back on
         # the input or every following keystroke is silently discarded.
         assert app.focused is layout._search_input
         # The escalation stays request-local: the next plain edit is prompt
         # effort again at the launch scope.
         assert layout.build_query("needle").effort == "prompt"
+
+
+async def test_depth_offer_click_replaces_an_already_typed_directive(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Selecting a further rung replaces, rather than doubles, the box's own directive."""
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _idle_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
+        await pilot.pause()
+
+        layout._search_input.load_query("needle depth:targeted")
+        await pilot.pause()
+        rows = format_depth_offer_rows(layout.pending_depth_actions())
+        assert [action_id for action_id, _ in rows] == ["search.exhaustive"]
+
+        offer = layout.query_one("#empty-depth", DepthOffer)
+        await pilot.click(offer, offset=(2, 1))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        summary = layout._run_summary
+        assert summary is not None
+        assert summary.requested_effort == "exhaustive"
+        assert layout._search_input.value == "needle depth:exhaustive"
 
 
 class _StubInput:

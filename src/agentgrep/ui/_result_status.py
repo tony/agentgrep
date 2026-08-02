@@ -6,6 +6,7 @@ from agentgrep.progress import format_match_count
 from agentgrep.results import NextAction, RunSummary
 
 __all__ = [
+    "depth_offer_typed_directive",
     "format_depth_offer_lead",
     "format_depth_offer_rows",
     "format_empty_evidence",
@@ -63,6 +64,11 @@ _DEPTH_OFFER_LEADS = {
     "search.exhaustive": "Deep search can omit a conversation.",
 }
 _DEPTH_OFFER_CONFIRMATION_LEAD = "Change the explicit scope to all before searching conversations."
+
+
+def depth_offer_typed_directive(action_id: str) -> str | None:
+    """Return the ``depth:`` term one offered depth action's ``action_id`` types."""
+    return _DEPTH_OFFER_TYPED_HINTS.get(action_id)
 
 
 def format_empty_outcome(summary: RunSummary) -> str:
@@ -141,7 +147,7 @@ def format_depth_offer_rows(
         if hint is None:
             continue
         row = f"{action.label} — {hint}"
-        typed = _DEPTH_OFFER_TYPED_HINTS.get(action.action_id)
+        typed = depth_offer_typed_directive(action.action_id)
         if typed is not None:
             row = f"{row} (type {typed})"
         rows.append((action.action_id, row))

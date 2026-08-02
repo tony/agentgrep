@@ -383,12 +383,37 @@ def unregistered_field_predicates_in(
     return tuple(found)
 
 
+def strip_depth_directive(text: str) -> str:
+    """Remove any ``depth:``/``effort:`` word from ``text``, verbatim otherwise.
+
+    Reuses :data:`_WORD_RE`/:func:`_leading_field_ident`, the same
+    word-boundary rule :func:`has_query_syntax` already uses.
+
+    Parameters
+    ----------
+    text : str
+        Raw search-box text, which may or may not contain a depth:/effort:
+        token.
+
+    Returns
+    -------
+    str
+        ``text`` with every ``depth:``/``effort:``-shaped word removed.
+    """
+    result = text
+    for match in reversed(list(_WORD_RE.finditer(text))):
+        if _leading_field_ident(match.group(0)) in {"depth", "effort"}:
+            result = result[: match.start()] + result[match.end() :]
+    return " ".join(result.split())
+
+
 __all__ = [
     "BOOLEAN_KEYWORDS",
     "QUERYABLE_FIELD_NAMES",
     "UNREGISTERED_FIELD_PREDICATE_CODE",
     "UnregisteredFieldToken",
     "has_query_syntax",
+    "strip_depth_directive",
     "unregistered_field_predicates",
     "unregistered_field_predicates_in",
 ]
