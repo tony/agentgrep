@@ -187,6 +187,27 @@ class UnregisteredFieldToken:
     field: str
     suggestion: str | None
 
+    @property
+    def message(self) -> str:
+        """Human-readable diagnostic text, ready to print or surface as-is."""
+        base = (
+            f"{self.token!r} looks like a field predicate, but {self.field!r} is not "
+            "a registered query field; searching for the literal text instead"
+        )
+        if self.suggestion is None:
+            return base
+        return f"{base} (did you mean {self.suggestion!r}?)"
+
+
+UNREGISTERED_FIELD_PREDICATE_CODE = "unregistered_field_predicate"
+"""Stable machine-readable diagnostic code for every :class:`UnregisteredFieldToken`.
+
+One constant, not a per-instance field, since every instance of this
+diagnostic shares the same code — CLI JSON/NDJSON output and the MCP
+``search`` tool's response both attach it alongside a
+:class:`UnregisteredFieldToken`'s other fields.
+"""
+
 
 def unregistered_field_predicates(
     text: str,
@@ -254,6 +275,7 @@ def unregistered_field_predicates(
 __all__ = [
     "BOOLEAN_KEYWORDS",
     "QUERYABLE_FIELD_NAMES",
+    "UNREGISTERED_FIELD_PREDICATE_CODE",
     "UnregisteredFieldToken",
     "has_query_syntax",
     "unregistered_field_predicates",

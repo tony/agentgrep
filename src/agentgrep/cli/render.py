@@ -16,6 +16,7 @@ import sys
 
 from agentgrep import run_ui
 from agentgrep._engine import iter_find_events, iter_search_events, run_search_result
+from agentgrep._query_gate import UnregisteredFieldToken
 from agentgrep._text import AnsiColors, format_display_path
 from agentgrep.cli.parser import FindArgs, GrepArgs, SearchArgs, UIArgs
 from agentgrep.cli.renderers import (
@@ -39,6 +40,7 @@ from agentgrep.cli.serializers import (
     build_envelope,
     serialize_find_record,
     serialize_grep_record,
+    serialize_query_diagnostics,
     serialize_run_summary,
     serialize_search_record,
     serialize_source_handle,
@@ -90,6 +92,20 @@ __all__ = [
 ]
 
 
+def _print_query_diagnostics(diagnostics: tuple[UnregisteredFieldToken, ...]) -> None:
+    """Warn on stderr for each non-fatal query diagnostic.
+
+    Called once per invocation ahead of any other output, for every
+    non-``--ui`` output mode. ``--ui`` skips this: Textual's alt-screen
+    takeover would immediately erase a stderr line printed here, and the
+    interactive search box already surfaces the same warning through
+    :func:`agentgrep.query.build_query_from_input` once a query is
+    (re)typed there.
+    """
+    for diagnostic in diagnostics:
+        print(f"warning: {diagnostic.message}", file=sys.stderr)
+
+
 def _launch_ui(
     query: SearchQuery,
     *,
@@ -134,14 +150,24 @@ def print_find_results(records: list[FindRecord], args: FindArgs) -> None:
         "extensions": list(args.extensions),
     }
     if args.output_mode == "json":
-        payload = build_envelope(
-            "find",
-            query_data,
-            [dict(serialize_find_record(record)) for record in records],
-        )
+        payload = {
+            **build_envelope(
+                "find",
+                query_data,
+                [dict(serialize_find_record(record)) for record in records],
+            ),
+            "warnings": serialize_query_diagnostics(args.diagnostics),
+        }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     if args.output_mode == "ndjson":
+        # find's --ndjson stream is a flat sequence of bare find records with
+        # no wrapping event type (unlike grep/search's ndjson, which already
+        # has a terminal "summary" line). Adding a "warnings" line here would
+        # be the first non-record shape on this stream — a breaking format
+        # change for existing consumers, so it's out of scope here. --json
+        # above and the stderr warning (run_find_command) already carry the
+        # diagnostic for find.
         for record in records:
             print(json.dumps(serialize_find_record(record), ensure_ascii=False))
         return
@@ -229,6 +255,8 @@ def run_find_command(args: FindArgs) -> int:
     then opens the Textual explorer. This mirrors the ``tig`` model:
     same query semantics, different presentation.
     """
+    if args.output_mode != "ui":
+        _print_query_diagnostics(args.diagnostics)
     if args.output_mode == "ui":
         query = SearchQuery(
             terms=(args.pattern,) if args.pattern else (),
@@ -361,6 +389,8 @@ def run_search_command(args: SearchArgs) -> int:
     and renders with snippet-first pretty output.  Returns ``0`` when
     at least one result survives, ``1`` otherwise.
     """
+    if args.output_mode != "ui":
+        _print_query_diagnostics(args.diagnostics)
     if (
         not args.terms
         and args.compiled is None
@@ -580,6 +610,7 @@ def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
         payload = {
             **build_envelope("search", query_data, results),
             "summary": serialize_run_summary(run.summary),
+            "warnings": serialize_query_diagnostics(args.diagnostics),
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -590,6 +621,7 @@ def _run_search_eager(args: SearchArgs, query: SearchQuery) -> int:
                 {
                     "type": "summary",
                     "data": serialize_run_summary(run.summary),
+                    "warnings": serialize_query_diagnostics(args.diagnostics),
                 },
                 ensure_ascii=False,
             ),
@@ -663,7 +695,12 @@ def print_grep_results(
         if run_summary is not None:
             summary_data["run"] = serialize_run_summary(run_summary)
         json_events.append({"type": "summary", "data": summary_data})
-        print(json.dumps({"command": "grep", "events": json_events}, ensure_ascii=False, indent=2))
+        payload = {
+            "command": "grep",
+            "events": json_events,
+            "warnings": serialize_query_diagnostics(args.diagnostics),
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0 if total_match_count > 0 else 1
     if args.output_mode == "ndjson":
         emitted_matches = 0
@@ -791,6 +828,7 @@ def stream_grep_results(args: GrepArgs) -> int:
                         "matches": match_count,
                         "run": serialize_run_summary(run_summary),
                     },
+                    "warnings": serialize_query_diagnostics(args.diagnostics),
                 },
                 ensure_ascii=False,
             ),
@@ -817,6 +855,8 @@ def run_grep_command(args: GrepArgs) -> int:
     if not args.patterns:
         msg = "grep requires at least one pattern"
         raise SystemExit(msg)
+    if args.output_mode != "ui":
+        _print_query_diagnostics(args.diagnostics)
     query = build_grep_query(args)
     if args.output_mode == "ui":
         _launch_ui(
