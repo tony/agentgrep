@@ -12,7 +12,7 @@ from textual.reactive import reactive
 from textual.style import Style
 from textual.widgets import Static
 
-from agentgrep.ui import _result_status, _runtime
+from agentgrep.ui import _result_status, _runtime, theme as ui_theme
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.widgets.messages import DepthOfferSelected, WelcomeQuerySelected
 
@@ -122,6 +122,7 @@ def depth_offer_content(
     actions: tuple[NextAction, ...],
     *,
     highlighted: int | None = None,
+    lead_style: str,
 ) -> Content:
     """Build the pre-run depth panel from engine-authored escalations.
 
@@ -137,6 +138,11 @@ def depth_offer_content(
     highlighted : int | None
         Index of the selectable row carrying the keyboard cursor, or ``None``
         to paint no cursor.
+    lead_style : str
+        Resolved Rich style for the lead sentence — the caller supplies a
+        theme-calibrated color (e.g. ``$ag-muted``) rather than the plain
+        ``"dim"`` SGR attribute, whose contrast against the canvas varies
+        by terminal and theme.
 
     Returns
     -------
@@ -149,14 +155,18 @@ def depth_offer_content(
         return Content("")
     rows = _result_status.format_depth_offer_rows(actions)
     body = Text()
-    body.append(lead, style="dim")
+    body.append(lead)
+    lead_end = len(body)
     click_ranges: list[tuple[int, int, str]] = []
     for action_id, row in rows:
         body.append("\n")
         start = len(body)
         body.append(f"▸ {row}")
         click_ranges.append((start, len(body), action_id))
-    content = Content.from_rich_text(body)
+    # Stylized after conversion, like the cursor/action-id spans below, so
+    # the resolved token survives as a plain string rather than being
+    # eagerly parsed into an opaque Style by Content.from_rich_text.
+    content = Content.from_rich_text(body).stylize(lead_style, 0, lead_end)
     for index, (start, end, action_id) in enumerate(click_ranges):
         content = content.stylize(
             Style.from_meta({DEPTH_OFFER_ACTION_META: action_id}),
@@ -235,10 +245,12 @@ class DepthOffer(Static, can_focus=True):
         Bounded string work over at most two engine-authored rows, so it is
         safe on the pump (ADR 0011 NB-5).
         """
+        theme_vars = t.cast("t.Any", self.app).theme_variables
         self.update(
             depth_offer_content(
                 self._offered,
                 highlighted=self.highlighted if self.has_focus else None,
+                lead_style=ui_theme.resolve(theme_vars, "ag-muted"),
             ),
         )
 
