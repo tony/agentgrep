@@ -130,6 +130,15 @@ def compile_query(
     only when the closures were evaluated — and the eager search
     path's record-side closure dodges them entirely, so users see
     silent zero-match runs instead of clean errors.
+
+    Also validates a conflicting inline ``depth:``/``effort:``
+    directive (``depth:targeted effort:exhaustive foo``) at this same
+    compile step, even though nothing here reads the extracted value —
+    :func:`resolve_request_modifiers` is what actually resolves effort,
+    called separately by each frontend after compiling. Without this,
+    ``compile_query`` alone (the MCP ``validate_query`` tool's dry run)
+    would report a conflicting query as valid, only for the same query
+    to fail once a real search calls ``resolve_request_modifiers``.
     """
     if _is_pure_text(ast):
         terms = _collect_text_terms(ast)
@@ -144,6 +153,7 @@ def compile_query(
         )
 
     _validate_ast(ast, registry)
+    _ = _effort_directive(ast, registry)
     text_terms = tuple(_collect_text_terms(ast))
     routing_terms = tuple(_collect_positive_text_terms(ast))
     path_fields = frozenset(spec.name for spec in registry.specs if spec.kind == "path")

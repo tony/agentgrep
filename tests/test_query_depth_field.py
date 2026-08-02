@@ -491,17 +491,48 @@ def test_resolve_request_modifiers_rejects_not_or_standalone(query_text: str) ->
 
 
 def test_depth_field_rejects_conflicting_and_directives() -> None:
-    """Two ANDed depth:/effort: clauses resolving to different values error.
-
-    ``compile_query`` never touches effort at all (only
-    ``resolve_request_modifiers`` extracts it), so the conflict only
-    surfaces when a caller actually resolves the directive.
-    """
+    """Two ANDed depth:/effort: clauses resolving to different values error."""
     registry = default_registry()
     ast = parse_query("depth:targeted AND effort:exhaustive foo", registry)
 
     with pytest.raises(QueryCompileError, match="conflicting depth"):
         resolve_request_modifiers(ast, registry, base_scope="all", base_effort="prompt")
+
+
+def test_compile_query_alone_also_rejects_conflicting_directives() -> None:
+    """``compile_query`` catches the same conflict without ever calling the resolver.
+
+    The MCP ``validate_query`` tool's dry run only parses and compiles a
+    query — it never calls ``resolve_request_modifiers`` — so this is the
+    guarantee that a dry-run-valid query agrees with what a real search
+    would accept.
+    """
+    registry = default_registry()
+    ast = parse_query("depth:targeted AND effort:exhaustive foo", registry)
+
+    with pytest.raises(QueryCompileError, match="conflicting depth"):
+        compile_query(ast, registry)
+
+
+def test_mcp_validate_query_tool_agrees_with_a_real_search() -> None:
+    """The public MCP ``validate_query`` tool reports the same verdict a search would.
+
+    Drives ``_validate_query_sync`` directly (no fresh MCP client needed —
+    the sync function is the tool's own implementation) rather than
+    ``compile_query``, to prove the guarantee at the actual public surface
+    named in the report: a client that dry-runs a conflicting query before
+    searching must not be told it's valid.
+    """
+    from agentgrep.mcp.models import ValidateQueryRequest
+    from agentgrep.mcp.tools.diagnostic_tools import _validate_query_sync
+
+    response = _validate_query_sync(
+        ValidateQueryRequest(query="depth:targeted effort:exhaustive foo"),
+    )
+
+    assert response.query_valid is False
+    assert response.error_message is not None
+    assert "conflicting depth" in response.error_message
 
 
 def test_depth_field_allows_matching_and_directives() -> None:
