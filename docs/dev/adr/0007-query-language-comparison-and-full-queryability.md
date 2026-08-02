@@ -173,12 +173,44 @@ behavior change rather than branch-internal narrative.
 
 ### Risks
 
-- Heuristic over-engagement: a positional that looks like a field predicate
-  engages the parser. The heuristic matches only registry-shaped identifiers,
-  and unknown fields raise a clean parse error rather than searching silently.
+- Heuristic under-engagement, deliberately: a positional only engages the
+  parser for a *registered* field predicate, a standalone boolean keyword,
+  or a leading quote — an unregistered `ident:value` token, alone, does
+  not. Before [#153](https://github.com/tony/agentgrep/issues/153) that
+  same registered-only gate existed twice, independently hand-maintained
+  (the CLI's cold-start scan and the compiler's own scan), and a typo or
+  an unregistered field fell through both with *no signal at all* — a
+  silent zero-match search. The fix is not a stricter gate; it's an
+  honest one plus one shared implementation
+  (`agentgrep._query_gate.has_query_syntax`) both scans now call, so they
+  cannot drift again. An unregistered field predicate still runs as a
+  literal substring search — a blanket "any `ident:` shape is a
+  predicate" rule was tried and rejected during this fix's own review,
+  because it turns plausible literal searches (`Note: fix this`,
+  `C:\Users\foo`) into a hard "unknown field" error — but it now carries a
+  non-fatal warning naming the unregistered field and, when one is close,
+  a suggested registered field name
+  (`agentgrep._query_gate.unregistered_field_predicates`). An unregistered
+  predicate combined with an explicit boolean keyword
+  (`bogusfield:xyz OR ruff`) still hard-errors, since the whole positional
+  engages the parser as soon as any part of it looks like boolean/phrase
+  syntax; graceful degradation for that composed case would need the
+  recursive-descent parser to recover mid-parse rather than abort, which
+  is real parser surgery and stayed out of scope here. `validate_query`
+  (which calls the parser directly, bypassing this gate entirely) is
+  intentionally stricter than `search`/`grep`: a validator's job is
+  judging syntax in isolation, while search stays useful on a best-effort
+  literal match even for input that turns out not to be valid
+  query-language.
 - Generated-description drift: registry-backed help can still drift if
   generation is partial. Drift-guard tests compare the rendered field list
-  against the registry.
+  against the registry, and a second drift-guard test
+  (`test_cli_query_field_names_mirror_the_registry`) covers the CLI's
+  hand-maintained, import-cheap field-name mirror
+  (`agentgrep._query_gate.QUERYABLE_FIELD_NAMES`) — unlike before, a
+  drifted mirror here reproduces the exact silent-literal defect #153
+  reports, for the one field the mirror missed, so this guard stays
+  load-bearing rather than cosmetic.
 
 ## Relationship to other ADRs
 

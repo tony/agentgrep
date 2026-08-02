@@ -21,6 +21,7 @@ import re
 import sys
 import typing as t
 
+from agentgrep._query_gate import has_query_syntax
 from agentgrep._text import (
     CLI_DESCRIPTION,
     FIND_DESCRIPTION,
@@ -1172,55 +1173,20 @@ def _targeted_conversation_limit(
     return DEFAULT_TARGETED_CONVERSATION_LIMIT if value is None else value
 
 
-# Boolean keywords that engage the query parser when typed standalone and
-# uppercase. Lowercase ``or``/``and``/``not`` stay literal search terms — the
-# tokenizer treats them as terms, so the gate must agree.
-_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
-
-# Queryable field names, mirrored from ``agentgrep.query.default_registry``.
-# Hardcoded here on purpose: the cold-start gate runs on every invocation and
-# must not import the query module to decide whether to engage the parser.
-# ``test_cli_query_field_names_mirror_the_registry`` fails if this drifts.
-_QUERY_FIELD_NAMES: frozenset[str] = frozenset(
-    {
-        "agent",
-        "store",
-        "adapter_id",
-        "adapter",
-        "path",
-        "mtime",
-        "scope",
-        "timestamp",
-        "date",
-        "model",
-        "role",
-        "cwd",
-        "repo",
-        "worktree",
-        "branch",
-        "project",
-        "cwd_hash",
-        "text",
-    },
-)
-
-# A field predicate is a known field name, not preceded by an identifier char
-# (so ``myagent:`` does not match) and followed by ``:``. Restricting to known
-# fields keeps URLs like ``https://host`` and path values from spuriously
-# engaging the parser.
-_FIELD_PREDICATE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:" + "|".join(sorted(_QUERY_FIELD_NAMES, key=len, reverse=True)) + r"):",
-)
-
-
 def _query_syntax_present(positionals: cabc.Sequence[str]) -> bool:
     """Return whether positionals carry query-language syntax.
 
-    Cheap, dependency-free heuristic so plain bare-term queries
-    (``ruff uv tmux``) keep the legacy fast path and never import the
-    query module. Engages the parser when a positional carries a known
-    field predicate, a standalone uppercase boolean keyword, or a
-    leading quote (an intended phrase).
+    Cheap, dependency-free heuristic (:func:`agentgrep._query_gate.has_query_syntax`,
+    shared with :func:`agentgrep.query.compile._has_query_syntax` so the two
+    can't drift the way they did before agentgrep#153) so plain bare-term
+    queries (``ruff uv tmux``) keep the legacy fast path and never import
+    the query module. Engages the parser when a positional carries a
+    *registered* field predicate, a standalone uppercase boolean keyword, or
+    a leading quote (an intended phrase). An unregistered field-shaped
+    predicate does not engage the parser here — see
+    :func:`agentgrep._query_gate.unregistered_field_predicates` for how that
+    case is surfaced instead, without turning a plausible literal search
+    into a hard parse error.
 
     Parameters
     ----------
@@ -1232,16 +1198,7 @@ def _query_syntax_present(positionals: cabc.Sequence[str]) -> bool:
     bool
         ``True`` when the parser should be engaged.
     """
-    for token in positionals:
-        if not token:
-            continue
-        if token[:1] in {'"', "'"}:
-            return True
-        if _FIELD_PREDICATE_RE.search(token):
-            return True
-        if any(word in _BOOLEAN_KEYWORDS for word in token.split()):
-            return True
-    return False
+    return any(has_query_syntax(token) for token in positionals)
 
 
 def _maybe_compile_query(

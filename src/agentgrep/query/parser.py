@@ -27,8 +27,30 @@ Grammar:
 
 Implicit AND between bare terms is preserved. Field names are
 validated against the passed :class:`agentgrep.query.registry.FieldRegistry`
-at parse time, so a typo in `agetn:codex` errors immediately rather
-than failing silently against an empty result set.
+at parse time, so a typo in a *registered-looking* query — one that
+already contains another known field predicate, a boolean keyword, or a
+quoted phrase — errors immediately rather than failing silently against
+an empty result set. Whether this parser runs at all for a given chunk of
+input is decided upstream by :func:`agentgrep._query_gate.has_query_syntax`,
+shared by the CLI's cold-start positional scan and
+:func:`agentgrep.query.compile._has_query_syntax`; that gate only engages
+for a *registered* field predicate, so a lone unregistered one
+(``agetn:codex`` with nothing else query-shaped alongside it) never
+reaches this module at all and stays a literal search instead of a hard
+error — see :mod:`agentgrep._query_gate` for why, and
+:func:`agentgrep._query_gate.unregistered_field_predicates` for how that
+case is still surfaced, as a non-fatal diagnostic rather than silence.
+This module's own :meth:`~agentgrep.query.registry.FieldRegistry.get`
+lookup (line 398 below) is what makes ``validate_query`` — which calls
+this parser directly, bypassing the gate — stricter than search: a
+validator's whole job is judging syntax in isolation, while search stays
+useful on a best-effort literal match even for a query that turns out
+not to be valid query-language. agentgrep#153 is the defect both halves
+of this split close: a registered field like ``kind:`` was unreachable
+before it existed in the registry at all, and an unregistered one, when
+it *did* reach this parser (already-known-syntax queries only), fell
+through the CLI's separate, independently hand-maintained gate mirror
+that this module never saw.
 """
 
 from __future__ import annotations

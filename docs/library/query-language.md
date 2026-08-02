@@ -11,14 +11,34 @@ against its natural record shape.
 The query language is **opt-in**: a bare positional like
 `agentgrep grep bliss` keeps the legacy fast path with zero
 overhead. A cheap, dependency-free scan engages the parser only when
-a positional carries query syntax — a **known field predicate**
-(`agent:`, `model:`, …), a **standalone uppercase boolean keyword**
-(`AND` / `OR` / `NOT`), or a **leading quote** (an intended phrase).
-Lowercase `and` / `or` and unquoted bare terms stay literal, and a
-plain term list never imports the query module. Restricting the field
-scan to registered names keeps incidental colons — URLs like
-`https://host`, values like `path/to/file` — from spuriously engaging
-the parser.
+a positional carries query syntax — a **registered field predicate**
+(`agent:`, `model:`, `kind:`, …), a **standalone uppercase boolean
+keyword** (`AND` / `OR` / `NOT`), or a **leading quote** (an intended
+phrase). Lowercase `and` / `or` and unquoted bare terms stay literal,
+and a plain term list never imports the query module. Path-shaped
+values such as `path/to/file` never match the field-predicate shape to
+begin with (the text immediately before the colon has to be a bare
+identifier), so they stay literal without any special-casing.
+
+A field-predicate-*shaped* token whose name isn't registered —
+`bogusfield:xyz`, or a typo like `agnet:codex` typed on its own —
+still runs as a literal substring search rather than erroring, so a
+plausible non-predicate literal (`Note: fix this`, a Windows path like
+`C:\Users\foo`, a URL like `https://host`) never breaks. It's not
+silent about it, though: the search still reports a warning naming the
+unrecognized field and, when one is close, a suggested registered
+field name — on the CLI as a line on stderr and a `warnings` entry in
+`--json`/`--ndjson` output, in the MCP `search` tool's response
+diagnostics, and as a notification in the TUI. Combine the same typo
+with an explicit `AND`/`OR`/`NOT` or a quoted phrase and the query
+*does* engage the parser as a whole, so an unregistered field inside a
+boolean expression (`bogusfield:xyz OR ruff`) still raises the
+parser's "unknown field" error rather than degrading — the warning
+covers a lone field-shaped token, not one buried inside compound
+syntax. To validate a query without running it — for example before
+saving it to a script — {tooliconl}`validate_query` is stricter: it always
+reports an unregistered field as invalid, since a validator's job is
+judging syntax, not returning a best-effort result.
 
 ## Grammar
 
@@ -56,7 +76,7 @@ requires every term); it's accepted for rg compatibility.
 
 ## Field registry
 
-The default registry ships sixteen fields, split across two evaluation
+The default registry ships seventeen fields, split across two evaluation
 layers:
 
 ### Source-level fields
@@ -80,6 +100,7 @@ predicate has admitted the source.
 | Field | Kind | Notes |
 |---|---|---|
 | `scope` | enum | One of `prompts`, `conversations`, `all` |
+| `kind` | enum | One of `prompt`, `history` |
 | `timestamp` | date | Record timestamp; supports comparison + range; alias `date` |
 | `model` | string | Substring, or `*` / `?` wildcard, against `record.model` (conversation records only) |
 | `role` | string | Substring or `*` / `?` wildcard against `record.role` (prompt records are always `user`) |
@@ -331,11 +352,15 @@ truth.
 
 ## Performance
 
-When no positional carries query syntax — no known field predicate, no
-standalone `AND` / `OR` / `NOT`, no leading quote — the query module is
-never imported and zero work is added; the legacy fast path runs
-exactly as before. The gate scan itself is a dependency-free string
-check. When the syntax is used:
+When no positional carries query syntax — no registered field
+predicate, no standalone `AND` / `OR` / `NOT`, no leading quote — the
+query module is never imported and zero work is added; the legacy fast
+path runs exactly as before. The gate scan itself is a dependency-free
+string check shared by the CLI and the compiler's own scan, so the CLI
+and the TUI/MCP search-box path can't disagree about what counts as
+query syntax. The same shared scan also flags an unregistered
+field-predicate-shaped token for the warning described above, still
+without importing the query module. When the syntax is used:
 
 - **Parse + compile** is sub-millisecond for typical queries.
 - **Source pruning** is O(predicates) per `SourceHandle`. Pruning
