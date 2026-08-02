@@ -533,7 +533,12 @@ def build_query_from_input(
     stripped = text.strip()
     if not stripped:
         return QueryBuildResult(
-            query=_rebuild(base_query, terms=(), compiled=None),
+            query=_rebuild(
+                base_query,
+                terms=(),
+                compiled=None,
+                conversation_limit=base_query.conversation_limit,
+            ),
             error=None,
         )
     if not _has_query_syntax(stripped, registry):
@@ -543,7 +548,12 @@ def build_query_from_input(
             known_field_names=_registry_field_names(registry),
         )
         return QueryBuildResult(
-            query=_rebuild(base_query, terms=terms, compiled=None),
+            query=_rebuild(
+                base_query,
+                terms=terms,
+                compiled=None,
+                conversation_limit=base_query.conversation_limit,
+            ),
             error=None,
             warning=found[0].message if found else None,
         )
@@ -569,6 +579,24 @@ def build_query_from_input(
         )
     except QueryCompileError as exc:
         return QueryBuildResult(query=None, error=str(exc))
+    # resolve_request_modifiers only reconciles an *implicit* scope; a scope
+    # stated on purpose (an explicit base scope or an inline scope: predicate)
+    # can still contradict the directive. Returning an error here instead of
+    # a query would fall into build_query_from_input's own parse/compile
+    # error contract, which frontends other than the TUI's search box (whose
+    # error-recovery path falls back to a bare-term split, not a surfaced
+    # error) rely on to mean "this text didn't parse" — a semantically valid
+    # but contradictory request is a different kind of failure. The TUI's
+    # workflow layer (SearchWorkflow.on_query) already checks the resolved
+    # SearchQuery for the targeted/prompts contradiction and rejects it
+    # before dispatch without ever reaching this function's error path; it
+    # gains the same symmetric check for prompt/non-prompts there.
+    # A conversation_limit set for a prior targeted run has nothing to bound
+    # once effort resolves away from targeted (e.g. an inline depth:exhaustive
+    # directive on a /deep-launched query) — carrying it forward would build
+    # a SearchQuery the engine also rejects (conversation_limit requires
+    # targeted effort), just later and less legibly.
+    conversation_limit = base_query.conversation_limit if effort == "targeted" else None
     return QueryBuildResult(
         query=_rebuild(
             base_query,
@@ -576,6 +604,7 @@ def build_query_from_input(
             compiled=result_compiled,
             scope=scope,
             effort=effort,
+            conversation_limit=conversation_limit,
         ),
         error=None,
     )
@@ -667,6 +696,7 @@ def _rebuild(
     *,
     terms: tuple[str, ...],
     compiled: CompiledQuery | None,
+    conversation_limit: int | None,
     scope: SearchScope | None = None,
     effort: SearchEffort | None = None,
 ) -> SearchQuery:
@@ -675,6 +705,10 @@ def _rebuild(
     ``scope`` overrides the discovery scope when a ``scope:`` predicate
     changed it; ``None`` keeps ``base.scope``. ``effort`` similarly
     overrides the read policy when that scope needs transcript stores.
+    ``conversation_limit`` has no sentinel default — unlike ``scope``/
+    ``effort``, ``None`` is itself a valid override (a stale targeted-only
+    bound has nothing to bound once effort resolves elsewhere), so every
+    caller must state its own value explicitly.
     """
     return SearchQuery(
         terms=terms,
@@ -691,7 +725,7 @@ def _rebuild(
         effort=base.effort if effort is None else effort,
         order=base.order,
         scope_provenance=base.scope_provenance,
-        conversation_limit=base.conversation_limit,
+        conversation_limit=conversation_limit,
     )
 
 
@@ -859,13 +893,17 @@ def resolve_request_modifiers(
     ``"exhaustive"`` only when the resolved scope leaves ``"prompts"``.
 
     A ``targeted`` directive additionally widens an implicit ``"prompts"``
-    scope to ``"all"`` on its own — mirroring how ``--deep`` alone (with no
-    ``--scope``) already widens scope rather than erroring. This only applies
-    when scope was never pinned to ``"prompts"`` on purpose: neither by the
-    caller (``base_scope_explicit``) nor by an inline ``scope:`` predicate in
-    ``ast`` itself. A user who explicitly asked for prompts scope and
-    targeted effort in the same request still gets a clean contradiction
-    error instead of a silent override.
+    scope to ``"all"``, and a ``prompt`` directive narrows an implicit
+    broader scope back to ``"prompts"`` — mirroring how ``--deep`` alone
+    (with no ``--scope``) already widens scope rather than erroring. Neither
+    reconciliation applies when scope was stated on purpose: by the caller
+    (``base_scope_explicit``) or by an inline ``scope:`` predicate in
+    ``ast`` itself. A user who explicitly asked for a scope that contradicts
+    the directive still gets that contradiction back in the returned pair,
+    for the caller to reject — see the ``targeted``/``prompts`` and
+    ``prompt``/non-``prompts`` combinations :func:`build_query_from_input`
+    rejects outright, and the equivalent CLI/MCP checks
+    (``_targeted_conversation_limit``, ``_normalize_request_depth``).
 
     Parameters
     ----------
@@ -906,11 +944,14 @@ def resolve_request_modifiers(
     scope = scope_widened_for_ast(ast, base_scope)
     directive = _effort_directive(ast, registry) if ast is not None else None
     if directive is not None:
-        scope_pinned_to_prompts = base_scope_explicit or (
+        scope_stated_explicitly = base_scope_explicit or (
             ast is not None and "scope" in fields_in_ast(ast)
         )
-        if directive == "targeted" and scope == "prompts" and not scope_pinned_to_prompts:
-            scope = "all"
+        if not scope_stated_explicitly:
+            if directive == "targeted" and scope == "prompts":
+                scope = "all"
+            elif directive == "prompt" and scope != "prompts":
+                scope = "prompts"
         return scope, directive
     if base_effort in {"targeted", "exhaustive"}:
         return scope, base_effort

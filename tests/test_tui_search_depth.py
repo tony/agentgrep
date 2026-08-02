@@ -1097,3 +1097,89 @@ def test_targeted_prompt_query_stays_editable_without_dispatch(
 
     assert not search_input.has_class("-error")
     assert search_input.value == "needle"
+
+
+@pytest.mark.parametrize("layout_name", registry.layout_names())
+def test_prompt_broad_scope_query_stays_editable_without_dispatch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    layout_name: str,
+) -> None:
+    """The symmetric contradiction (``depth:prompt`` + explicit broad scope) also blocks dispatch.
+
+    Mirrors ``test_targeted_prompt_query_stays_editable_without_dispatch``:
+    an explicitly-selected scope leaves ``resolve_request_modifiers``'
+    prompt-narrowing reconciliation off, so this combination still reaches
+    ``SearchWorkflow.on_query`` and must be rejected there instead of
+    dispatched.
+    """
+    query = SearchQuery(
+        terms=("initial",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+        effort="exhaustive",
+        scope_provenance="explicit",
+    )
+    control = SearchControl()
+    ctx = UiContext(
+        home=tmp_path,
+        invoker=t.cast("t.Any", object()),
+        query=query,
+        control=control,
+        base_scope="all",
+        base_effort="exhaustive",
+        base_scope_provenance="explicit",
+        base_conversation_limit=None,
+    )
+    layout_spec = registry.layout_spec(layout_name)
+    workflow_spec = registry.workflow_spec("search")
+    assert layout_spec is not None
+    assert workflow_spec is not None
+    workflow = workflow_spec.loader()()
+    layout = t.cast("t.Any", layout_spec.loader()(ctx, workflow))
+    invalid_text = "needle depth:prompt"
+    search_input = _QueryErrorInput(invalid_text)
+    layout._search_input = search_input
+    if layout_name == "greplog":
+        layout._status = types.SimpleNamespace(update=lambda _message: None)
+        monkeypatch.setattr(layout, "_update_command_completion", lambda _value: False)
+        monkeypatch.setattr(layout, "_hide_command_completion", lambda: None)
+    else:
+        monkeypatch.setattr(layout, "_update_search_dropdown", lambda _value: None)
+        monkeypatch.setattr(layout, "_set_results_view", lambda _state: None)
+    notices: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        layout,
+        "notify",
+        lambda message, *, title, severity: notices.append(
+            (message, title, severity),
+        ),
+    )
+    side_effects: list[str] = []
+    monkeypatch.setattr(layout, "request_cancel", lambda: side_effects.append("cancel"))
+    monkeypatch.setattr(
+        layout,
+        "record_history",
+        lambda _text: side_effects.append("history"),
+    )
+    monkeypatch.setattr(
+        layout,
+        "run_search",
+        lambda _query: side_effects.append("worker"),
+    )
+
+    workflow.on_query(layout, invalid_text)
+
+    assert side_effects == []
+    assert notices == [
+        (
+            "prompt effort requires prompt scope",
+            "Invalid query",
+            "error",
+        ),
+    ]
+    assert search_input.has_class("-error")

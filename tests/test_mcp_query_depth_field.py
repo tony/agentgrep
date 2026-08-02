@@ -140,11 +140,14 @@ async def test_mcp_effort_param_and_depth_term_collide() -> None:
     )
 
 
-async def test_mcp_prompt_depth_value_conflicts_with_broad_scope() -> None:
-    """``depth:prompt`` with a scope that leaves ``prompts`` is a clean error.
+async def test_mcp_prompt_depth_value_conflicts_with_explicit_broad_scope() -> None:
+    """``depth:prompt`` with an explicitly-selected broad scope is a clean error.
 
     Symmetric with the pre-existing ``targeted effort requires conversation
-    or all scope`` check in ``test_mcp_search_depth.py``.
+    or all scope`` check in ``test_mcp_search_depth.py``, and with
+    ``test_mcp_terms_depth_directive_conflicts_with_explicit_prompts_scope``'s
+    reverse case: a client that stated ``scope`` on purpose gets a real
+    contradiction, not a silent override.
     """
     with pytest.raises(ToolError, match="prompt effort requires prompt scope"):
         await _search_async(
@@ -152,10 +155,42 @@ async def test_mcp_prompt_depth_value_conflicts_with_broad_scope() -> None:
                 terms=["depth:prompt", "foo"],
                 agent="codex",
                 scope="all",
+                scope_provenance="explicit",
                 case_sensitive=False,
                 limit=20,
             ),
         )
+
+
+async def test_mcp_prompt_depth_value_narrows_inferred_broad_scope(
+    codex_transcript_home: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``depth:prompt`` narrows an inferred (client-omitted) broad scope back to prompts.
+
+    Mirrors the CLI's ``depth:prompt`` auto-narrow
+    (``tests/test_query_depth_field.py::test_resolve_request_modifiers_reads_the_inline_directive``):
+    a scope the client never explicitly chose is free to reconcile with the
+    typed directive rather than contradict it.
+    """
+    monkeypatch.setattr(
+        pathlib.Path,
+        "home",
+        classmethod(lambda _cls: codex_transcript_home),
+    )
+
+    response = await _search_async(
+        SearchRequestModel(
+            terms=["depth:prompt", "deep-only"],
+            agent="codex",
+            scope="all",
+            case_sensitive=False,
+            limit=20,
+        ),
+    )
+
+    assert response.request.effort == "prompt"
+    assert response.request.scope == "prompts"
 
 
 async def test_mcp_terms_depth_directive_widens_inferred_prompts_scope(

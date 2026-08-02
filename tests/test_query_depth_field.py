@@ -31,6 +31,7 @@ same field.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import pathlib
@@ -115,6 +116,37 @@ def test_depth_field_resolves_search_query_effort(
     assert result.query.scope == expected_scope
 
 
+def test_conversation_limit_resets_when_effort_leaves_targeted() -> None:
+    """A stale targeted-only ``conversation_limit`` has nothing to bound once effort moves on.
+
+    A base query launched via ``/deep 50`` (or an earlier ``depth:targeted``
+    edit) carries a real ``conversation_limit``. Typing ``depth:exhaustive``
+    over that text must not silently carry the old bound into a query the
+    engine would otherwise reject (``conversation_limit requires targeted
+    effort``).
+    """
+    base = dataclasses.replace(_base_query(), scope="all", effort="targeted", conversation_limit=50)
+
+    result = build_query_from_input("depth:exhaustive foo", base, default_registry())
+
+    assert result.error is None
+    assert result.query is not None
+    assert result.query.effort == "exhaustive"
+    assert result.query.conversation_limit is None
+
+
+def test_conversation_limit_survives_a_repeated_targeted_directive() -> None:
+    """A ``conversation_limit`` is only reset when effort actually leaves targeted."""
+    base = dataclasses.replace(_base_query(), scope="all", effort="targeted", conversation_limit=50)
+
+    result = build_query_from_input("depth:targeted foo", base, default_registry())
+
+    assert result.error is None
+    assert result.query is not None
+    assert result.query.effort == "targeted"
+    assert result.query.conversation_limit == 50
+
+
 @pytest.mark.parametrize(
     ("query_text", "expected_effort", "expected_scope"),
     [
@@ -185,6 +217,44 @@ def test_resolve_request_modifiers_respects_inline_explicit_prompts_scope() -> N
     )
 
     assert (scope, effort) == ("prompts", "targeted")
+
+
+def test_resolve_request_modifiers_narrows_an_implicit_broad_scope_for_prompt() -> None:
+    """``depth:prompt`` narrows an implicit broad ``base_scope`` back to prompts.
+
+    Symmetric with the ``targeted`` auto-widen: a scope the caller never
+    stated on purpose (``base_scope_explicit=False``, the default) is free
+    to reconcile with a ``prompt`` directive rather than leave a
+    ``(scope="all", effort="prompt")`` combination for a downstream caller
+    to reject.
+    """
+    registry = default_registry()
+    ast = parse_query("depth:prompt foo", registry)
+
+    scope, effort = resolve_request_modifiers(
+        ast,
+        registry,
+        base_scope="all",
+        base_effort="targeted",
+    )
+
+    assert (scope, effort) == ("prompts", "prompt")
+
+
+def test_resolve_request_modifiers_respects_explicit_broad_scope_for_prompt() -> None:
+    """An explicitly-selected broad ``base_scope`` blocks the prompt auto-narrow."""
+    registry = default_registry()
+    ast = parse_query("depth:prompt foo", registry)
+
+    scope, effort = resolve_request_modifiers(
+        ast,
+        registry,
+        base_scope="all",
+        base_effort="targeted",
+        base_scope_explicit=True,
+    )
+
+    assert (scope, effort) == ("all", "prompt")
 
 
 def test_resolve_request_modifiers_handles_no_ast() -> None:
