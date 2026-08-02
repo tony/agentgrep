@@ -180,9 +180,23 @@ class DepthOffer(Static, can_focus=True):
     Both pointers reach it: a click selects the row under the cursor, and the
     panel joins the tab chain whenever it has a selectable rung, where up/down
     move the cursor and enter or space chooses it.
+
+    ``FOCUS_ON_CLICK`` is off on purpose. Textual's default focuses whatever
+    focusable widget a click lands on — including a click on the dim lead
+    line or the block's own padding, not just an actionable row — and
+    nothing in this app blurs a widget just because the mouse moved
+    elsewhere afterward (Textual's focus model is click/Tab-driven, not
+    hover-driven). Left on, that traps a mouse user behind the keyboard
+    cursor this class paints only while focused, with no click-driven way
+    out. Row selection is untouched: :meth:`on_click` posts
+    ``DepthOfferSelected`` straight from hit-tested span metadata,
+    independent of focus, so a mouse click still selects instantly. Tab
+    reachability is untouched too, since Tab walks the focus chain rather
+    than going through ``focus_on_click``.
     """
 
     ALLOW_SELECT = False
+    FOCUS_ON_CLICK = False
 
     BINDINGS: t.ClassVar[list[BindingType]] = [
         Binding("up,k", "cursor_up", "Up", show=False),
