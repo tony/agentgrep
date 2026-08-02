@@ -354,6 +354,54 @@ def test_any_request_layer_field_exists_predicate_is_vacuously_true() -> None:
     assert compiled.record_predicate(record) is True
 
 
+def test_a_non_depth_request_layer_field_is_not_read_as_an_effort() -> None:
+    """A custom request-layer field's value is not mistaken for a ``SearchEffort``.
+
+    ``layer="request"`` is the general "extract instead of evaluate"
+    category; ``depth`` is one specific field in it. Combining a custom
+    ``mode:a`` predicate with ``depth:targeted`` must resolve the real
+    directive cleanly, not raise "conflicting depth:/effort: directives"
+    because ``_effort_directive`` mistook ``mode``'s value ``"a"`` for a
+    second, disagreeing effort.
+    """
+    registry = FieldRegistry(
+        specs=(
+            *default_registry().specs,
+            FieldSpec(name="mode", kind="enum", layer="request", enum_values=("a", "b")),
+        ),
+    )
+    ast = parse_query("mode:a depth:targeted foo", registry)
+
+    scope, effort = resolve_request_modifiers(
+        ast,
+        registry,
+        base_scope="prompts",
+        base_effort="prompt",
+    )
+
+    assert (scope, effort) == ("all", "targeted")
+
+
+def test_a_non_depth_request_layer_field_alone_leaves_effort_at_its_default() -> None:
+    """A custom request-layer field alone, with no ``depth:`` term, doesn't set effort."""
+    registry = FieldRegistry(
+        specs=(
+            *default_registry().specs,
+            FieldSpec(name="mode", kind="enum", layer="request", enum_values=("a", "b")),
+        ),
+    )
+    ast = parse_query("mode:a foo", registry)
+
+    scope, effort = resolve_request_modifiers(
+        ast,
+        registry,
+        base_scope="prompts",
+        base_effort="prompt",
+    )
+
+    assert (scope, effort) == ("prompts", "prompt")
+
+
 # ---------------------------------------------------------------------------
 # NOT/OR rejection: negating or OR-ing a request-layer directive would
 # silently flip an entire AND chain to always-false (NOT) or an entire OR

@@ -827,6 +827,19 @@ vocabulary; ``prompt``, ``targeted``, and ``exhaustive`` already match
 :data:`~agentgrep.records.SearchEffort` and need no translation.
 """
 
+_DEPTH_FIELD_NAME = "depth"
+"""Canonical name of the one built-in ``layer="request"`` field.
+
+``layer="request"`` is the general engine-owned category "no per-record/
+per-source truth value, extract instead of evaluate"; ``depth`` is one
+specific field in that category whose value happens to be a
+:data:`~agentgrep.records.SearchEffort`. A custom :class:`FieldRegistry`
+can register other request-layer fields for its own purposes (see
+:mod:`agentgrep.query.registry`), so :func:`_effort_directive` must key off
+this canonical name, not the broader layer, or it would misread an
+unrelated request-layer field's value as an effort.
+"""
+
 
 def _effort_directive(
     node: QueryNode,
@@ -835,6 +848,11 @@ def _effort_directive(
     under_boolean: bool = False,
 ) -> SearchEffort | None:
     """Return the single inline ``depth:``/``effort:`` value in ``node``, or ``None``.
+
+    Matches only the canonical ``depth`` field (see ``_DEPTH_FIELD_NAME``),
+    not every ``layer="request"`` field — a custom :class:`FieldRegistry`
+    can register other request-layer fields for unrelated purposes, and
+    their values are not :data:`~agentgrep.records.SearchEffort` strings.
 
     Callers normally only reach a real occurrence of the field through plain
     AND composition — ``_validate_ast`` already rejects it under ``NOT``/
@@ -850,7 +868,7 @@ def _effort_directive(
     """
     if isinstance(node, FieldEqNode | FieldExistsNode):
         spec = registry.get(node.field)
-        if spec is None or spec.layer != "request":
+        if spec is None or spec.name != _DEPTH_FIELD_NAME:
             return None
         _reject_request_field_under_boolean(node.field, registry, under_boolean=under_boolean)
         if isinstance(node, FieldExistsNode):
