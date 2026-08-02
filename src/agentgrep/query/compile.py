@@ -31,7 +31,7 @@ import collections.abc as cabc
 import dataclasses
 import typing as t
 
-from agentgrep._query_gate import has_query_syntax
+from agentgrep._query_gate import has_query_syntax, unregistered_field_predicates
 from agentgrep.origin import (
     ORIGIN_PATH_QUERY_FIELDS,
     ORIGIN_QUERY_FIELDS,
@@ -453,10 +453,16 @@ class QueryBuildResult:
     error : str | None
         Message to show the user, taken from the parse or compile error. ``None`` on
         success.
+    warning : str | None
+        Non-fatal diagnostic on an otherwise successful build — a field-predicate-shaped
+        token (e.g. ``kind:prompt`` before ``kind`` was registered) whose field isn't
+        registered, which still runs as a literal substring search. ``None`` when nothing
+        to warn about. Only ever set alongside a non-``None`` ``query``.
     """
 
     query: SearchQuery | None
     error: str | None
+    warning: str | None = None
 
 
 def build_query_from_input(
@@ -492,9 +498,14 @@ def build_query_from_input(
         )
     if not _has_query_syntax(stripped, registry):
         terms = tuple(stripped.split())
+        found = unregistered_field_predicates(
+            stripped,
+            known_field_names=_registry_field_names(registry),
+        )
         return QueryBuildResult(
             query=_rebuild(base_query, terms=terms, compiled=None),
             error=None,
+            warning=found[0].message if found else None,
         )
     try:
         ast = parse_query(stripped, registry)
@@ -603,8 +614,12 @@ def _has_query_syntax(text: str, registry: FieldRegistry) -> bool:
     bool
         ``True`` when the parser should be engaged.
     """
-    field_names = frozenset(name for spec in registry.specs for name in (spec.name, *spec.aliases))
-    return has_query_syntax(text, known_field_names=field_names)
+    return has_query_syntax(text, known_field_names=_registry_field_names(registry))
+
+
+def _registry_field_names(registry: FieldRegistry) -> frozenset[str]:
+    """Return every field name and alias ``registry`` knows, live (never a mirror)."""
+    return frozenset(name for spec in registry.specs for name in (spec.name, *spec.aliases))
 
 
 def _rebuild(

@@ -31,8 +31,9 @@ from agentgrep._query_gate import (
     has_query_syntax,
     unregistered_field_predicates,
 )
-from agentgrep.query import compose_query_ast, default_registry
+from agentgrep.query import build_query_from_input, compose_query_ast, default_registry
 from agentgrep.query.ast import TermNode
+from agentgrep.records import SearchQuery
 
 if t.TYPE_CHECKING:
     from agentgrep.query.registry import FieldRegistry
@@ -230,6 +231,51 @@ def test_unregistered_field_predicate_stays_literal_through_compose_query_ast() 
     assert user_ast is None
     assert isinstance(ast, TermNode)
     assert ast.value == "bogusfield:xyz"
+
+
+# ---------------------------------------------------------------------------
+# build_query_from_input's warning field — the TUI search-box surface.
+# See tests/test_tui_query_diagnostics.py for the mounted-app, submit-only
+# contract (a live keystroke must never fire a notification).
+# ---------------------------------------------------------------------------
+
+
+def _base_query() -> SearchQuery:
+    """Build one minimal base query for ``build_query_from_input``."""
+    return SearchQuery(
+        terms=(),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+    )
+
+
+def test_build_query_from_input_warns_for_an_unregistered_field_predicate() -> None:
+    """The search-box path attaches the same warning as the CLI/MCP paths."""
+    result = build_query_from_input("bogusfield:xyz", _base_query(), default_registry())
+
+    assert result.error is None
+    assert result.query is not None
+    assert result.query.terms == ("bogusfield:xyz",)
+    assert result.warning is not None
+    assert "bogusfield" in result.warning
+
+
+def test_build_query_from_input_no_warning_for_a_registered_field_predicate() -> None:
+    """A real field predicate needs no diagnostic."""
+    result = build_query_from_input("kind:prompt", _base_query(), default_registry())
+
+    assert result.warning is None
+
+
+def test_build_query_from_input_no_warning_for_a_url_literal() -> None:
+    """A URL stays a silent literal, not a flagged predicate."""
+    result = build_query_from_input("https://example.com", _base_query(), default_registry())
+
+    assert result.warning is None
 
 
 # ---------------------------------------------------------------------------

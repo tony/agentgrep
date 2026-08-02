@@ -304,8 +304,16 @@ class GrepLogLayout(LayoutScreen):
         return True
 
     # --- WorkflowHost surface -------------------------------------------------
-    def build_query(self, text: str) -> SearchQuery:
-        """Parse ``text`` into a query at the launch scope (host surface)."""
+    def build_query(self, text: str, *, notify_warning: bool = False) -> SearchQuery:
+        """Parse ``text`` into a query at the launch scope (host surface).
+
+        Unlike the HUD layout, ``on_input_changed`` here never calls
+        ``build_query`` — this method only ever runs at submit time via
+        :meth:`~agentgrep.ui.workflows.search.SearchWorkflow.on_query` — but
+        the ``notify_warning`` parameter stays on the shared
+        :class:`~agentgrep.ui.workflows._protocol.WorkflowHost` surface so
+        both layouts present the same signature.
+        """
         import dataclasses
 
         from agentgrep.query import build_query_from_input, default_registry
@@ -319,6 +327,8 @@ class GrepLogLayout(LayoutScreen):
         )
         result = build_query_from_input(text, base, default_registry())
         if result.query is not None:
+            if notify_warning and result.warning is not None:
+                self.show_query_warning(result.warning)
             return result.query
         return dataclasses.replace(
             base,
@@ -334,6 +344,11 @@ class GrepLogLayout(LayoutScreen):
             target.add_class("-error")
             target.focus()
         self.notify(message, title="Invalid query", severity="error")
+
+    @_runtime.pump_only
+    def show_query_warning(self, message: str) -> None:
+        """Present one non-fatal query diagnostic without disturbing the input."""
+        self.notify(message, title="Unrecognized field", severity="warning")
 
     def run_search(self, query: SearchQuery) -> None:
         """Clear the log and stream ``query`` into it (host surface)."""
