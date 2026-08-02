@@ -89,6 +89,54 @@ def _idle_query() -> SearchQuery:
     )
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("layout_name", registry.layout_names())
+async def test_typed_depth_starts_a_targeted_run_without_a_prior_offer(
+    tmp_path: pathlib.Path,
+    layout_name: str,
+) -> None:
+    """Reach targeted effort by typing ``depth:`` directly, skipping the offer panel.
+
+    Unlike :func:`test_idle_canvas_depth_offer_starts_a_targeted_run`, no
+    click or arrow-key selection is involved — the box's own text carries the
+    request, through the same :func:`~agentgrep.query.build_query_from_input`
+    every layout's search box already calls; no TUI-local wrapper is needed.
+    """
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(
+            tmp_path,
+            _idle_query(),
+            control=SearchControl(),
+            layout=layout_name,
+        ),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
+        assert layout._run_summary is None
+
+        layout._search_input.load_query("depth:targeted needle")
+        layout._search_input.focus()
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert layout.search_query.terms == ("needle",)
+        summary = layout._run_summary
+        assert summary is not None
+        assert summary.requested_effort == "targeted"
+        assert summary.request.scope == "all"
+
+        # The typed token stays request-local: the next plain edit is back
+        # at the launch policy, exactly like a slash-command escalation.
+        rebuilt = layout.build_query("other")
+        assert rebuilt.effort == "prompt"
+        assert rebuilt.scope == "prompts"
+
+
 async def test_idle_canvas_depth_offer_starts_a_targeted_run(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -451,8 +499,17 @@ def test_idle_depth_offer_matches_engine_authored_actions() -> None:
         "Enter searches prompt history; conversation bodies are not read."
     )
     assert format_depth_offer_rows(actions) == (
-        ("search.targeted", "Deep search — read the conversations selected from prompt evidence"),
-        ("search.exhaustive", "Search all conversations — read every readable conversation"),
+        (
+            "search.targeted",
+            (
+                "Deep search — read the conversations selected from prompt evidence "
+                "(type depth:targeted)"
+            ),
+        ),
+        (
+            "search.exhaustive",
+            "Search all conversations — read every readable conversation (type depth:exhaustive)",
+        ),
     )
 
 

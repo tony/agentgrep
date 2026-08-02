@@ -48,6 +48,16 @@ _DEPTH_OFFER_HINTS = {
     "search.exhaustive": "read every readable conversation",
 }
 
+#: The typed ``depth:`` term (:func:`agentgrep.query.compile.build_query_from_input`,
+#: the same builder this panel's own query goes through) that reaches the same
+#: rung without opening this panel at all. Teaching it on the row itself means
+#: a keyboard/mouse user who never learns the syntax loses nothing, while one
+#: who reads the row picks it up for next time.
+_DEPTH_OFFER_TYPED_HINTS = {
+    "search.targeted": "depth:targeted",
+    "search.exhaustive": "depth:exhaustive",
+}
+
 _DEPTH_OFFER_LEADS = {
     "search.targeted": "Enter searches prompt history; conversation bodies are not read.",
     "search.exhaustive": "Deep search can omit a conversation.",
@@ -130,7 +140,11 @@ def format_depth_offer_rows(
         hint = _DEPTH_OFFER_HINTS.get(action.action_id)
         if hint is None:
             continue
-        rows.append((action.action_id, f"{action.label} — {hint}"))
+        row = f"{action.label} — {hint}"
+        typed = _DEPTH_OFFER_TYPED_HINTS.get(action.action_id)
+        if typed is not None:
+            row = f"{row} (type {typed})"
+        rows.append((action.action_id, row))
     return tuple(rows)
 
 
