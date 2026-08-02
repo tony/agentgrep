@@ -651,6 +651,13 @@ class HudLayout(_HudSearchBase):
         Bound to the focused *widget*, not the column: the filter and results
         rules light independently, the detail header tracks detail scroll/find,
         and the top search bar lights none of them.
+
+        Also the trigger for the ambient detail cursor line's show/hide: it is
+        a byproduct of :attr:`DetailScroll.has_focus <textual.widget.Widget.has_focus>`,
+        so a Tab, a click, ``h`` (release to results), or find opening/closing
+        (which moves focus to/from ``detail-find``) all need to repaint it,
+        and this handler already runs on every focus move in the screen
+        (:meth:`on_descendant_focus` / :meth:`on_descendant_blur`).
         """
         if not self.is_mounted:
             # Teardown / between screens: nothing to recolor.
@@ -669,6 +676,11 @@ class HudLayout(_HudSearchBase):
             t.cast("t.Any", self._results_header).set_class(results_active, "-active")
         if self._detail_header is not None:
             t.cast("t.Any", self._detail_header).set_class(detail_active, "-active")
+        # Find and visual select own the body's overlay while active; leave
+        # their repaint to their own close/cancel paths (see
+        # ``on_detail_scroll_changed``).
+        if not self._detail_find_active and not self._detail_visual_active:
+            self._paint_detail_body()
 
     def _apply_responsive_layout(self) -> None:
         """Apply welcome compaction and wide/stacked detail geometry.

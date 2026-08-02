@@ -50,6 +50,13 @@ $ uvx --from 'agentgrep' --prerelease allow python
 `kind:history` filter the same way across the CLI, the MCP `search`
 tool, and the TUI search box. (#156)
 
+#### See where you're reading in the detail pane
+
+The right-hand detail pane previously showed a position indicator
+only during an active visual selection (tmux-style `v`). It now
+paints an ambient current-line marker whenever the pane holds focus,
+so you always know where you are. (#157)
+
 ### Fixes
 
 #### A typo'd query field no longer fails silently
@@ -60,6 +67,20 @@ explanation. The CLI, MCP, and TUI search box now surface a warning —
 with a "did you mean" suggestion when one is close — while the
 literal search still runs, so a plain colon in ordinary text (a URL,
 a Windows path) stays silent. (#156)
+
+#### The idle screen's search-depth block and completion dropdown no longer trap navigation
+
+Clicking "Deep search" or "Search all conversations" grabbed the
+mouse with no way out, arrow keys inside the same block cycled
+forever with no keyboard escape, and the completion dropdown that
+suggests field values stayed open indefinitely once focus moved
+elsewhere. All three now release focus normally. (#157)
+
+#### The search-depth block's instructions are legible again
+
+The lead sentence rendered at a flat, often near-invisible "dim"
+contrast; it now resolves the same calibrated color used for
+de-emphasized text elsewhere in the UI. (#157)
 
 ## agentgrep 0.1.0a47 (2026-08-01)
 

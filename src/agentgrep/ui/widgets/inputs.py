@@ -92,6 +92,12 @@ def _disarm_confirm_exit(widget: Input) -> None:
 class _BoundedInput(Input):
     """Input whose reactive value invariant also covers programmatic writes."""
 
+    #: Screen attribute name of this input's own completion dropdown
+    #: (``CompletionDropdown``), or ``None`` for an input with no dropdown
+    #: (e.g. ``DetailFindInput``). Set by a subclass to opt into the
+    #: blur-driven dismissal in :meth:`_on_blur`.
+    _dropdown_attr: t.ClassVar[str | None] = None
+
     BINDINGS: t.ClassVar[list[BindingType]] = [
         Binding(
             "ctrl+c,super+c,ctrl+shift+c,shift+super+c",
@@ -105,6 +111,28 @@ class _BoundedInput(Input):
     def validate_value(self, value: str) -> str:
         """Clamp every reactive assignment to the interactive text budget."""
         return value[:INPUT_MAX_LENGTH]
+
+    @_runtime.pump_only
+    def _on_blur(self, event: events.Blur) -> None:
+        """Dismiss this input's own dropdown when focus goes anywhere but it.
+
+        The companion half of ``CompletionDropdown._on_blur``: that class
+        handles "focus was on the dropdown and left it"; this handles
+        "focus was on the input, and the dropdown it opened outlived it" —
+        a click on some other widget, or a Tab, while the dropdown is still
+        showing but the user never arrowed into it. ``Down`` moving focus
+        onto the dropdown itself must not trip this: ``Screen.set_focus``
+        assigns ``self.screen.focused`` synchronously before this queued
+        ``Blur`` is ever processed, so checking it here already reflects
+        where focus actually landed. No ``super()`` call, for the same
+        reason as ``CompletionDropdown._on_blur``.
+        """
+        if self._dropdown_attr is None:
+            return
+        dropdown = t.cast("t.Any", getattr(self.screen, self._dropdown_attr, None))
+        if dropdown is None or not dropdown.display or self.screen.focused is dropdown:
+            return
+        dropdown.display = False
 
     @_runtime.pump_only
     def action_copy(self) -> None:
@@ -139,6 +167,7 @@ class FilterInput(_BoundedInput):
     """
 
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
+    _dropdown_attr: t.ClassVar[str | None] = "_filter_dropdown"
 
     BINDINGS: t.ClassVar[list[BindingType]] = [
         *_HIDDEN_EDITING_ALIASES,
@@ -333,6 +362,8 @@ class SearchInput(_BoundedInput):
     clean trigger to hang off of — every Enter cancels the prior
     worker before spawning a fresh one.
     """
+
+    _dropdown_attr: t.ClassVar[str | None] = "_enum_dropdown"
 
     BINDINGS: t.ClassVar[list[BindingType]] = [
         *_HIDDEN_EDITING_ALIASES,

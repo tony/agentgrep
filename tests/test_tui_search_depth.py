@@ -14,7 +14,7 @@ from textual.widgets import Input
 from agentgrep.progress import SearchControl, StreamingSearchFinished
 from agentgrep.records import SearchEffort, SearchQuery, SearchScopeProvenance
 from agentgrep.results import RunCoverage, build_search_summary, offered_depth_actions
-from agentgrep.ui import registry
+from agentgrep.ui import registry, theme as ui_theme
 from agentgrep.ui._context import UiContext
 from agentgrep.ui._result_status import (
     format_depth_offer_lead,
@@ -28,7 +28,7 @@ from agentgrep.ui._seams import EngineSearchInvoker
 from agentgrep.ui.app import build_streaming_ui_app
 from agentgrep.ui.commands import resolve_command
 from agentgrep.ui.widgets import DepthOffer
-from agentgrep.ui.widgets.welcome import _DEPTH_OFFER_CURSOR_STYLE
+from agentgrep.ui.widgets.welcome import _DEPTH_OFFER_CURSOR_STYLE, depth_offer_content
 
 pytestmark = pytest.mark.tui
 
@@ -355,6 +355,88 @@ async def test_depth_offer_cursor_appears_on_first_focus() -> None:
 
         assert app.focused is not offer
         assert _depth_cursor_spans(offer) == []
+
+
+@pytest.mark.slow
+async def test_depth_offer_arrow_keys_release_focus_at_the_top_row() -> None:
+    """Up/down no longer wrap the two rows forever with no keyboard escape.
+
+    Before the fix, ``down`` wrapped 1 -> 0 -> 1 forever and ``up`` never
+    left row 0, so a keyboard user who arrived here (by Tab or by mouse
+    click) had no arrow-key way out — only an unhinted Tab.
+    """
+    app = _DepthOfferApp()
+    async with app.run_test() as pilot:
+        offer = app.query_one("#empty-depth", DepthOffer)
+        offer.show_offer(offered_depth_actions(_idle_query()))
+        offer.focus()
+        await pilot.pause()
+        assert offer.highlighted == 0
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert offer.highlighted == 1
+
+        # Clamped at the last row, not wrapped back to row 0.
+        await pilot.press("down")
+        await pilot.pause()
+        assert offer.highlighted == 1
+        assert app.focused is offer
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert offer.highlighted == 0
+        assert app.focused is offer
+
+        # Released at row 0, escaping to the previous focusable widget.
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is not offer
+
+
+def test_depth_offer_content_lead_line_uses_the_supplied_lead_style() -> None:
+    """The lead sentence carries whatever resolved style the caller passes.
+
+    Decoupled from theme setup: :meth:`DepthOffer._repaint_offer` resolves
+    ``ag-muted`` via the running app's theme; this pins the shape of that
+    hookup without needing a themed app.
+    """
+    content = depth_offer_content(
+        offered_depth_actions(_idle_query()),
+        lead_style="#abcdef",
+    )
+    lead_spans = [span for span in content.spans if span.style == "#abcdef"]
+    assert lead_spans
+    assert not any(span.style == "dim" for span in content.spans)
+
+
+@pytest.mark.slow
+async def test_depth_offer_lead_line_resolves_the_ag_muted_theme_token(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The running app resolves a real ``ag-muted`` hex, not the blunt ``dim``.
+
+    ``ag-muted`` is registered by agentgrep's own theme (unlike Textual's
+    stock palette), so this needs the real app factory rather than the
+    minimal ``_DepthOfferApp`` shell.
+    """
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _idle_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
+        await pilot.pause()
+        offer = layout.query_one("#empty-depth", DepthOffer)
+        offer.show_offer(offered_depth_actions(_idle_query()))
+        await pilot.pause()
+
+        theme_vars = app.theme_variables
+        expected = ui_theme.resolve(theme_vars, "ag-muted")
+        assert expected  # sanity: agentgrep's theme registers this token
+        visual = offer.visual
+        assert any(span.style == expected for span in visual.spans)
+        assert not any(span.style == "dim" for span in visual.spans)
 
 
 def test_idle_depth_offer_matches_engine_authored_actions() -> None:

@@ -12,7 +12,7 @@ from textual.reactive import reactive
 from textual.style import Style
 from textual.widgets import Static
 
-from agentgrep.ui import _result_status, _runtime
+from agentgrep.ui import _result_status, _runtime, theme as ui_theme
 from agentgrep.ui.highlighter import QueryHighlighter
 from agentgrep.ui.widgets.messages import DepthOfferSelected, WelcomeQuerySelected
 
@@ -122,6 +122,7 @@ def depth_offer_content(
     actions: tuple[NextAction, ...],
     *,
     highlighted: int | None = None,
+    lead_style: str,
 ) -> Content:
     """Build the pre-run depth panel from engine-authored escalations.
 
@@ -137,6 +138,11 @@ def depth_offer_content(
     highlighted : int | None
         Index of the selectable row carrying the keyboard cursor, or ``None``
         to paint no cursor.
+    lead_style : str
+        Resolved Rich style for the lead sentence — the caller supplies a
+        theme-calibrated color (e.g. ``$ag-muted``) rather than the plain
+        ``"dim"`` SGR attribute, whose contrast against the canvas varies
+        by terminal and theme.
 
     Returns
     -------
@@ -149,14 +155,18 @@ def depth_offer_content(
         return Content("")
     rows = _result_status.format_depth_offer_rows(actions)
     body = Text()
-    body.append(lead, style="dim")
+    body.append(lead)
+    lead_end = len(body)
     click_ranges: list[tuple[int, int, str]] = []
     for action_id, row in rows:
         body.append("\n")
         start = len(body)
         body.append(f"▸ {row}")
         click_ranges.append((start, len(body), action_id))
-    content = Content.from_rich_text(body)
+    # Stylized after conversion, like the cursor/action-id spans below, so
+    # the resolved token survives as a plain string rather than being
+    # eagerly parsed into an opaque Style by Content.from_rich_text.
+    content = Content.from_rich_text(body).stylize(lead_style, 0, lead_end)
     for index, (start, end, action_id) in enumerate(click_ranges):
         content = content.stylize(
             Style.from_meta({DEPTH_OFFER_ACTION_META: action_id}),
@@ -180,9 +190,23 @@ class DepthOffer(Static, can_focus=True):
     Both pointers reach it: a click selects the row under the cursor, and the
     panel joins the tab chain whenever it has a selectable rung, where up/down
     move the cursor and enter or space chooses it.
+
+    ``FOCUS_ON_CLICK`` is off on purpose. Textual's default focuses whatever
+    focusable widget a click lands on — including a click on the dim lead
+    line or the block's own padding, not just an actionable row — and
+    nothing in this app blurs a widget just because the mouse moved
+    elsewhere afterward (Textual's focus model is click/Tab-driven, not
+    hover-driven). Left on, that traps a mouse user behind the keyboard
+    cursor this class paints only while focused, with no click-driven way
+    out. Row selection is untouched: :meth:`on_click` posts
+    ``DepthOfferSelected`` straight from hit-tested span metadata,
+    independent of focus, so a mouse click still selects instantly. Tab
+    reachability is untouched too, since Tab walks the focus chain rather
+    than going through ``focus_on_click``.
     """
 
     ALLOW_SELECT = False
+    FOCUS_ON_CLICK = False
 
     BINDINGS: t.ClassVar[list[BindingType]] = [
         Binding("up,k", "cursor_up", "Up", show=False),
@@ -221,10 +245,12 @@ class DepthOffer(Static, can_focus=True):
         Bounded string work over at most two engine-authored rows, so it is
         safe on the pump (ADR 0011 NB-5).
         """
+        theme_vars = t.cast("t.Any", self.app).theme_variables
         self.update(
             depth_offer_content(
                 self._offered,
                 highlighted=self.highlighted if self.has_focus else None,
+                lead_style=ui_theme.resolve(theme_vars, "ag-muted"),
             ),
         )
 
@@ -255,19 +281,22 @@ class DepthOffer(Static, can_focus=True):
 
     @_runtime.pump_only
     def action_cursor_down(self) -> None:
-        """Move the keyboard cursor to the next offered rung."""
-        self._move_cursor(1)
+        """Move the keyboard cursor down one rung, clamped at the last row."""
+        if self._rows:
+            self.highlighted = min(len(self._rows) - 1, self.highlighted + 1)
 
     @_runtime.pump_only
     def action_cursor_up(self) -> None:
-        """Move the keyboard cursor to the previous offered rung."""
-        self._move_cursor(-1)
+        """Move the cursor up, or release focus when already at row 0.
 
-    def _move_cursor(self, delta: int) -> None:
-        """Wrap the keyboard cursor within the selectable rows."""
-        if len(self._rows) < 2:
-            return
-        self.highlighted = (self.highlighted + delta) % len(self._rows)
+        Matches :meth:`SearchResultsList.action_cursor_up` — without this,
+        up/down wrapped within the two rows forever, the only escape being
+        an unhinted Tab.
+        """
+        if self.highlighted == 0:
+            self.app.action_focus_previous()
+        else:
+            self.highlighted -= 1
 
     @_runtime.pump_only
     def action_select_offer(self) -> None:

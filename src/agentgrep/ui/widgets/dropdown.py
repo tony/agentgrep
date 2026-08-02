@@ -25,6 +25,16 @@ class CompletionDropdown(OptionList):
     own ``Select`` uses, so re-population on each keystroke never mounts a
     new widget. Enter fires ``OptionList.OptionSelected`` (handled by the
     app); Escape and up-at-top return focus to ``target_input_id``.
+
+    Modality is blur-driven, mirroring ``textual.widgets._select.SelectOverlay``
+    — the reference implementation this class already claims to follow but,
+    until :meth:`_on_blur` below, only borrowed the ``overlay``/``display``
+    half of. Losing focus for *any* reason (a click elsewhere, Tab, another
+    modal opening) dismisses this dropdown, the same way ``Select``'s own
+    overlay dismisses itself; no ``ModalScreen``, no click-outside geometry
+    to maintain. The owning input mirrors this from its own side (see
+    ``_BoundedInput._on_blur`` in ``inputs.py``) for the case where the
+    dropdown is shown but the input — not the dropdown — still holds focus.
     """
 
     def __init__(
@@ -39,6 +49,16 @@ class CompletionDropdown(OptionList):
         # list never tries to parse them as markup.
         super().__init__(id=id, markup=False)
         self._target_input_id = target_input_id
+
+    @_runtime.pump_only
+    def _on_blur(self, event: events.Blur) -> None:
+        """Dismiss on losing focus, for any reason — see the class docstring.
+
+        No ``super()`` call: Textual dispatches ``_on_blur`` to every
+        ancestor class independently, so chaining here would double-fire
+        ``Widget._on_blur``.
+        """
+        self.display = False
 
     @_runtime.pump_only
     async def on_key(self, event: events.Key) -> None:
