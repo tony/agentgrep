@@ -430,6 +430,47 @@ def test_depth_field_rejects_not_or_composition(query_text: str) -> None:
 @pytest.mark.parametrize(
     "query_text",
     [
+        "NOT mode:>2026-01-01 foo",
+        "(mode:>2026-01-01 OR foo)",
+        "NOT mode:[2026-01 TO 2026-02] foo",
+        "(mode:[2026-01 TO 2026-02] OR foo)",
+    ],
+)
+def test_comparable_request_layer_field_rejects_not_or_composition(
+    query_text: str,
+) -> None:
+    """A comparison/range request-layer predicate under NOT/OR is also a compile error.
+
+    Generalizes beyond ``depth`` (which declares neither
+    ``supports_comparison`` nor ``supports_range``, so this path is
+    unreachable through the built-in registry): a custom
+    :class:`FieldRegistry` request-layer field that does support them must
+    get the same NOT/OR protection ``FieldEqNode``/``FieldExistsNode``
+    already get, or evaluation's vacuous-true short-circuit
+    (:mod:`agentgrep.query.evaluate`) would silently turn an accepted query
+    into a match-all or match-none result instead of raising.
+    """
+    registry = FieldRegistry(
+        specs=(
+            *default_registry().specs,
+            FieldSpec(
+                name="mode",
+                kind="date",
+                layer="request",
+                supports_comparison=True,
+                supports_range=True,
+            ),
+        ),
+    )
+    ast = parse_query(query_text, registry)
+
+    with pytest.raises(QueryCompileError, match="request-wide directive"):
+        compile_query(ast, registry)
+
+
+@pytest.mark.parametrize(
+    "query_text",
+    [
         "NOT depth:targeted foo",
         "(depth:targeted OR agent:codex) foo",
     ],

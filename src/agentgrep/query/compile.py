@@ -394,6 +394,7 @@ def _validate_ast(
             message = f"field {spec.name!r} does not support comparison operators"
             raise QueryCompileError(message)
         _validate_field_value(node.field, node.value, registry)
+        _reject_request_field_under_boolean(node.field, registry, under_boolean=under_boolean)
         return
     if isinstance(node, FieldRangeNode):
         spec = registry.get(node.field)
@@ -404,6 +405,7 @@ def _validate_ast(
             raise QueryCompileError(message)
         _validate_range_bound(node.field, node.lo, registry)
         _validate_range_bound(node.field, node.hi, registry)
+        _reject_request_field_under_boolean(node.field, registry, under_boolean=under_boolean)
         return
     if isinstance(node, NotNode):
         _validate_ast(node.child, registry, under_boolean=True)
