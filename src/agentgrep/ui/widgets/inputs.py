@@ -124,9 +124,9 @@ class _BoundedInput(Input):
         onto the dropdown itself must not trip this: ``Screen.set_focus``
         assigns ``self.screen.focused`` synchronously before this queued
         ``Blur`` is ever processed, so checking it here already reflects
-        where focus actually landed.
+        where focus actually landed. No ``super()`` call, for the same
+        reason as ``CompletionDropdown._on_blur``.
         """
-        super()._on_blur(event)
         if self._dropdown_attr is None:
             return
         dropdown = t.cast("t.Any", getattr(self.screen, self._dropdown_attr, None))

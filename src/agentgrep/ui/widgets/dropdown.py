@@ -52,8 +52,12 @@ class CompletionDropdown(OptionList):
 
     @_runtime.pump_only
     def _on_blur(self, event: events.Blur) -> None:
-        """Dismiss on losing focus, for any reason — see the class docstring."""
-        super()._on_blur(event)
+        """Dismiss on losing focus, for any reason — see the class docstring.
+
+        No ``super()`` call: Textual dispatches ``_on_blur`` to every
+        ancestor class independently, so chaining here would double-fire
+        ``Widget._on_blur``.
+        """
         self.display = False
 
     @_runtime.pump_only
