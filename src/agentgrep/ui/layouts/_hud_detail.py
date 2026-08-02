@@ -43,11 +43,16 @@ class _HudDetailBase(LayoutScreen):
 
     @_runtime.pump_only
     def on_detail_scroll_changed(self, message: DetailScrollChanged) -> None:
-        """Re-render status for the current record's scroll snapshot."""
+        """Re-render status and the ambient cursor line for the new scroll offset."""
         record = self._current_detail_record
         if record is None or message.record_token != id(record):
             return
         self._refresh_detail_statusline(message.percent)
+        # Find and visual select repaint the body through their own overlay
+        # paths; repainting here too would strip their highlights out from
+        # under a scroll their own motions triggered.
+        if not self._detail_find_active and not self._detail_visual_active:
+            self._paint_detail_body()
 
     def _refresh_detail_statusline(self, percent: int | None = None) -> None:
         """Update the detail status line with the current record path and scroll %."""
@@ -439,16 +444,23 @@ class _HudDetailBase(LayoutScreen):
         A cheap read of already-resident data: raw mode shows a plain ``Text``
         of the bounded source, rendered mode shows the resident rendered
         renderable. Never re-renders, parses, or spawns a worker (ADR 0011).
+        The resident renderable is then overlaid with the ambient
+        current-line indicator (:meth:`_paint_body_with_ambient_cursor`) --
+        also a cheap, bounded pass, so this stays a paint-only method.
         """
         if self._detail_body is None:
             return
         if self._detail_raw_mode:
-            self._detail_body.update(Text(self._detail_body_text, no_wrap=False))
+            base: Text | _RichSyntaxType = Text(self._detail_body_text, no_wrap=False)
         else:
             # ``None`` while a large body renders off-thread: paint blank until
             # the worker's present arrives (raw mode paints the source above).
             renderable = self._detail_rendered_renderable
-            self._detail_body.update(renderable if renderable is not None else "")
+            if renderable is None:
+                self._detail_body.update("")
+                return
+            base = renderable
+        self._detail_body.update(self._paint_body_with_ambient_cursor(base))
 
     def _detail_cache_key(
         self,

@@ -9,6 +9,7 @@ import typing as t
 from rich.syntax import Syntax as _RichSyntax
 from rich.text import Text
 from textual import events
+from textual.content import Content
 from textual.geometry import Offset
 from textual.selection import Selection
 
@@ -27,6 +28,24 @@ _DetailFindBaseKey = tuple[str, tuple[str, ...], bool, bool, tuple[str, ...]]
 #: that copies a mouse selection also copies a visual one. In visual mode the
 #: detail pane consumes these before the layout's ctrl+c reaches stop/quit.
 _VISUAL_YANK_KEYS = frozenset({"y", "enter", "ctrl+c", "super+c", "ctrl+shift+c", "shift+super+c"})
+
+#: Background-only tint for the ambient reading-position line. Background
+#: alone -- no foreground -- so it never competes with the search highlight
+#: (gold fg only); filter and find both also tint the background
+#: (``bg+fg``), so :meth:`_paint_body_with_ambient_cursor` applies this via
+#: ``stylize_before`` rather than ``stylize`` -- an earlier-applied span
+#: loses the background channel to a later one, and filter/find are already
+#: baked into ``base`` by the time this runs, so this band must apply
+#: *before* them in span order to lose the channel rather than win it. Only
+#: the least assertive tier of the muted/dim/faint text triad
+#: (``$ag-faint``, see ``theme.py``'s ``_TEXT_HUES``) is calibrated for a
+#: marker that is always on rather than actively selected. Left as the
+#: unresolved ``$token`` (not a concrete hex via ``ui_theme.resolve``) so it
+#: is applied to a :class:`~textual.content.Content` span after conversion,
+#: matching :func:`agentgrep.ui.widgets.welcome.depth_offer_content`'s cursor
+#: pattern -- Textual's own renderer resolves ``$ag-faint`` at paint time,
+#: and the literal string stays inspectable in ``.visual.spans`` for tests.
+_DETAIL_CURSOR_LINE_STYLE = "on $ag-faint"
 
 
 class _HudDetailInteractionBase(_HudDetailBase):
@@ -130,26 +149,77 @@ class _HudDetailInteractionBase(_HudDetailBase):
         return max(0, min(col, max(0, len(line) - 1)))
 
     def _visual_top_visible_row(self) -> int:
-        """Logical source line at the top of the viewport (wrap-aware, one-time).
+        """Logical source line at the top of the viewport (wrap-aware).
 
         Walks the source lines accumulating each one's wrapped display-row count
         until it passes the scrolled-past rows -- the first still-visible logical
-        line. Bounded by ``scroll_y`` and run only when visual mode begins, so it
-        never touches the message pump per motion. Accurate for a raw/plain body;
-        a close estimate for a markdown/code body whose rendered scroll maps only
-        approximately onto source lines.
+        line. Bounded by ``scroll_y``, so it never touches the message pump per
+        motion. Accurate for a raw/plain body; a close estimate for a
+        markdown/code body whose rendered scroll maps only approximately onto
+        source lines.
+
+        Used both to seed ``v`` (visual select) and, continuously, to paint the
+        ambient current-line indicator -- so outside visual mode (before
+        ``_detail_visual_lines`` has been seeded) it falls back to splitting the
+        resident bounded body text on demand rather than tracking a second copy
+        of the same lines.
         """
         scroll_y = int(getattr(self._detail_scroll, "scroll_y", 0) or 0)
         if scroll_y <= 0 or self._detail_body is None:
             return 0
         width = max(1, int(getattr(self._detail_body.size, "width", 80) or 80))
+        lines = self._detail_visual_lines or tuple(self._detail_body_text.splitlines() or [""])
         consumed = 0
-        for index, line in enumerate(self._detail_visual_lines):
+        for index, line in enumerate(lines):
             rows = max(1, -(-len(line) // width))
             if consumed + rows > scroll_y:
                 return index
             consumed += rows
-        return max(0, len(self._detail_visual_lines) - 1)
+        return max(0, len(lines) - 1)
+
+    def _detail_cursor_line_span(self) -> tuple[int, int] | None:
+        """Return the raw-body ``(start, end)`` char offsets of the top visible row."""
+        lines = self._detail_body_text.splitlines(keepends=True)
+        row = self._visual_top_visible_row()
+        if not 0 <= row < len(lines):
+            return None
+        start = sum(len(line) for line in lines[:row])
+        return start, start + len(lines[row].rstrip("\n"))
+
+    def _paint_body_with_ambient_cursor(
+        self, base: Text | _RichSyntax
+    ) -> Text | _RichSyntax | Content:
+        """Overlay the ambient reading-position line onto ``base`` while focused.
+
+        The highlighted row is a byproduct of scroll position
+        (:meth:`_visual_top_visible_row`, the same helper that seeds ``v``) --
+        there is no independent cursor state here, so only a scroll or a focus
+        change ever moves it. Mirrors :meth:`DepthOffer.watch_has_focus
+        <agentgrep.ui.widgets.welcome.DepthOffer.watch_has_focus>`: painted
+        only while the pane holds focus, hidden the instant it doesn't, and
+        suppressed while visual select owns the body's plain-source ``Text``
+        (:meth:`_begin_detail_visual`).
+
+        Skipped for a flattened markdown/code render or a small-JSON
+        :class:`~rich.syntax.Syntax` object, whose rendered offsets do not
+        line up 1:1 with the raw body -- the same invariant
+        :meth:`_present_detail` uses to gate the find base. Toggling to raw
+        mode (``alt+r``) still shows the line there.
+        """
+        scroll = self._detail_scroll
+        if (
+            scroll is None
+            or not scroll.has_focus
+            or self._detail_visual_active
+            or not isinstance(base, Text)
+            or base.plain != self._detail_body_text
+        ):
+            return base
+        span = self._detail_cursor_line_span()
+        if span is None:
+            return base
+        content = Content.from_rich_text(base, console=self.app.console)
+        return content.stylize_before(_DETAIL_CURSOR_LINE_STYLE, *span)
 
     @_runtime.pump_only
     def _begin_detail_visual(self) -> None:
