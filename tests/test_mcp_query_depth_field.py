@@ -146,11 +146,10 @@ async def test_mcp_conversation_limit_bounds_an_inline_targeted_directive(
 ) -> None:
     """``conversation_limit`` combines with an inline ``depth:targeted`` term.
 
-    Regression for an ordering bug: ``_normalize_request_depth`` used to
-    validate ``conversation_limit`` against its own upfront effort guess
-    (``prompt``, since no structured ``effort`` was set here) before the
-    inline directive ever resolved, rejecting this combination outright even
-    though the fully-resolved effort is ``targeted``.
+    A client can bound an inline ``depth:targeted`` search with
+    ``conversation_limit`` and no structured ``effort`` parameter at all —
+    the bound is validated against the fully-resolved effort, not a
+    pre-directive guess.
     """
     monkeypatch.setattr(
         pathlib.Path,
@@ -176,9 +175,9 @@ async def test_mcp_conversation_limit_bounds_an_inline_targeted_directive(
 async def test_mcp_conversation_limit_still_conflicts_with_resolved_exhaustive() -> None:
     """A ``conversation_limit`` still errors once the directive resolves to non-targeted.
 
-    Proves the check moved, not disappeared: ``depth:exhaustive`` has
-    nothing for ``conversation_limit`` to bound, using the effort the
-    directive actually resolves to rather than a pre-directive guess.
+    ``depth:exhaustive`` has nothing for ``conversation_limit`` to bound;
+    the check runs against the effort the directive actually resolves to,
+    not a pre-directive guess.
     """
     with pytest.raises(ToolError, match="conversation_limit requires targeted effort"):
         await _search_async(

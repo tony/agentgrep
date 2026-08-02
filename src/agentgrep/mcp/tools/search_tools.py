@@ -267,9 +267,9 @@ async def _search_async(
         ),
     )
     query, query_diagnostics = _compile_request_query(base_query, request)
-    # Deferred from _normalize_request_depth: an inline depth:/effort: term
-    # can change effort after that upfront pass ran, so conversation_limit
-    # is only validated here, against the fully-resolved query.
+    # Validated here, against the fully-resolved query, because an inline
+    # depth:/effort: term can set an effort the structured request never
+    # named.
     if query.conversation_limit is not None and query.effort != "targeted":
         msg = "conversation_limit requires targeted effort"
         raise ToolError(msg)
