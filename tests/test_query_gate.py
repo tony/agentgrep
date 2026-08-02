@@ -56,6 +56,12 @@ if t.TYPE_CHECKING:
         ("ruff and uv", False),
         ("agent:claude", True),
         ("kind:prompt", True),
+        # A bare parenthesis carries no syntax of its own for the gate to
+        # recognize (ADR 0007's Decision section documents this exactly):
+        # grouping only engages alongside a boolean keyword, quote, or
+        # registered predicate.
+        ("(ruff uv)", False),
+        ("(ruff AND uv)", True),
     ],
 )
 def test_has_query_syntax_baseline_shapes(text: str, expected: bool) -> None:

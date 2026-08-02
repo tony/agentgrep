@@ -75,11 +75,15 @@ input. It does not pursue Tantivy parity.
 
 ### Boolean composition without a field predicate
 
-Boolean operators, grouping, and quoted phrases engage the parser whether or
-not a field predicate is present. A cheap, dependency-free heuristic decides
-whether input carries query syntax (a field colon, an uppercase boolean
-keyword, a parenthesis, or a quote) so that plain bare-term queries keep the
-legacy fast path and the cold-start budget in ADR 0006.
+Boolean operators and quoted phrases engage the parser whether or not a field
+predicate is present; grouping (`(…)`) only engages it alongside one of the
+other three, since a bare parenthesis carries no syntax of its own for the
+gate to recognize (`agentgrep search '(ruff uv)'` searches for that literal
+string, parentheses included, rather than a grouped `AND`). A cheap,
+dependency-free heuristic (`agentgrep._query_gate.has_query_syntax`) decides
+whether input carries query syntax — a *registered* field colon, an
+uppercase boolean keyword, or a leading quote — so that plain bare-term
+queries keep the legacy fast path and the cold-start budget in ADR 0006.
 
 ### Phrase queries
 
