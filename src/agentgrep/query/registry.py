@@ -33,12 +33,21 @@ FieldKind = t.Literal["string", "enum", "date", "path"]
   toggles will be added later
 """
 
-FieldLayer = t.Literal["source", "record"]
+FieldLayer = t.Literal["source", "record", "request"]
 """Which engine layer the field's predicate filters at.
 
 ``source`` predicates prune ``SourceHandle`` candidates before
 any file is opened. ``record`` predicates filter parsed
 ``SearchRecord`` instances after the engine reads each file.
+``request`` fields carry no per-source or per-record truth value at
+all — they are request-wide directives (e.g. ``depth:``/``effort:``)
+that select a read policy rather than admitting or rejecting a
+source or record. The compiler evaluates a ``request`` predicate as
+vacuously true at both layers (see
+:func:`agentgrep.query.evaluate._evaluate_source` /
+:func:`agentgrep.query.evaluate._evaluate_record`) and instead
+extracts its value through
+:func:`agentgrep.query.compile.resolve_request_modifiers`.
 """
 
 
@@ -55,7 +64,9 @@ class FieldSpec:
         path glob.
     layer : FieldLayer
         Where the predicate evaluates: ``"source"`` prunes handles before a file is
-        opened, ``"record"`` filters parsed records.
+        opened, ``"record"`` filters parsed records, ``"request"`` carries a
+        request-wide directive that filters nothing and is instead extracted by
+        :func:`agentgrep.query.compile.resolve_request_modifiers`.
     enum_values : tuple[str, ...]
         Values an ``"enum"`` field accepts; anything else is a compile error. Empty for
         every other kind.
@@ -150,7 +161,17 @@ def default_registry() -> FieldRegistry:
     ``project``   string record  Project/workspace basename (whole value)
     ``cwd_hash``  string record  Opaque project hash (whole value)
     ``text``      string record  Implicit field for bare positional terms
+    ``depth``     enum   request Values: prompt, targeted, deep (alias of
+                                         targeted), exhaustive. Alias:
+                                         ``effort``
     ============= ====== ======= ===========================================
+
+    ``depth`` (alias ``effort``) is the only ``request``-layer field: it
+    selects the engine's read-policy tier
+    (:data:`~agentgrep.records.SearchEffort`) rather than admitting or
+    rejecting any source or record.
+    :func:`agentgrep.query.compile.resolve_request_modifiers` is the single
+    place that reads it back out of a parsed query.
     """
     specs: tuple[FieldSpec, ...] = (
         FieldSpec(
@@ -215,5 +236,12 @@ def default_registry() -> FieldRegistry:
         FieldSpec(name="project", kind="string", layer="record"),
         FieldSpec(name="cwd_hash", kind="string", layer="record"),
         FieldSpec(name="text", kind="string", layer="record"),
+        FieldSpec(
+            name="depth",
+            kind="enum",
+            layer="request",
+            enum_values=("prompt", "targeted", "deep", "exhaustive"),
+            aliases=("effort",),
+        ),
     )
     return FieldRegistry(specs=specs)

@@ -51,6 +51,7 @@ from agentgrep.query.compile import (
     compose_query_ast,
     fields_in_ast,
     find_unsupported_reason,
+    resolve_request_modifiers,
     scope_widened_for_ast,
 )
 from agentgrep.query.parser import QueryParseError, parse_query, tokenize
@@ -89,6 +90,7 @@ __all__ = [
     "fields_in_ast",
     "find_unsupported_reason",
     "parse_query",
+    "resolve_request_modifiers",
     "scope_widened_for_ast",
     "tokenize",
 ]

@@ -77,6 +77,11 @@ def _evaluate_source(
         spec = registry.get(node.field)
         if spec is None:
             return "U"
+        if spec.layer == "request":
+            # A request-wide directive (depth:/effort:) has no per-source
+            # truth value; it is vacuously satisfied so the rest of an AND
+            # chain still decides the source's fate.
+            return "T"
         if spec.name in ORIGIN_QUERY_FIELDS:
             return _origin_field_exists_on_source(spec.name, source)
         if spec.layer == "record":
@@ -90,6 +95,9 @@ def _evaluate_source(
         spec = registry.get(node.field)
         if spec is None:
             return "U"
+        if spec.layer == "request":
+            # Same vacuous-true rule as the FieldExistsNode branch above.
+            return "T"
         if spec.layer == "record":
             if isinstance(node, FieldEqNode) and spec.name in ORIGIN_QUERY_FIELDS:
                 return _origin_field_eq_on_source(node, source, spec, path_patterns)
@@ -150,6 +158,11 @@ def _evaluate_record(
         spec = registry.get(node.field)
         if spec is None:
             return False
+        if spec.layer == "request":
+            # A request-wide directive filters no record; it is vacuously
+            # satisfied so the rest of an AND chain still decides the
+            # record's fate.
+            return True
         return _field_matches_record(
             node,
             record,
@@ -246,11 +259,13 @@ def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
     already admitted, and that layer owns the real ``mtime`` decision (the
     record carries no ``mtime_ns``). ``kind`` is a required, non-nullable
     ``SearchRecord`` field, so it is never absent. Nullable record fields
-    count as absent when ``None`` or empty.
+    count as absent when ``None`` or empty. ``depth`` (the request-wide
+    read-policy directive) is likewise always "present" — it is vacuously
+    true rather than a per-record fact.
     """
     if field in ORIGIN_QUERY_FIELDS:
         return bool(record_origin_field_values(record, field))
-    if field in {"agent", "store", "adapter_id", "mtime", "scope", "kind"}:
+    if field in {"agent", "store", "adapter_id", "mtime", "scope", "kind", "depth"}:
         return True
     if field == "path":
         return bool(str(record.path))

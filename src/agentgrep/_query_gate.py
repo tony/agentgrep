@@ -109,6 +109,8 @@ QUERYABLE_FIELD_NAMES: frozenset[str] = frozenset(
         "project",
         "cwd_hash",
         "text",
+        "depth",
+        "effort",
     },
 )
 """Canonical field names + aliases, hand-mirrored from the query registry.

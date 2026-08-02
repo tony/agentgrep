@@ -332,10 +332,15 @@ def _compile_origin_matchers(
     return {}
 
 
-def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
+def _validate_ast(
+    node: QueryNode,
+    registry: FieldRegistry,
+    *,
+    under_boolean: bool = False,
+) -> None:
     """Walk the AST and raise :class:`QueryCompileError` on any field-level error.
 
-    Catches the four classes of semantic error the closures would
+    Catches the five classes of semantic error the closures would
     otherwise raise lazily during evaluation:
 
     - **unknown enum value**: ``agent:gpt4`` when ``gpt4`` isn't
@@ -346,6 +351,17 @@ def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
       ``agent:>codex`` (the agent enum doesn't support comparison).
     - **range against non-range field**: e.g.
       ``scope:[prompts TO conversations]``.
+    - **a request-layer directive (``depth:``/``effort:``) negated or
+      OR'd**: e.g. ``NOT depth:targeted`` or
+      ``(depth:targeted OR foo)``. A request-layer predicate evaluates
+      as vacuously true at both the source and record layer (see
+      :mod:`agentgrep.query.evaluate`), so negating it would silently
+      flip an entire AND chain to always-false, and OR-ing it would
+      silently flip the whole OR to always-true — both directly
+      contradict what the query looks like it does. ``under_boolean``
+      tracks whether the current node is reachable through a ``NOT``
+      or an ``OR`` branch; plain AND composition (the common
+      ``depth:targeted foo`` case) never sets it.
 
     The walk is O(nodes) and runs once before the closures are
     built; the closures themselves keep their defensive raises so
@@ -355,9 +371,11 @@ def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
     if isinstance(node, FieldExistsNode):
         # Field-exists is valid for any registered field; the parser
         # already rejected unknown field names.
+        _reject_request_field_under_boolean(node.field, registry, under_boolean=under_boolean)
         return
     if isinstance(node, FieldEqNode):
         _validate_field_value(node.field, node.value, registry)
+        _reject_request_field_under_boolean(node.field, registry, under_boolean=under_boolean)
         return
     if isinstance(node, FieldCmpNode):
         spec = registry.get(node.field)
@@ -379,11 +397,33 @@ def _validate_ast(node: QueryNode, registry: FieldRegistry) -> None:
         _validate_range_bound(node.field, node.hi, registry)
         return
     if isinstance(node, NotNode):
-        _validate_ast(node.child, registry)
+        _validate_ast(node.child, registry, under_boolean=True)
         return
-    if isinstance(node, AndNode | OrNode):
+    if isinstance(node, AndNode):
         for child in node.children:
-            _validate_ast(child, registry)
+            _validate_ast(child, registry, under_boolean=under_boolean)
+        return
+    if isinstance(node, OrNode):
+        for child in node.children:
+            _validate_ast(child, registry, under_boolean=True)
+
+
+def _reject_request_field_under_boolean(
+    field: str,
+    registry: FieldRegistry,
+    *,
+    under_boolean: bool,
+) -> None:
+    """Raise when a ``request``-layer field predicate sits under NOT/OR."""
+    if not under_boolean:
+        return
+    spec = registry.get(field)
+    if spec is not None and spec.layer == "request":
+        message = (
+            f"field {spec.name!r} is a request-wide directive and cannot be "
+            "negated or combined with OR"
+        )
+        raise QueryCompileError(message)
 
 
 def _validate_field_value(
@@ -519,16 +559,16 @@ def build_query_from_input(
     # predicate; route the extracted terms through the fast path so the
     # search box stays as cacheable as a bare-term query.
     result_compiled = None if compiled.is_pure_text else compiled
-    # A ``scope:`` predicate filters records, but the coarse discovery scope
-    # decides which stores are opened at all. Widen discovery to "all" when
-    scope = scope_widened_for_ast(ast, base_query.scope)
-    effort: SearchEffort = (
-        base_query.effort
-        if base_query.effort in {"targeted", "exhaustive"}
-        else "exhaustive"
-        if scope != "prompts"
-        else "prompt"
-    )
+    try:
+        scope, effort = resolve_request_modifiers(
+            ast,
+            registry,
+            base_scope=base_query.scope,
+            base_effort=base_query.effort,
+            base_scope_explicit=base_query.scope_provenance == "explicit",
+        )
+    except QueryCompileError as exc:
+        return QueryBuildResult(query=None, error=str(exc))
     return QueryBuildResult(
         query=_rebuild(
             base_query,
@@ -736,6 +776,147 @@ def _scope_truth(
     return "U"
 
 
+_DEPTH_VALUE_ALIASES: dict[str, SearchEffort] = {"deep": "targeted"}
+"""Map a friendly ``depth:``/``effort:`` value onto its canonical ladder rung.
+
+``deep`` mirrors the ``--deep`` flag and the ``/deep`` slash command's own
+vocabulary; ``prompt``, ``targeted``, and ``exhaustive`` already match
+:data:`~agentgrep.records.SearchEffort` and need no translation.
+"""
+
+
+def _effort_directive(
+    node: QueryNode,
+    registry: FieldRegistry,
+    *,
+    under_boolean: bool = False,
+) -> SearchEffort | None:
+    """Return the single inline ``depth:``/``effort:`` value in ``node``, or ``None``.
+
+    Callers normally only reach a real occurrence of the field through plain
+    AND composition — ``_validate_ast`` already rejects it under ``NOT``/
+    ``OR`` during :func:`compile_query`. This function re-checks that same
+    rule itself (via ``under_boolean``, threaded through ``NotNode``/
+    ``OrNode``) rather than trusting that every caller of the public
+    :func:`resolve_request_modifiers` already ran ``compile_query`` first, so
+    it raises the same :class:`QueryCompileError` regardless of call order.
+
+    Also raises when two ANDed clauses resolve to different effort values
+    (``depth:targeted AND depth:exhaustive``); the ``deep`` synonym and its
+    canonical ``targeted`` spelling count as the same value for this check.
+    """
+    if isinstance(node, FieldEqNode | FieldExistsNode):
+        spec = registry.get(node.field)
+        if spec is None or spec.layer != "request":
+            return None
+        _reject_request_field_under_boolean(node.field, registry, under_boolean=under_boolean)
+        if isinstance(node, FieldExistsNode):
+            return None
+        return _DEPTH_VALUE_ALIASES.get(node.value, t.cast("SearchEffort", node.value))
+    if isinstance(node, NotNode):
+        return _effort_directive(node.child, registry, under_boolean=True)
+    if isinstance(node, AndNode):
+        found: set[SearchEffort] = set()
+        for child in node.children:
+            value = _effort_directive(child, registry, under_boolean=under_boolean)
+            if value is not None:
+                found.add(value)
+        if len(found) > 1:
+            message = "conflicting depth:/effort: directives in one query"
+            raise QueryCompileError(message)
+        return next(iter(found), None)
+    if isinstance(node, OrNode):
+        for child in node.children:
+            _ = _effort_directive(child, registry, under_boolean=True)
+        return None
+    return None
+
+
+def resolve_request_modifiers(
+    ast: QueryNode | None,
+    registry: FieldRegistry,
+    *,
+    base_scope: SearchScope,
+    base_effort: SearchEffort | None,
+    base_scope_explicit: bool = False,
+) -> tuple[SearchScope, SearchEffort]:
+    """Return the effective ``(scope, effort)`` after request-wide directives resolve.
+
+    The single shared resolver behind every frontend's depth ladder: the
+    TUI's :func:`build_query_from_input` and the CLI's ``search``/``grep``
+    argument builders (:mod:`agentgrep.cli.parser`) all route through this
+    instead of each keeping its own copy of the scope-widening-implies-deeper-
+    reads ladder. Walks ``ast`` for an inline ``scope:`` predicate (see
+    :func:`scope_widened_for_ast`) and an inline ``depth:``/``effort:``
+    predicate (see :func:`_effort_directive`).
+
+    An inline depth/effort directive always wins over ``base_effort`` — it is
+    the one part of this ladder a user can now type explicitly instead of
+    only reaching through ``--deep``/``--exhaustive`` or a structured MCP
+    parameter. Without one, a ``base_effort`` already at ``"targeted"`` or
+    ``"exhaustive"`` stays sticky (an earlier deep/exhaustive authorization
+    survives a follow-up edit); otherwise effort escalates to
+    ``"exhaustive"`` only when the resolved scope leaves ``"prompts"``.
+
+    A ``targeted`` directive additionally widens an implicit ``"prompts"``
+    scope to ``"all"`` on its own — mirroring how ``--deep`` alone (with no
+    ``--scope``) already widens scope rather than erroring. This only applies
+    when scope was never pinned to ``"prompts"`` on purpose: neither by the
+    caller (``base_scope_explicit``) nor by an inline ``scope:`` predicate in
+    ``ast`` itself. A user who explicitly asked for prompts scope and
+    targeted effort in the same request still gets a clean contradiction
+    error instead of a silent override.
+
+    Parameters
+    ----------
+    ast : QueryNode | None
+        Parsed user query, or ``None`` for a bare-term/flag-only request.
+    registry : FieldRegistry
+        Registry used to resolve field aliases to canonical names.
+    base_scope : SearchScope
+        Scope before any inline ``scope:`` predicate widens it — usually
+        derived from an explicit ``--scope``/``scope=`` selection or a
+        legacy ``--deep``-style compatibility default.
+    base_effort : SearchEffort | None
+        Effort before any inline ``depth:``/``effort:`` directive overrides
+        it. ``None`` means "no sticky effort yet" (the TUI's launch state);
+        every CLI/MCP caller passes a concrete value instead.
+    base_scope_explicit : bool
+        Whether ``base_scope`` was explicitly chosen (an explicit
+        ``--scope``/``scope=`` selection) rather than the implicit default.
+        Blocks the ``targeted``-directive auto-widen described above so an
+        explicit ``scope=prompts`` still contradicts ``depth:targeted``
+        cleanly. Defaults to ``False`` (treat ``base_scope`` as the implicit
+        default) for callers that have no such distinction to offer.
+
+    Returns
+    -------
+    tuple[SearchScope, SearchEffort]
+        The scope and effort the engine should read at.
+
+    Raises
+    ------
+    QueryCompileError
+        When ``ast`` carries conflicting depth/effort directives, or negates
+        or OR-combines the field (see :func:`_effort_directive`). A prior
+        :func:`compile_query` call already rejects the same NOT/OR shape via
+        ``_validate_ast``, but this function enforces it independently too,
+        so a caller reaching it without compiling first still fails closed.
+    """
+    scope = scope_widened_for_ast(ast, base_scope)
+    directive = _effort_directive(ast, registry) if ast is not None else None
+    if directive is not None:
+        scope_pinned_to_prompts = base_scope_explicit or (
+            ast is not None and "scope" in fields_in_ast(ast)
+        )
+        if directive == "targeted" and scope == "prompts" and not scope_pinned_to_prompts:
+            scope = "all"
+        return scope, directive
+    if base_effort in {"targeted", "exhaustive"}:
+        return scope, base_effort
+    return scope, ("exhaustive" if scope != "prompts" else "prompt")
+
+
 _FIND_BOOLEAN_TEXT_REASON = (
     "find cannot evaluate OR / NOT over text terms; use search or grep, "
     "or narrow with field predicates (agent:, path:, store:, mtime:)"
@@ -765,6 +946,11 @@ def find_unsupported_reason(
         spec = registry.get(node.field)
         if spec is None or spec.layer == "source":
             return None
+        if spec.layer == "request":
+            return (
+                f"the {spec.name}: field selects a read policy, which find does not "
+                "apply; use search or grep"
+            )
         if spec.name == "text":
             return _FIND_BOOLEAN_TEXT_REASON if under_boolean else None
         return (

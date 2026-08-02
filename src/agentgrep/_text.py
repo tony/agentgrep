@@ -399,11 +399,12 @@ SEARCH_DESCRIPTION = build_description(
 
     Fast by default: reads prompt-history stores only. ``--deep`` uses prompt
     matches to select a bounded set of conversations; ``--exhaustive`` scans
-    every readable conversation backend.
+    every readable conversation backend. A ``depth:`` (alias ``effort:``)
+    query term selects the same read policy inline.
 
     Terms accept a query language: bare terms are AND-combined substrings;
     compose with OR / NOT / ( ); quote "exact phrases"; filter by field
-    (agent:, model:, role:, timestamp:, path:, scope:). field:* tests
+    (agent:, model:, role:, timestamp:, path:, scope:, depth:). field:* tests
     presence and field:glob* matches wildcards.
     """,
     (
@@ -428,6 +429,7 @@ SEARCH_DESCRIPTION = build_description(
                 "agentgrep search '\"exact phrase\"'",
                 "agentgrep search 'timestamp:>2026-01-01 release'",
                 "agentgrep search 'scope:all model:gpt* caching'",
+                "agentgrep search 'depth:exhaustive migration'",
                 "agentgrep search 'cwd:~/work/django-project deploy'",
                 "agentgrep search 'project:docs branch:main deploy'",
                 "agentgrep search 'deploy -agent:cursor-cli'",
@@ -446,7 +448,8 @@ GREP_DESCRIPTION = build_description(
 
     Fast by default: reads prompt-history stores only. ``--deep`` uses prompt
     matches to select a bounded set of conversations; ``--exhaustive`` scans
-    every readable conversation backend.
+    every readable conversation backend. A ``depth:`` (alias ``effort:``)
+    query term selects the same read policy inline.
 
     Patterns accept the same query language as ``search`` (field
     predicates, OR / NOT, "phrases"), but grep needs at least one text
