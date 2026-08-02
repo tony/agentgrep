@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a48 (Yet to be released)
+## agentgrep 0.1.0a49 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a48 (2026-08-02)
+
+agentgrep 0.1.0a48 makes the query language and the idle canvas more
+trustworthy. `kind:prompt` / `kind:history` join the queryable fields,
+and a typo'd field predicate now warns instead of quietly running an
+empty search — see {ref}`library-query-language` for details. The
+idle screen's search-depth prompt no longer traps mouse or keyboard
+focus, reads clearly again, and the detail pane shows an ambient
+marker for your reading position outside of an active selection — see
+{ref}`tui` for details.
 
 ### What's new
 
