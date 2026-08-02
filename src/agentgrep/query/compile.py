@@ -364,9 +364,18 @@ def _validate_ast(
       ``depth:targeted foo`` case) never sets it.
 
     The walk is O(nodes) and runs once before the closures are
-    built; the closures themselves keep their defensive raises so
-    direct callers (tests, library consumers) still see the same
-    errors at call time.
+    built. The first four classes above are also independently
+    re-checked inside the closures (:func:`agentgrep.query.evaluate._enum_eq`,
+    :func:`~agentgrep.query.evaluate._date_predicate_matches`, and the
+    comparison/range dispatch), so a direct caller (tests, library
+    consumers) who reaches a closure without calling this function first
+    still sees the same errors at call time — except for the fifth: a
+    request-layer field under ``NOT``/``OR`` evaluates as vacuously true (or
+    false) with no re-check, exactly like the pre-existing ``kind`` field's
+    enum membership (see the comment at its own evaluation branch), because
+    catching it there would mean threading ``under_boolean``-style position
+    tracking through the whole recursive evaluator for a case every real
+    caller already reaches through this walk first.
     """
     if isinstance(node, FieldExistsNode):
         # Field-exists is valid for any registered field; the parser
