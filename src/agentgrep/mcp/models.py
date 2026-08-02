@@ -6,6 +6,7 @@ import typing as t
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+from agentgrep._query_gate import UNREGISTERED_FIELD_PREDICATE_CODE
 from agentgrep.mcp._library import (
     SERVER_VERSION,
     AgentName,
@@ -20,6 +21,7 @@ from agentgrep.mcp._library import (
 )
 
 if t.TYPE_CHECKING:
+    from agentgrep._query_gate import UnregisteredFieldToken
     from agentgrep.results import NextAction, RunCoverage, RunDiagnostic, RunSummary
 
 
@@ -363,6 +365,15 @@ class DiagnosticModel(AgentGrepModel):
             code=diagnostic.code,
             message=diagnostic.message,
             severity=diagnostic.severity,
+        )
+
+    @classmethod
+    def from_query_diagnostic(cls, diagnostic: UnregisteredFieldToken) -> DiagnosticModel:
+        """Adapt one non-fatal query-language diagnostic (unregistered field predicate)."""
+        return cls(
+            code=UNREGISTERED_FIELD_PREDICATE_CODE,
+            message=diagnostic.message,
+            severity="warning",
         )
 
 

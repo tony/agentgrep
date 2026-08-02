@@ -29,9 +29,9 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import dataclasses
-import re
 import typing as t
 
+from agentgrep._query_gate import has_query_syntax, unregistered_field_predicates
 from agentgrep.origin import (
     ORIGIN_PATH_QUERY_FIELDS,
     ORIGIN_QUERY_FIELDS,
@@ -453,10 +453,16 @@ class QueryBuildResult:
     error : str | None
         Message to show the user, taken from the parse or compile error. ``None`` on
         success.
+    warning : str | None
+        Non-fatal diagnostic on an otherwise successful build — a field-predicate-shaped
+        token (e.g. ``kind:prompt`` before ``kind`` was registered) whose field isn't
+        registered, which still runs as a literal substring search. ``None`` when nothing
+        to warn about. Only ever set alongside a non-``None`` ``query``.
     """
 
     query: SearchQuery | None
     error: str | None
+    warning: str | None = None
 
 
 def build_query_from_input(
@@ -492,9 +498,14 @@ def build_query_from_input(
         )
     if not _has_query_syntax(stripped, registry):
         terms = tuple(stripped.split())
+        found = unregistered_field_predicates(
+            stripped,
+            known_field_names=_registry_field_names(registry),
+        )
         return QueryBuildResult(
             query=_rebuild(base_query, terms=terms, compiled=None),
             error=None,
+            warning=found[0].message if found else None,
         )
     try:
         ast = parse_query(stripped, registry)
@@ -577,20 +588,19 @@ def compose_query_ast(
     return AndNode(children=tuple(children)), user_ast
 
 
-_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
-
-
-_IDENT_COLON_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*):")
-
-
 def _has_query_syntax(text: str, registry: FieldRegistry) -> bool:
     """Return whether ``text`` carries query-language syntax.
 
-    Mirrors the CLI gate (:func:`agentgrep.cli.parser._query_syntax_present`)
-    but derives the queryable field names from ``registry`` rather than a
-    hardcoded mirror — the query module is already imported on this path,
-    so there is no cold-start cost. Engages on a known field predicate, a
-    standalone uppercase boolean keyword, or a leading quote.
+    Delegates to the shared gate (:func:`agentgrep._query_gate.has_query_syntax`,
+    also used by the CLI's cold-start scan,
+    :func:`agentgrep.cli.parser._query_syntax_present`) but passes the live
+    ``registry``'s field names and aliases rather than that gate's
+    hand-maintained mirror — this path has already paid to import
+    :mod:`agentgrep.query`, so there is no reason to risk drift here. Engages
+    on a *registered* field predicate, a standalone uppercase boolean
+    keyword, or a leading quote. An unregistered field-shaped predicate does
+    not engage the parser — see
+    :func:`agentgrep._query_gate.unregistered_field_predicates`.
 
     Parameters
     ----------
@@ -604,14 +614,12 @@ def _has_query_syntax(text: str, registry: FieldRegistry) -> bool:
     bool
         ``True`` when the parser should be engaged.
     """
-    if not text:
-        return False
-    if text[:1] in {'"', "'"}:
-        return True
-    if any(word in _BOOLEAN_KEYWORDS for word in text.split()):
-        return True
-    field_names = {name for spec in registry.specs for name in (spec.name, *spec.aliases)}
-    return any(match.group(1) in field_names for match in _IDENT_COLON_RE.finditer(text))
+    return has_query_syntax(text, known_field_names=_registry_field_names(registry))
+
+
+def _registry_field_names(registry: FieldRegistry) -> frozenset[str]:
+    """Return every field name and alias ``registry`` knows, live (never a mirror)."""
+    return frozenset(name for spec in registry.specs for name in (spec.name, *spec.aliases))
 
 
 def _rebuild(

@@ -241,15 +241,16 @@ def _field_exists_on_record(field: str, record: SearchRecord) -> bool:
     """Return whether ``field`` is present and non-empty on ``record``.
 
     Source-derived fields (``agent``/``store``/``adapter_id``/``mtime``) and
-    the always-derivable ``scope`` are always present at the record layer: a
-    record only reaches here from a source the ``source_predicate`` already
-    admitted, and that layer owns the real ``mtime`` decision (the record
-    carries no ``mtime_ns``). Nullable record fields count as absent when
-    ``None`` or empty.
+    the always-derivable ``scope``/``kind`` are always present at the record
+    layer: a record only reaches here from a source the ``source_predicate``
+    already admitted, and that layer owns the real ``mtime`` decision (the
+    record carries no ``mtime_ns``). ``kind`` is a required, non-nullable
+    ``SearchRecord`` field, so it is never absent. Nullable record fields
+    count as absent when ``None`` or empty.
     """
     if field in ORIGIN_QUERY_FIELDS:
         return bool(record_origin_field_values(record, field))
-    if field in {"agent", "store", "adapter_id", "mtime", "scope"}:
+    if field in {"agent", "store", "adapter_id", "mtime", "scope", "kind"}:
         return True
     if field == "path":
         return bool(str(record.path))
@@ -305,6 +306,11 @@ def _field_matches_record(
             record,
             t.cast("SearchScope", node.value),
         )
+    if spec.name == "kind":
+        # Enum membership (a mistyped value like ``promt``) is already
+        # rejected at compile time by ``_validate_field_value``, so this is
+        # a plain equality check against the record's required field.
+        return record.kind == node.value
     if spec.name == "timestamp":
         return _date_predicate_matches(
             node,

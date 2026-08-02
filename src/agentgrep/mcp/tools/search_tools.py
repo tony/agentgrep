@@ -17,6 +17,7 @@ from mcp import McpError
 from pydantic import Field
 
 from agentgrep import events as ag_events
+from agentgrep._query_gate import unregistered_field_predicates_in
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
@@ -52,6 +53,7 @@ if t.TYPE_CHECKING:
     from fastmcp import FastMCP
 
     from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep._query_gate import UnregisteredFieldToken
     from agentgrep.records import SearchQuery
     from agentgrep.results import RunSummary
 
@@ -118,7 +120,7 @@ def _normalize_request_depth(
 def _compile_request_query(
     base_query: SearchQuery,
     request: SearchRequestModel,
-) -> SearchQuery:
+) -> tuple[SearchQuery, tuple[UnregisteredFieldToken, ...]]:
     """Apply the query language and origin filters to a search request.
 
     User terms compile exactly as the CLI's bare path compiles them —
@@ -127,6 +129,13 @@ def _compile_request_query(
     synthetic AST nodes via :func:`agentgrep.query.compose_query_ast`.
     A malformed query raises a :class:`ToolError` with the parse/compile
     message.
+
+    Returns the rebuilt query plus any non-fatal
+    :class:`~agentgrep._query_gate.UnregisteredFieldToken` diagnostics for
+    field-predicate-shaped terms whose field isn't registered (``()`` when
+    the terms carried no such shape, or the parser was engaged — an
+    unregistered field there already raised :class:`ToolError` above
+    instead of reaching this point).
     """
     from agentgrep.query import (
         QueryCompileError,
@@ -150,8 +159,8 @@ def _compile_request_query(
     terms = tuple(word for term in request.terms for word in term.split())
     if not terms:
         if origin_filter is None:
-            return base_query
-        return dataclasses.replace(base_query, terms=(), origin_filter=origin_filter)
+            return base_query, ()
+        return dataclasses.replace(base_query, terms=(), origin_filter=origin_filter), ()
     registry = default_registry()
     try:
         ast, user_ast = compose_query_ast(terms, (), registry)
@@ -159,20 +168,26 @@ def _compile_request_query(
     except (QueryParseError, QueryCompileError) as exc:
         message = f"invalid query: {exc}"
         raise ToolError(message) from exc
+    diagnostics = () if user_ast is not None else unregistered_field_predicates_in(terms)
     scope = scope_widened_for_ast(user_ast, base_query.scope)
     effort = base_query.effort
     if scope != "prompts" and effort not in {"targeted", "exhaustive"}:
         effort = "exhaustive"
     if effort == "targeted" and scope == "prompts":
         raise _invalid_params_error(_TARGETED_PROMPT_SCOPE_ERROR)
-    return dataclasses.replace(
-        base_query,
-        terms=compiled.text_terms,
-        compiled=None if compiled.is_pure_text else compiled,
-        scope=scope,
-        scope_provenance=("explicit" if scope != base_query.scope else base_query.scope_provenance),
-        effort=effort,
-        origin_filter=origin_filter,
+    return (
+        dataclasses.replace(
+            base_query,
+            terms=compiled.text_terms,
+            compiled=None if compiled.is_pure_text else compiled,
+            scope=scope,
+            scope_provenance=(
+                "explicit" if scope != base_query.scope else base_query.scope_provenance
+            ),
+            effort=effort,
+            origin_filter=origin_filter,
+        ),
+        diagnostics,
     )
 
 
@@ -202,7 +217,7 @@ async def _search_async(
             conversation_limit=conversation_limit,
         ),
     )
-    query = _compile_request_query(base_query, request)
+    query, query_diagnostics = _compile_request_query(base_query, request)
     records: list[SearchRecordLike] = []
     run_summary: RunSummary | None = None
     # The engine only stops scanning when this generator is finalized: its
@@ -253,7 +268,10 @@ async def _search_async(
             count=len(records),
         ),
         status=RunStatusModel.from_summary(run_summary),
-        diagnostics=[DiagnosticModel.from_diagnostic(item) for item in run_summary.diagnostics],
+        diagnostics=[
+            *(DiagnosticModel.from_diagnostic(item) for item in run_summary.diagnostics),
+            *(DiagnosticModel.from_query_diagnostic(item) for item in query_diagnostics),
+        ],
         next_actions=[NextActionModel.from_action(action) for action in run_summary.next_actions],
         results=[SearchRecordModel.from_record(record) for record in records],
     )

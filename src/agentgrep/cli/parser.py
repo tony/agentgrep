@@ -21,6 +21,11 @@ import re
 import sys
 import typing as t
 
+from agentgrep._query_gate import (
+    UnregisteredFieldToken,
+    has_query_syntax,
+    unregistered_field_predicates_in,
+)
 from agentgrep._text import (
     CLI_DESCRIPTION,
     FIND_DESCRIPTION,
@@ -188,6 +193,10 @@ class FindArgs:
     raw_query : str
         Pattern text exactly as typed, before compilation, used to seed the explorer's
         search box. ``""`` when no pattern was given.
+    diagnostics : tuple[UnregisteredFieldToken, ...]
+        Non-fatal warnings for a field-predicate-shaped pattern whose field isn't
+        registered (e.g. a typo'd field name), found on the legacy literal path.
+        Empty when the pattern compiled cleanly or carried no such shape.
     """
 
     pattern: str | None
@@ -206,6 +215,7 @@ class FindArgs:
     progress_mode: ProgressMode = "auto"
     compiled: CompiledQuery | None = None
     raw_query: str = ""
+    diagnostics: tuple[UnregisteredFieldToken, ...] = ()
 
 
 @dataclasses.dataclass(slots=True)
@@ -303,6 +313,10 @@ class GrepArgs:
         predicate is replaced.
     conversation_limit : int | None
         Distinct conversation-attempt cap for targeted effort.
+    diagnostics : tuple[UnregisteredFieldToken, ...]
+        Non-fatal warnings for field-predicate-shaped patterns whose field isn't
+        registered (e.g. a typo'd field name), found on the legacy literal path.
+        Empty when every pattern compiled cleanly or carried no such shape.
     """
 
     patterns: tuple[str, ...]
@@ -332,6 +346,7 @@ class GrepArgs:
     scope_provenance: SearchScopeProvenance = "inferred"
     base_scope_provenance: SearchScopeProvenance = "inferred"
     conversation_limit: int | None = None
+    diagnostics: tuple[UnregisteredFieldToken, ...] = ()
 
     def __post_init__(self) -> None:
         """Normalize and validate public constructor effort values."""
@@ -407,6 +422,10 @@ class SearchArgs:
         predicate is replaced.
     conversation_limit : int | None
         Distinct conversation-attempt cap for targeted effort.
+    diagnostics : tuple[UnregisteredFieldToken, ...]
+        Non-fatal warnings for field-predicate-shaped terms whose field isn't
+        registered (e.g. a typo'd field name), found on the legacy literal path.
+        Empty when every term compiled cleanly or carried no such shape.
     """
 
     terms: tuple[str, ...]
@@ -430,6 +449,7 @@ class SearchArgs:
     scope_provenance: SearchScopeProvenance = "inferred"
     base_scope_provenance: SearchScopeProvenance = "inferred"
     conversation_limit: int | None = None
+    diagnostics: tuple[UnregisteredFieldToken, ...] = ()
 
     def __post_init__(self) -> None:
         """Normalize and validate public constructor effort values."""
@@ -1172,55 +1192,20 @@ def _targeted_conversation_limit(
     return DEFAULT_TARGETED_CONVERSATION_LIMIT if value is None else value
 
 
-# Boolean keywords that engage the query parser when typed standalone and
-# uppercase. Lowercase ``or``/``and``/``not`` stay literal search terms — the
-# tokenizer treats them as terms, so the gate must agree.
-_BOOLEAN_KEYWORDS: frozenset[str] = frozenset({"AND", "OR", "NOT"})
-
-# Queryable field names, mirrored from ``agentgrep.query.default_registry``.
-# Hardcoded here on purpose: the cold-start gate runs on every invocation and
-# must not import the query module to decide whether to engage the parser.
-# ``test_cli_query_field_names_mirror_the_registry`` fails if this drifts.
-_QUERY_FIELD_NAMES: frozenset[str] = frozenset(
-    {
-        "agent",
-        "store",
-        "adapter_id",
-        "adapter",
-        "path",
-        "mtime",
-        "scope",
-        "timestamp",
-        "date",
-        "model",
-        "role",
-        "cwd",
-        "repo",
-        "worktree",
-        "branch",
-        "project",
-        "cwd_hash",
-        "text",
-    },
-)
-
-# A field predicate is a known field name, not preceded by an identifier char
-# (so ``myagent:`` does not match) and followed by ``:``. Restricting to known
-# fields keeps URLs like ``https://host`` and path values from spuriously
-# engaging the parser.
-_FIELD_PREDICATE_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:" + "|".join(sorted(_QUERY_FIELD_NAMES, key=len, reverse=True)) + r"):",
-)
-
-
 def _query_syntax_present(positionals: cabc.Sequence[str]) -> bool:
     """Return whether positionals carry query-language syntax.
 
-    Cheap, dependency-free heuristic so plain bare-term queries
-    (``ruff uv tmux``) keep the legacy fast path and never import the
-    query module. Engages the parser when a positional carries a known
-    field predicate, a standalone uppercase boolean keyword, or a
-    leading quote (an intended phrase).
+    Cheap, dependency-free heuristic (:func:`agentgrep._query_gate.has_query_syntax`,
+    shared with :func:`agentgrep.query.compile._has_query_syntax` so the two
+    can't drift the way they did before agentgrep#153) so plain bare-term
+    queries (``ruff uv tmux``) keep the legacy fast path and never import
+    the query module. Engages the parser when a positional carries a
+    *registered* field predicate, a standalone uppercase boolean keyword, or
+    a leading quote (an intended phrase). An unregistered field-shaped
+    predicate does not engage the parser here — see
+    :func:`agentgrep._query_gate.unregistered_field_predicates` for how that
+    case is surfaced instead, without turning a plausible literal search
+    into a hard parse error.
 
     Parameters
     ----------
@@ -1232,16 +1217,7 @@ def _query_syntax_present(positionals: cabc.Sequence[str]) -> bool:
     bool
         ``True`` when the parser should be engaged.
     """
-    for token in positionals:
-        if not token:
-            continue
-        if token[:1] in {'"', "'"}:
-            return True
-        if _FIELD_PREDICATE_RE.search(token):
-            return True
-        if any(word in _BOOLEAN_KEYWORDS for word in token.split()):
-            return True
-    return False
+    return any(has_query_syntax(token) for token in positionals)
 
 
 def _maybe_compile_query(
@@ -1254,16 +1230,26 @@ def _maybe_compile_query(
     find_mode: bool = False,
     case_sensitive: bool = False,
     extra_nodes: tuple[FieldEqNode, ...] = (),
-) -> tuple[CompiledQuery | None, tuple[str, ...], SearchScope | None]:
+) -> tuple[
+    CompiledQuery | None,
+    tuple[str, ...],
+    SearchScope | None,
+    tuple[UnregisteredFieldToken, ...],
+]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
-    Returns ``(compiled, residual_terms, query_scope)`` — ``compiled`` is ``None``
-    when no positional contains ``:`` (legacy fast path); ``residual_terms``
-    is the tuple to feed back as the legacy ``terms`` / ``patterns`` /
-    ``pattern`` field so the engine's existing text-matching path
-    still has the user's text query. ``query_scope`` is the narrowest
-    discovery scope that can satisfy an inline ``scope:`` predicate,
-    or ``None`` when the query has no such predicate.
+    Returns ``(compiled, residual_terms, query_scope, diagnostics)`` —
+    ``compiled`` is ``None`` when no positional contains ``:`` (legacy fast
+    path); ``residual_terms`` is the tuple to feed back as the legacy
+    ``terms`` / ``patterns`` / ``pattern`` field so the engine's existing
+    text-matching path still has the user's text query. ``query_scope`` is
+    the narrowest discovery scope that can satisfy an inline ``scope:``
+    predicate, or ``None`` when the query has no such predicate.
+    ``diagnostics`` carries non-fatal warnings for field-predicate-shaped
+    positionals whose field isn't registered (e.g. ``kind:prompt`` before
+    ``kind`` was a known field) — populated only when the positionals
+    themselves carried no query syntax, since an unknown field on the
+    parsed path already hard-errors via ``subparser.error()`` below.
 
     ``explicit_flags`` maps field name → flag name. When a field also
     has an explicitly-set flag (e.g. ``--agent`` set AND ``agent:``
@@ -1283,8 +1269,10 @@ def _maybe_compile_query(
     user sees an argparse-shaped message instead of a Python
     traceback.
     """
-    if not _query_syntax_present(positionals) and not extra_nodes:
-        return None, tuple(positionals), None
+    query_syntax = _query_syntax_present(positionals)
+    diagnostics = () if query_syntax else unregistered_field_predicates_in(positionals)
+    if not query_syntax and not extra_nodes:
+        return None, tuple(positionals), None, diagnostics
     from agentgrep.query import (
         QueryCompileError,
         QueryParseError,
@@ -1328,8 +1316,8 @@ def _maybe_compile_query(
         # parenthesized AND of terms) needs no source/record predicate.
         # Return the extracted, unquoted terms so the engine's legacy
         # fast path — and its source-scan cache — stay in play.
-        return None, compiled.text_terms, query_scope
-    return compiled, compiled.text_terms, query_scope
+        return None, compiled.text_terms, query_scope, diagnostics
+    return compiled, compiled.text_terms, query_scope, diagnostics
 
 
 def _check_for_mangled_field_predicate(
@@ -1450,7 +1438,7 @@ def parse_args(
 
     raw_pattern = t.cast("str | None", namespace.pattern)
     find_positionals = [raw_pattern] if raw_pattern is not None else []
-    find_compiled, find_residual, _find_query_scope = _maybe_compile_query(
+    find_compiled, find_residual, _find_query_scope, find_diagnostics = _maybe_compile_query(
         find_positionals,
         bundle=bundle,
         color_mode=color_mode,
@@ -1496,6 +1484,7 @@ def parse_args(
         progress_mode=t.cast("ProgressMode", namespace.progress),
         compiled=find_compiled,
         raw_query=raw_pattern or "",
+        diagnostics=find_diagnostics,
     )
 
 
@@ -1534,7 +1523,7 @@ def _build_grep_args(
         case_mode == "smart"
         and any(any(ch.isupper() for ch in pattern) for pattern in patterns_list_raw)
     )
-    grep_compiled, residual_patterns, grep_query_scope = _maybe_compile_query(
+    grep_compiled, residual_patterns, grep_query_scope, grep_diagnostics = _maybe_compile_query(
         patterns_list_raw,
         bundle=bundle,
         color_mode=color_mode,
@@ -1646,6 +1635,7 @@ def _build_grep_args(
         base_scope_provenance=_base_scope_provenance(namespace),
         conversation_limit=conversation_limit,
         style=t.cast("GrepStyle", namespace.style),
+        diagnostics=grep_diagnostics,
     )
 
 
@@ -1687,7 +1677,7 @@ def _build_search_args(
             )
 
     origin_nodes, origin_boost, origin_filter = _build_search_origin_nodes(namespace)
-    search_compiled, residual_terms, search_query_scope = _maybe_compile_query(
+    search_compiled, residual_terms, search_query_scope, search_diagnostics = _maybe_compile_query(
         terms_list,
         bundle=bundle,
         color_mode=color_mode,
@@ -1739,6 +1729,7 @@ def _build_search_args(
         origin_filter=origin_filter,
         base_scope=_base_search_scope(namespace),
         base_effort=_base_search_effort(namespace),
+        diagnostics=search_diagnostics,
     )
 
 

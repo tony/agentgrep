@@ -44,7 +44,7 @@ class SearchWorkflow:
             host.request_cancel()
             host.reset_view()
             return
-        query = host.build_query(text)
+        query = host.build_query(text, notify_warning=True)
         if query.effort == "targeted" and query.scope == "prompts":
             host.show_query_error(
                 "targeted effort requires conversation or all scope",

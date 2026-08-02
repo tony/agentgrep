@@ -35,12 +35,24 @@ class WorkflowHost(t.Protocol):
         """The session-fixed :class:`UiContext` (home, seam, launch query)."""
         ...
 
-    def build_query(self, text: str) -> SearchQuery:
-        """Parse ``text`` into a :class:`SearchQuery` at the layout's base scope."""
+    def build_query(self, text: str, *, notify_warning: bool = False) -> SearchQuery:
+        """Parse ``text`` into a :class:`SearchQuery` at the layout's base scope.
+
+        ``notify_warning`` opts into presenting a non-fatal query diagnostic
+        (an unregistered field-predicate-shaped token) via
+        :meth:`show_query_warning` when one is found. Defaults ``False`` so
+        the live depth-offer preview — which re-parses on every keystroke,
+        not just on submit — never fires a notification mid-edit; only a
+        submitted query passes ``True``.
+        """
         ...
 
     def show_query_error(self, message: str) -> None:
         """Keep the input editable while presenting one bounded query error."""
+        ...
+
+    def show_query_warning(self, message: str) -> None:
+        """Present one non-fatal query diagnostic without disturbing the input."""
         ...
 
     def run_search(self, query: SearchQuery) -> None:

@@ -8,6 +8,9 @@ own the CLI wire shape without a redundant validation round trip.
 
 from __future__ import annotations
 
+import collections.abc as cabc
+
+from agentgrep._query_gate import UNREGISTERED_FIELD_PREDICATE_CODE, UnregisteredFieldToken
 from agentgrep._text import format_display_path
 from agentgrep.origin_serializers import serialize_record_metadata, serialize_record_origin
 from agentgrep.records import (
@@ -174,6 +177,28 @@ def serialize_run_summary(summary: RunSummary) -> dict[str, object]:
     }
 
 
+def serialize_query_diagnostics(
+    diagnostics: cabc.Sequence[UnregisteredFieldToken],
+) -> list[dict[str, object]]:
+    """Serialize non-fatal query diagnostics for the JSON/NDJSON ``warnings`` key.
+
+    ``code`` and ``message`` match :meth:`DiagnosticModel.from_query_diagnostic`
+    on the MCP side; ``field``/``token``/``suggestion`` are CLI-only detail,
+    and MCP's ``severity`` has no CLI counterpart — the two shapes are
+    related, not identical.
+    """
+    return [
+        {
+            "code": UNREGISTERED_FIELD_PREDICATE_CODE,
+            "field": item.field,
+            "token": item.token,
+            "suggestion": item.suggestion,
+            "message": item.message,
+        }
+        for item in diagnostics
+    ]
+
+
 def build_envelope(
     command: str,
     query_data: dict[str, object],
@@ -301,6 +326,7 @@ __all__ = (
     "serialize_grep_end",
     "serialize_grep_match_line",
     "serialize_grep_record",
+    "serialize_query_diagnostics",
     "serialize_run_summary",
     "serialize_search_record",
     "serialize_source_handle",

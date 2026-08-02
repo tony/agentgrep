@@ -367,9 +367,9 @@ class _HudSearchBase(_HudDetailInteractionBase):
         self._workflow.on_query(self, text)
 
     # --- WorkflowHost surface: the active workflow drives the layout here -----
-    def build_query(self, text: str) -> SearchQuery:
+    def build_query(self, text: str, *, notify_warning: bool = False) -> SearchQuery:
         """Parse ``text`` into a query at the user's launch scope (host surface)."""
-        return self._build_search_query(text)
+        return self._build_search_query(text, notify_warning=notify_warning)
 
     @_runtime.pump_only
     def show_query_error(self, message: str) -> None:
@@ -379,6 +379,11 @@ class _HudSearchBase(_HudDetailInteractionBase):
         if self._search_input is not None:
             self._search_input.focus()
         self.notify(message, title="Invalid query", severity="error")
+
+    @_runtime.pump_only
+    def show_query_warning(self, message: str) -> None:
+        """Present one non-fatal query diagnostic without disturbing the input."""
+        self.notify(message, title="Unrecognized field", severity="warning")
 
     def run_search(self, query: SearchQuery) -> None:
         """Reset the chrome and stream ``query`` through the engine (host surface)."""
@@ -478,7 +483,7 @@ class _HudSearchBase(_HudDetailInteractionBase):
         target.load_query(query)
         target.focus()
 
-    def _build_search_query(self, text: str) -> SearchQuery:
+    def _build_search_query(self, text: str, *, notify_warning: bool = False) -> SearchQuery:
         """Build a fresh :class:`SearchQuery` from the search-bar text.
 
         Routes through :func:`agentgrep.query.build_query_from_input`
@@ -488,6 +493,16 @@ class _HudSearchBase(_HudDetailInteractionBase):
         returns an error and we fall back to the legacy bare-term
         split so the user can keep typing — a future commit can
         surface the error in a status line.
+
+        ``notify_warning`` presents a non-fatal diagnostic (an
+        unregistered field-predicate-shaped token) via
+        :meth:`show_query_warning` when the build found one. This method
+        also runs on every keystroke through the live depth-offer preview
+        (:meth:`HudLayout._refresh_depth_offer`), so the default ``False``
+        matters: only the workflow's submit path
+        (:meth:`~agentgrep.ui.workflows.search.SearchWorkflow.on_query`)
+        passes ``True`` — a toast on every character typed after a colon
+        would be spam, not a diagnostic.
         """
         from agentgrep.query import build_query_from_input, default_registry
 
@@ -507,6 +522,8 @@ class _HudSearchBase(_HudDetailInteractionBase):
         )
         result = build_query_from_input(text, base, default_registry())
         if result.query is not None:
+            if notify_warning and result.warning is not None:
+                self.show_query_warning(result.warning)
             return result.query
         # Parse / compile error: degrade to legacy split so the
         # search box stays editable. The error message stays
