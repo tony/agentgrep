@@ -28,12 +28,20 @@ Search effort is an engine-owned, ordered read policy with three values:
   by the normalized scope and source predicates.
 
 The CLI normalizes `--deep` to `targeted` and `--exhaustive` to `exhaustive`;
-a bare CLI `--exhaustive` retains prompt scope. MCP exposes the same `prompt`,
-`targeted`, and `exhaustive` vocabulary, but an omitted scope with targeted or
-exhaustive effort infers `all`; an explicitly supplied `scope="prompts"`
-remains invalid for targeted effort. `scope` controls record kinds, while
-`effort` controls how broadly the engine reads sources, and neither is a result
-limit.
+a bare CLI `--exhaustive` retains prompt scope. A bare CLI `--deep` (or an
+inline `depth:targeted` query term with no explicit scope) instead widens an
+implicit prompts scope to `all`, since targeted effort has nothing to read
+otherwise. MCP exposes the same `prompt`, `targeted`, and `exhaustive`
+vocabulary, but an omitted scope with targeted or exhaustive effort infers
+`all`; an explicitly supplied `scope="prompts"` remains invalid for targeted
+effort. `scope` controls record kinds, while `effort` controls how broadly
+the engine reads sources, and neither is a result limit.
+
+A `depth`/`effort` query-language field ({ref}`ADR 0006
+<adr-public-cli-mcp-surface-contract>` owns its field shape and collision
+rules) reaches this same ladder as literal query text, normalized through the
+one resolver every frontend shares rather than a per-frontend copy of the
+scope/effort reconciliation this ADR describes.
 
 Each effort uses the same matcher, declared order, dedupe policy, and result
 limit. The result summary reports requested and completed effort, status,

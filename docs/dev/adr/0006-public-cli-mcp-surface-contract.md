@@ -105,6 +105,22 @@ frontend normalizes effort with scope. {ref}`ADR 0021
 <adr-prompt-guided-conversation-routing>` owns which prompt evidence may select
 a conversation and how the independent conversation bound is consumed.
 
+A `depth` query field (alias `effort`; `deep` a value synonym for `targeted`)
+carries the same three effort values as literal, composable query text —
+`depth:targeted foo`, usable identically from a CLI positional, an MCP
+`terms` entry, and the TUI search box, since all three compile through the
+same query registry and one shared resolver. It is registered with a third
+field layer, `request`, alongside the existing `source` and `record`
+layers: a `request`-layer field carries no per-source or per-record truth
+value, so it evaluates as vacuously true wherever a source/record predicate
+would otherwise decide a match, and is instead extracted by the resolver
+that turns a parsed query into the request's effective scope and effort.
+Negating a `depth`/`effort` predicate or combining it with `OR` is a compile
+error, since a request-wide directive has no boolean truth value to negate
+or disjoin. A `--deep`/`--exhaustive` flag or MCP `effort` parameter may not
+be combined with an inline `depth`/`effort` term in the same request; pick
+one syntax, the same collision rule `--agent` and `agent:` already enforce.
+
 Future case handling should prefer a single explicit option such as
 `--case {smart,ignore,respect}`. Existing compatibility flags may remain as
 aliases, but the normalized request should carry one case policy.
