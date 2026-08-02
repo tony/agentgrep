@@ -182,9 +182,10 @@ def serialize_query_diagnostics(
 ) -> list[dict[str, object]]:
     """Serialize non-fatal query diagnostics for the JSON/NDJSON ``warnings`` key.
 
-    Mirrors :meth:`DiagnosticModel.from_query_diagnostic` on the MCP side: same
-    non-fatal, structured shape, so a scripted consumer diffing CLI JSON
-    against the MCP tool response sees the same field names.
+    ``code`` and ``message`` match :meth:`DiagnosticModel.from_query_diagnostic`
+    on the MCP side; ``field``/``token``/``suggestion`` are CLI-only detail,
+    and MCP's ``severity`` has no CLI counterpart — the two shapes are
+    related, not identical.
     """
     return [
         {
