@@ -1,0 +1,7 @@
+{"version":3,"term":{"cols":110,"rows":20},"timestamp":1783888205,"idle_time_limit":1.0,"command":"agentgrep search deploy && sleep 2","title":"agentgrep search","env":{"SHELL":"/bin/zsh"}}
+[0.322, "o", "\r\u001b[2K\u001b[36m⠋\u001b[0m \u001b[1;36mSearching\u001b[0m \u001b[35mdeploy\u001b[0m | \u001b[1;36mdiscovering\u001b[0m | \u001b[33m0 matches\u001b[0m | \u001b[34m0.0s\u001b[0m | \u001b[37m[Press enter, answer now]\u001b[0m"]
+[0.027, "o", "\r\u001b[2K"]
+[0.082, "o", "convert the \u001b[38;5;179mdeploy\u001b[0m script from bash to python\r\n\u001b[38;5;245m  cursor-cli · prompt · 11m ago · \u001b[38;5;177m~/.config/cursor/prompt_history.json\u001b[0m\u001b[0m\r\n\r\n\r\n\u001b[1;36m[session 5f26a6ae-99a]\u001b[0m\r\n"]
+[0.000, "o", "roll back the \u001b[38;5;179mdeploy\u001b[0m when the health check fails\r\n\u001b[38;5;245m  claude · prompt · 5h ago · \u001b[38;5;177m~/.claude/history.jsonl\u001b[0m\u001b[0m\r\n\r\n\r\n\u001b[1;36m[session c13ecba5-864]\u001b[0m\r\n"]
+[0.000, "o", "why does the \u001b[38;5;179mdeploy\u001b[0m step fail on the staging environment\r\n\u001b[38;5;245m  codex · prompt · 6h ago · \u001b[38;5;177m~/.codex/history.jsonl\u001b[0m\u001b[0m\r\n\r\n"]
+[2.069, "x", "0"]
