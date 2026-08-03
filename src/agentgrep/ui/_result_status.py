@@ -6,6 +6,7 @@ from agentgrep.progress import format_match_count
 from agentgrep.results import NextAction, RunSummary
 
 __all__ = [
+    "depth_offer_typed_directive",
     "format_depth_offer_lead",
     "format_depth_offer_rows",
     "format_empty_evidence",
@@ -48,11 +49,26 @@ _DEPTH_OFFER_HINTS = {
     "search.exhaustive": "read every readable conversation",
 }
 
+#: The typed ``depth:`` term (:func:`agentgrep.query.compile.build_query_from_input`,
+#: the same builder this panel's own query goes through) that reaches the same
+#: rung without opening this panel at all. Teaching it on the row itself means
+#: a keyboard/mouse user who never learns the syntax loses nothing, while one
+#: who reads the row picks it up for next time.
+_DEPTH_OFFER_TYPED_HINTS = {
+    "search.targeted": "depth:targeted",
+    "search.exhaustive": "depth:exhaustive",
+}
+
 _DEPTH_OFFER_LEADS = {
     "search.targeted": "Enter searches prompt history; conversation bodies are not read.",
     "search.exhaustive": "Deep search can omit a conversation.",
 }
 _DEPTH_OFFER_CONFIRMATION_LEAD = "Change the explicit scope to all before searching conversations."
+
+
+def depth_offer_typed_directive(action_id: str) -> str | None:
+    """Return the ``depth:`` term one offered depth action's ``action_id`` types."""
+    return _DEPTH_OFFER_TYPED_HINTS.get(action_id)
 
 
 def format_empty_outcome(summary: RunSummary) -> str:
@@ -130,7 +146,11 @@ def format_depth_offer_rows(
         hint = _DEPTH_OFFER_HINTS.get(action.action_id)
         if hint is None:
             continue
-        rows.append((action.action_id, f"{action.label} — {hint}"))
+        row = f"{action.label} — {hint}"
+        typed = depth_offer_typed_directive(action.action_id)
+        if typed is not None:
+            row = f"{row} (type {typed})"
+        rows.append((action.action_id, row))
     return tuple(rows)
 
 

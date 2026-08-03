@@ -103,8 +103,8 @@ class DepthOfferSelected(Message):
     Attributes
     ----------
     action_id : str
-        Stable :class:`~agentgrep.results.NextAction` identity the layout
-        applies to the query currently in the primary input.
+        Stable :class:`~agentgrep.results.NextAction` identity naming the
+        rung to type into the query currently in the primary input.
     """
 
     def __init__(self, action_id: str) -> None:

@@ -76,7 +76,7 @@ requires every term); it's accepted for rg compatibility.
 
 ## Field registry
 
-The default registry ships seventeen fields, split across two evaluation
+The default registry ships eighteen fields, split across three evaluation
 layers:
 
 ### Source-level fields
@@ -105,6 +105,25 @@ predicate has admitted the source.
 | `model` | string | Substring, or `*` / `?` wildcard, against `record.model` (conversation records only) |
 | `role` | string | Substring or `*` / `?` wildcard against `record.role` (prompt records are always `user`) |
 | `text` | string | Substring or `*` / `?` wildcard (against record text); implicit field for bare positional terms |
+
+### Request-level fields
+
+These carry a request-wide directive rather than a per-source or
+per-record fact — they filter nothing and instead select a read policy
+before the source/record predicates run.
+
+| Field | Kind | Notes |
+|---|---|---|
+| `depth` | enum | One of `prompt`, `targeted`, `deep`, `exhaustive`; alias `effort`. `deep` is a synonym for `targeted` |
+
+`depth:targeted foo` (or `effort:targeted foo`) selects the same read
+policy `--deep`/`/deep` selects, composable with any other predicate in
+one line: `depth:exhaustive scope:all model:gpt* foo`. Negating it or
+combining it with `OR` is a compile error — a request-wide directive has
+no per-record truth value to negate or disjoin. Two `depth:`/`effort:`
+clauses ANDed together must agree on the same effort (`deep` and
+`targeted` count as the same value); disagreeing values are also a
+compile error.
 
 (library-query-language-origin-fields)=
 
@@ -346,9 +365,9 @@ agentgrep grep: error: cannot combine --agent flag with agent: field predicate; 
 ```
 
 Currently checked: `--agent` × `agent:`, `--scope` × `scope:`,
-`--cwd` × `cwd:`, `--repo` × `repo:`, and `--branch` × `branch:`.
-Pick one spelling for each filter so the command has one source of
-truth.
+`--cwd` × `cwd:`, `--repo` × `repo:`, `--branch` × `branch:`, and
+`--deep`/`--exhaustive` × `depth:`/`effort:`. Pick one spelling for each
+filter so the command has one source of truth.
 
 ## Performance
 

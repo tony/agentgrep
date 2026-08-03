@@ -54,7 +54,71 @@ from agentgrep.records import BackendSelection, SearchQuery
 if t.TYPE_CHECKING:
     from agentgrep import events as _events
     from agentgrep._engine.runtime import SearchRuntime
+    from agentgrep.records import SourceHandle
     from agentgrep.results import RunSummary, SearchResult
+
+
+class _DiscoveryAbandonedError(Exception):
+    """Internal signal: discovery was abandoned after a cancellation request."""
+
+
+def _discover_sources_abandoning_if_cancelled(
+    home: pathlib.Path,
+    query: SearchQuery,
+    backends: BackendSelection,
+    *,
+    control: SearchControl,
+) -> list[SourceHandle]:
+    """Run discovery on an abandonable thread; raise :class:`_DiscoveryAbandonedError` if cut short.
+
+    Discovery walks the filesystem for every selected agent's stores and has
+    no cancellation checks of its own — on a slow filesystem bridge (WSL's 9p
+    mount) or a store tree with many entries, it can run long enough that a
+    user's answer-now request needs to interrupt it, not just the scan that
+    follows. Same reasoning as the execution drivers (see
+    ``agentgrep._engine.scheduling``): ``Future.cancel()`` is a documented
+    no-op once discovery has started, so a still-running call can only be
+    abandoned, not cancelled.
+    """
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    abandoned = False
+    try:
+        future = executor.submit(
+            discover_sources_for_search,
+            home,
+            query,
+            backends,
+            version_detail="none",
+        )
+        while True:
+            done, _pending = concurrent.futures.wait(
+                (future,),
+                timeout=0.05,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+            if done:
+                return future.result()
+            if not control.answer_now_requested():
+                continue
+            # A zero-timeout wait separates "genuinely still running" from
+            # "finished in the race between the worker and this check" —
+            # Future.cancel() fails identically for both, and discarding a
+            # real, already-computed result would be worse than waiting the
+            # extra instant this costs.
+            done, _pending = concurrent.futures.wait(
+                (future,),
+                timeout=0,
+                return_when=concurrent.futures.ALL_COMPLETED,
+            )
+            if done:
+                return future.result()
+            abandoned = True
+            raise _DiscoveryAbandonedError
+    finally:
+        # Same reasoning as the execution drivers: an abandoned future is
+        # still running on the executor's own thread, so shutdown(wait=True)
+        # here would reintroduce the exact block this function just avoided.
+        executor.shutdown(wait=not abandoned, cancel_futures=abandoned)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -160,11 +224,11 @@ def iter_search_events(
     routing_plan = None
     try:
         active_backends = select_backends() if backends is None else backends
-        discovered_sources = discover_sources_for_search(
+        discovered_sources = _discover_sources_abandoning_if_cancelled(
             home,
             query,
             active_backends,
-            version_detail="none",
+            control=active_control,
         )
         if validated_request.effort == "targeted":
             from agentgrep._engine.routing import build_targeted_routing_plan
@@ -190,6 +254,44 @@ def iter_search_events(
             control=active_control,
         )
         active_progress.sources_planned(len(plan.tasks), len(sources))
+    except _DiscoveryAbandonedError:
+        from agentgrep.results import RunCoverage, build_search_summary
+
+        elapsed_seconds = time.monotonic() - start_time
+        summary = build_search_summary(
+            query,
+            effort=validated_request.effort,
+            coverage=RunCoverage(
+                sources_discovered=0,
+                sources_eligible=0,
+                sources_planned=0,
+                sources_attempted=0,
+                sources_completed=0,
+                sources_bounded=0,
+                sources_skipped=0,
+                sources_unsupported=0,
+                sources_failed=0,
+                sources_cancelled=0,
+                records_seen=0,
+                matches_seen=0,
+                conversations_eligible=0,
+                conversations_selected=0,
+                conversations_completed=0,
+            ),
+            match_count=0,
+            elapsed_seconds=elapsed_seconds,
+            answer_now=True,
+            cancelled=True,
+        )
+        _finish_progress_with_summary(active_progress, summary)
+        active_progress.close()
+        yield _events.SearchStarted(source_count=0)
+        yield _events.SearchFinished(
+            match_count=0,
+            elapsed_seconds=elapsed_seconds,
+            summary=summary,
+        )
+        return
     except Exception:
         from agentgrep.results import RunCoverage, build_search_summary
 

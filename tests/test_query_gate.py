@@ -42,6 +42,7 @@ from agentgrep._query_gate import (
     _WORD_RE as _GATE_WORD_RE,
     QUERYABLE_FIELD_NAMES,
     has_query_syntax,
+    strip_depth_directive,
     unregistered_field_predicates,
 )
 from agentgrep.query import build_query_from_input, compose_query_ast, default_registry
@@ -419,3 +420,20 @@ def test_query_gate_word_and_ident_regexes_mirror_the_tokenizer() -> None:
     """
     assert _GATE_WORD_RE.pattern == _TOKENIZER_WORD_RE.pattern
     assert _GATE_IDENT_RE.pattern == _TOKENIZER_IDENT_RE.pattern
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("depth:targeted foo", "foo"),
+        ("foo depth:targeted", "foo"),
+        ("foo effort:exhaustive bar", "foo bar"),
+        ("depth:deep", ""),
+        ("foo", "foo"),
+        ('"exact phrase" depth:targeted agent:codex', '"exact phrase" agent:codex'),
+        ("agentgrep-depth:targeted", "agentgrep-depth:targeted"),
+    ],
+)
+def test_strip_depth_directive(text: str, expected: str) -> None:
+    """Removes only a depth:/effort: word; everything else survives verbatim."""
+    assert strip_depth_directive(text) == expected

@@ -50,6 +50,9 @@ class SearchWorkflow:
                 "targeted effort requires conversation or all scope",
             )
             return
+        if query.effort == "prompt" and query.scope != "prompts":
+            host.show_query_error("prompt effort requires prompt scope")
+            return
         host.request_cancel()
         host.record_history(text)
         host.run_search(query)

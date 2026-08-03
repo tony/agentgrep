@@ -313,77 +313,143 @@ class InlineExecutionDriver:
 
         has_more = False
         execution_stop_reason: str | None = None
-        for index, task in enumerate(tasks, start=1):
-            source = task.source
-            if active_control.answer_now_requested():
-                execution_stop_reason = active_control.stop_reason() or "answer_now"
-                break
-            if query.limit is not None and current_count() >= query.limit:
-                execution_stop_reason = "result_limit"
-                break
-            if not source_matches_scope(
-                source,
-                query.scope,
-                effort=_normalized_search_effort(query),
-            ):
-                continue
-            if not source_may_match_query(query, source):
-                continue
-
-            active_progress.source_started(index, total, source)
-            yield ExecutionSourceStarted(index=index, total=total, source=source, task=task)
-
-            result = scanning.scan_source_task(
-                query,
-                task,
-                index=index,
-                total=total,
-                control=active_control,
-                progress=active_progress,
-                runtime=runtime,
-            )
-            active_progress.source_finished(
-                index,
-                total,
-                source,
-                result.records_seen,
-                result.matches_seen,
-            )
-            scanning.record_source_profile_sample(result)
-
-            for record in result.records:
+        # Every source scan runs on this one worker thread rather than on the
+        # owner thread directly: scan_source_task can block for a long time
+        # inside adapter I/O (a large Cursor IDE / VS Code SQLite read), and
+        # unlike FrontierExecutionDriver this driver has no separate executor
+        # to fall back on for scan-ordered, uncapped queries -- the shape
+        # every plain exploratory TUI search compiles to. Future.cancel() is
+        # a documented no-op once the callable has started, so a scan already
+        # running when cancellation fires cannot be cancelled -- only
+        # abandoned, same as the frontier driver below.
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        abandoned = False
+        try:
+            for index, task in enumerate(tasks, start=1):
+                source = task.source
+                if active_control.answer_now_requested():
+                    execution_stop_reason = active_control.stop_reason() or "answer_now"
+                    break
                 if query.limit is not None and current_count() >= query.limit:
-                    previous_count = current_count()
-                    _ = accept_matching_record(record, emit_event=False)
-                    if current_count() > previous_count:
-                        has_more = True
-                        execution_stop_reason = "result_limit"
-                        break
+                    execution_stop_reason = "result_limit"
+                    break
+                if not source_matches_scope(
+                    source,
+                    query.scope,
+                    effort=_normalized_search_effort(query),
+                ):
                     continue
-                emitted = accept_matching_record(record)
-                if emitted is not None:
-                    yield emitted
-            if execution_stop_reason is None and result.stop_reason is not None:
-                execution_stop_reason = (
-                    "result_limit"
-                    if result.stop_reason in {"frontier_limit", "source_limit"}
-                    else result.stop_reason
+                if not source_may_match_query(query, source):
+                    continue
+
+                active_progress.source_started(index, total, source)
+                yield ExecutionSourceStarted(index=index, total=total, source=source, task=task)
+
+                future = executor.submit(
+                    scanning.scan_source_task,
+                    query,
+                    task,
+                    index=index,
+                    total=total,
+                    control=active_control,
+                    progress=active_progress,
+                    runtime=runtime,
                 )
-            if execution_stop_reason is None and active_control.answer_now_requested():
-                execution_stop_reason = active_control.stop_reason() or "answer_now"
-            yield ExecutionSourceFinished(
-                index=index,
-                total=total,
-                source=source,
-                task=task,
-                records_seen=result.records_seen,
-                matches_seen=result.matches_seen,
-                outcome=result.outcome,
-                stop_reason=result.stop_reason,
-                error=result.error,
-            )
-            if result.error is not None:
-                raise result.error
+                result: scanning.SourceScanResult | None = None
+                while result is None:
+                    done, _pending = concurrent.futures.wait(
+                        (future,),
+                        timeout=0.05,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                    if done:
+                        result = future.result()
+                        break
+                    if not active_control.answer_now_requested():
+                        continue
+                    # A zero-timeout wait separates "genuinely still running"
+                    # from "finished in the race between the worker and this
+                    # check" -- Future.cancel() fails identically for both,
+                    # and discarding a real, already-computed result would be
+                    # worse than waiting the extra instant this costs.
+                    done, _pending = concurrent.futures.wait(
+                        (future,),
+                        timeout=0,
+                        return_when=concurrent.futures.ALL_COMPLETED,
+                    )
+                    if done:
+                        result = future.result()
+                        break
+                    abandoned = True
+                    execution_stop_reason = active_control.stop_reason() or "answer_now"
+                    break
+
+                if result is None:
+                    # Abandoned: stop waiting on this source and let it
+                    # finish or error out in the background -- nothing after
+                    # this point reads its result.
+                    active_progress.source_finished(index, total, source, 0, 0)
+                    yield ExecutionSourceFinished(
+                        index=index,
+                        total=total,
+                        source=source,
+                        task=task,
+                        records_seen=0,
+                        matches_seen=0,
+                        outcome=_source_outcome_for_control(active_control),
+                        stop_reason=execution_stop_reason,
+                        error=None,
+                    )
+                    break
+
+                active_progress.source_finished(
+                    index,
+                    total,
+                    source,
+                    result.records_seen,
+                    result.matches_seen,
+                )
+                scanning.record_source_profile_sample(result)
+
+                for record in result.records:
+                    if query.limit is not None and current_count() >= query.limit:
+                        previous_count = current_count()
+                        _ = accept_matching_record(record, emit_event=False)
+                        if current_count() > previous_count:
+                            has_more = True
+                            execution_stop_reason = "result_limit"
+                            break
+                        continue
+                    emitted = accept_matching_record(record)
+                    if emitted is not None:
+                        yield emitted
+                if execution_stop_reason is None and result.stop_reason is not None:
+                    execution_stop_reason = (
+                        "result_limit"
+                        if result.stop_reason in {"frontier_limit", "source_limit"}
+                        else result.stop_reason
+                    )
+                if execution_stop_reason is None and active_control.answer_now_requested():
+                    execution_stop_reason = active_control.stop_reason() or "answer_now"
+                yield ExecutionSourceFinished(
+                    index=index,
+                    total=total,
+                    source=source,
+                    task=task,
+                    records_seen=result.records_seen,
+                    matches_seen=result.matches_seen,
+                    outcome=result.outcome,
+                    stop_reason=result.stop_reason,
+                    error=result.error,
+                )
+                if result.error is not None:
+                    raise result.error
+        finally:
+            # Same reasoning as the frontier driver: an abandoned future is
+            # still running on the executor's own thread, so
+            # shutdown(wait=True) here would reintroduce the exact block
+            # this loop just avoided.
+            executor.shutdown(wait=not abandoned, cancel_futures=abandoned)
 
         for record, state_keys in pending_state_records:
             if any(key in canonical_authority_keys for key in state_keys):

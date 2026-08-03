@@ -51,7 +51,7 @@ from agentgrep.records import (
 )
 
 if t.TYPE_CHECKING:
-    from agentgrep.query import CompiledQuery, FieldEqNode
+    from agentgrep.query import CompiledQuery, FieldEqNode, QueryNode
 
 CaseMode = t.Literal["smart", "ignore", "respect"]
 PatternMode = t.Literal["regex", "fixed", "word"]
@@ -1026,6 +1026,15 @@ def build_docs_parser() -> argparse.ArgumentParser:
     return create_parser("never").parser
 
 
+def _explicit_depth_flag(namespace: argparse.Namespace) -> str | None:
+    """Return the CLI flag name that already selected an effort, if any."""
+    if t.cast("bool", namespace.deep):
+        return "--deep"
+    if t.cast("bool", namespace.exhaustive):
+        return "--exhaustive"
+    return None
+
+
 def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     """Map query-field name → CLI flag name for `search` flag/field collisions."""
     flags: dict[str, str] = {}
@@ -1033,6 +1042,9 @@ def _search_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
         flags["agent"] = "--agent"
     if t.cast("str | None", namespace.scope) is not None:
         flags["scope"] = "--scope"
+    depth_flag = _explicit_depth_flag(namespace)
+    if depth_flag is not None:
+        flags["depth"] = depth_flag
     if t.cast("str", namespace.cwd or "").strip():
         flags["cwd"] = "--cwd"
     if t.cast("str", namespace.repo or "").strip():
@@ -1093,6 +1105,9 @@ def _grep_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
         flags["agent"] = "--agent"
     if t.cast("str | None", namespace.scope) is not None:
         flags["scope"] = "--scope"
+    depth_flag = _explicit_depth_flag(namespace)
+    if depth_flag is not None:
+        flags["depth"] = depth_flag
     return flags
 
 
@@ -1106,37 +1121,12 @@ def _find_explicit_flags(namespace: argparse.Namespace) -> dict[str, str]:
     return flags
 
 
-def _effective_search_scope(
-    namespace: argparse.Namespace,
-    *,
-    query_scope: SearchScope | None,
-) -> SearchScope:
-    """Return the coarse search scope after query-language reconciliation."""
-    explicit = t.cast("SearchScope | None", namespace.scope)
-    if explicit is not None:
-        return explicit
-    if query_scope is None and t.cast("bool", namespace.deep):
-        return "all"
-    return "prompts" if query_scope is None else query_scope
-
-
 def _base_search_scope(namespace: argparse.Namespace) -> SearchScope:
     """Return the interactive scope before query predicates widen discovery."""
     explicit = t.cast("SearchScope | None", namespace.scope)
     if explicit is None and t.cast("bool", namespace.deep):
         return "all"
     return "prompts" if explicit is None else explicit
-
-
-def _effective_scope_provenance(
-    namespace: argparse.Namespace,
-    *,
-    query_scope: SearchScope | None,
-) -> SearchScopeProvenance:
-    """Return whether the effective result scope was explicitly selected."""
-    if t.cast("SearchScope | None", namespace.scope) is not None or query_scope is not None:
-        return "explicit"
-    return "inferred"
 
 
 def _base_scope_provenance(
@@ -1155,39 +1145,89 @@ def _base_search_effort(namespace: argparse.Namespace) -> SearchEffort:
     return "prompt"
 
 
-def _effective_search_effort(
+def _resolve_scope_and_effort(
     namespace: argparse.Namespace,
+    user_ast: QueryNode | None,
     *,
-    scope: SearchScope,
-) -> SearchEffort:
-    """Return the read policy after legacy scope compatibility is applied."""
-    if t.cast("bool", namespace.deep):
-        return "targeted"
-    if t.cast("bool", namespace.exhaustive) or scope != "prompts":
-        return "exhaustive"
-    return "prompt"
+    color_mode: ColorMode,
+    subparser: argparse.ArgumentParser,
+) -> tuple[SearchScope, SearchEffort, SearchScopeProvenance]:
+    """Resolve the effective scope/effort from CLI flags plus an inline directive.
+
+    Delegates to :func:`agentgrep.query.resolve_request_modifiers` — the same
+    resolver :func:`agentgrep.query.build_query_from_input` uses for the TUI
+    search box — so an inline ``scope:``/``depth:``/``effort:`` predicate
+    widens the CLI's flag-derived baseline (:func:`_base_search_scope`,
+    :func:`_base_search_effort`) exactly the way it widens a search-box edit,
+    instead of the CLI keeping its own copy of the ladder.
+
+    Skips importing :mod:`agentgrep.query` entirely when ``user_ast`` is
+    ``None`` (the common bare-term path — no query syntax was present), so a
+    plain ``agentgrep search foo`` never pays for the query package's import
+    cost.
+    """
+    base_scope = _base_search_scope(namespace)
+    base_effort = _base_search_effort(namespace)
+    explicit_scope_flag = t.cast("SearchScope | None", namespace.scope) is not None
+    if user_ast is None:
+        return base_scope, base_effort, ("explicit" if explicit_scope_flag else "inferred")
+    from agentgrep.query import (
+        QueryCompileError,
+        default_registry,
+        fields_in_ast,
+        resolve_request_modifiers,
+    )
+
+    registry = default_registry()
+    try:
+        scope, effort = resolve_request_modifiers(
+            user_ast,
+            registry,
+            base_scope=base_scope,
+            base_effort=base_effort,
+            base_scope_explicit=explicit_scope_flag,
+        )
+    except QueryCompileError as exc:
+        with configured_color_environment(color_mode):
+            subparser.error(f"invalid query: {exc}")
+    provenance: SearchScopeProvenance = (
+        "explicit" if explicit_scope_flag or "scope" in fields_in_ast(user_ast) else "inferred"
+    )
+    return scope, effort, provenance
 
 
 def _targeted_conversation_limit(
     namespace: argparse.Namespace,
     *,
     scope: SearchScope,
+    effort: SearchEffort,
     color_mode: ColorMode,
     subparser: argparse.ArgumentParser,
 ) -> int | None:
-    """Validate and return the CLI targeted conversation-attempt bound."""
+    """Validate scope/effort compatibility and return the targeted work bound.
+
+    Enforces the same two-way contract :func:`_normalize_args_effort` applies
+    to a directly-constructed :class:`SearchArgs`/:class:`GrepArgs` — but
+    here, before construction, so a combination reachable only through an
+    inline ``depth:``/``effort:`` directive (not just ``--deep``/
+    ``--exhaustive``/``--scope``) gets this function's clean
+    ``subparser.error`` message instead of that constructor's defensive
+    ``ValueError`` backstop.
+    """
     value = t.cast("int | None", namespace.conversation_limit)
-    deep = t.cast("bool", namespace.deep)
     if value is not None and value < 1:
         with configured_color_environment(color_mode):
             subparser.error("--conversation-limit must be greater than 0")
-    if value is not None and not deep:
+    if value is not None and effort != "targeted":
         with configured_color_environment(color_mode):
-            subparser.error("--conversation-limit requires --deep")
-    if deep and scope == "prompts":
+            subparser.error("--conversation-limit requires targeted effort")
+    if effort == "targeted" and scope == "prompts":
         with configured_color_environment(color_mode):
-            subparser.error("--deep requires conversation or all scope")
-    if not deep:
+            subparser.error("targeted effort requires conversation or all scope")
+    if effort == "prompt" and scope != "prompts":
+        with configured_color_environment(color_mode):
+            subparser.error("prompt effort requires prompt scope")
+    if effort != "targeted":
         return None
     return DEFAULT_TARGETED_CONVERSATION_LIMIT if value is None else value
 
@@ -1233,18 +1273,21 @@ def _maybe_compile_query(
 ) -> tuple[
     CompiledQuery | None,
     tuple[str, ...],
-    SearchScope | None,
+    QueryNode | None,
     tuple[UnregisteredFieldToken, ...],
 ]:
     """Detect Lucene-style query syntax in positionals and compile if present.
 
-    Returns ``(compiled, residual_terms, query_scope, diagnostics)`` —
+    Returns ``(compiled, residual_terms, user_ast, diagnostics)`` —
     ``compiled`` is ``None`` when no positional contains ``:`` (legacy fast
     path); ``residual_terms`` is the tuple to feed back as the legacy
     ``terms`` / ``patterns`` / ``pattern`` field so the engine's existing
-    text-matching path still has the user's text query. ``query_scope`` is
-    the narrowest discovery scope that can satisfy an inline ``scope:``
-    predicate, or ``None`` when the query has no such predicate.
+    text-matching path still has the user's text query. ``user_ast`` is the
+    user's own parsed query (``None`` when the positionals carried no query
+    syntax) for a caller to resolve scope/effort from via
+    :func:`_resolve_scope_and_effort` — this function no longer resolves them
+    itself, so ``find`` (which has neither concept) pays nothing extra for
+    that reconciliation.
     ``diagnostics`` carries non-fatal warnings for field-predicate-shaped
     positionals whose field isn't registered (e.g. ``kind:prompt`` before
     ``kind`` was a known field) — populated only when the positionals
@@ -1253,17 +1296,19 @@ def _maybe_compile_query(
 
     ``explicit_flags`` maps field name → flag name. When a field also
     has an explicitly-set flag (e.g. ``--agent`` set AND ``agent:``
-    in the query), the parser errors. Pass ``None`` to skip the
-    collision check (the bare-positional fast path).
+    in the query, or ``--deep`` set AND ``depth:`` in the query), the
+    parser errors. Pass ``None`` to skip the collision check (the
+    bare-positional fast path).
 
     ``find_mode`` rejects queries ``find`` cannot faithfully evaluate
-    (record-level field predicates, boolean text composition), since
-    ``find`` only honors the source predicate and a flat path pattern.
+    (record-level and request-level field predicates, boolean text
+    composition), since ``find`` only honors the source predicate and a
+    flat path pattern.
 
     ``extra_nodes`` carries synthetic predicates (generated origin
     filters) that are ANDed with the user terms at the AST level, so
     the terms keep their bare-path semantics. Field collision checks
-    and scope inference cover only the user's own query.
+    cover only the user's own query.
 
     Parse / compile errors route through ``subparser.error()`` so the
     user sees an argparse-shaped message instead of a Python
@@ -1281,7 +1326,6 @@ def _maybe_compile_query(
         default_registry,
         fields_in_ast,
         find_unsupported_reason,
-        scope_widened_for_ast,
     )
 
     registry = default_registry()
@@ -1310,14 +1354,13 @@ def _maybe_compile_query(
         with configured_color_environment(color_mode):
             subparser.error(f"invalid query: {exc}")
     _ = bundle  # kept available for future per-bundle checks
-    query_scope = scope_widened_for_ast(user_ast, "prompts") if "scope" in used_fields else None
     if compiled.is_pure_text:
         # A parsed query that collapses to bare terms (a phrase, or a
         # parenthesized AND of terms) needs no source/record predicate.
         # Return the extracted, unquoted terms so the engine's legacy
         # fast path — and its source-scan cache — stay in play.
-        return None, compiled.text_terms, query_scope, diagnostics
-    return compiled, compiled.text_terms, query_scope, diagnostics
+        return None, compiled.text_terms, user_ast, diagnostics
+    return compiled, compiled.text_terms, user_ast, diagnostics
 
 
 def _check_for_mangled_field_predicate(
@@ -1438,7 +1481,7 @@ def parse_args(
 
     raw_pattern = t.cast("str | None", namespace.pattern)
     find_positionals = [raw_pattern] if raw_pattern is not None else []
-    find_compiled, find_residual, _find_query_scope, find_diagnostics = _maybe_compile_query(
+    find_compiled, find_residual, _find_user_ast, find_diagnostics = _maybe_compile_query(
         find_positionals,
         bundle=bundle,
         color_mode=color_mode,
@@ -1523,7 +1566,7 @@ def _build_grep_args(
         case_mode == "smart"
         and any(any(ch.isupper() for ch in pattern) for pattern in patterns_list_raw)
     )
-    grep_compiled, residual_patterns, grep_query_scope, grep_diagnostics = _maybe_compile_query(
+    grep_compiled, residual_patterns, grep_user_ast, grep_diagnostics = _maybe_compile_query(
         patterns_list_raw,
         bundle=bundle,
         color_mode=color_mode,
@@ -1594,13 +1637,16 @@ def _build_grep_args(
     else:
         heading = None
 
-    scope = _effective_search_scope(
+    scope, effort, scope_provenance = _resolve_scope_and_effort(
         namespace,
-        query_scope=grep_query_scope,
+        grep_user_ast,
+        color_mode=color_mode,
+        subparser=bundle.grep_parser,
     )
     conversation_limit = _targeted_conversation_limit(
         namespace,
         scope=scope,
+        effort=effort,
         color_mode=color_mode,
         subparser=bundle.grep_parser,
     )
@@ -1627,11 +1673,8 @@ def _build_grep_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
-        effort=_effective_search_effort(namespace, scope=scope),
-        scope_provenance=_effective_scope_provenance(
-            namespace,
-            query_scope=grep_query_scope,
-        ),
+        effort=effort,
+        scope_provenance=scope_provenance,
         base_scope_provenance=_base_scope_provenance(namespace),
         conversation_limit=conversation_limit,
         style=t.cast("GrepStyle", namespace.style),
@@ -1677,7 +1720,7 @@ def _build_search_args(
             )
 
     origin_nodes, origin_boost, origin_filter = _build_search_origin_nodes(namespace)
-    search_compiled, residual_terms, search_query_scope, search_diagnostics = _maybe_compile_query(
+    search_compiled, residual_terms, search_user_ast, search_diagnostics = _maybe_compile_query(
         terms_list,
         bundle=bundle,
         color_mode=color_mode,
@@ -1694,13 +1737,16 @@ def _build_search_args(
         ),
     )
 
-    scope = _effective_search_scope(
+    scope, effort, scope_provenance = _resolve_scope_and_effort(
         namespace,
-        query_scope=search_query_scope,
+        search_user_ast,
+        color_mode=color_mode,
+        subparser=bundle.search_parser,
     )
     conversation_limit = _targeted_conversation_limit(
         namespace,
         scope=scope,
+        effort=effort,
         color_mode=color_mode,
         subparser=bundle.search_parser,
     )
@@ -1713,11 +1759,8 @@ def _build_search_args(
         output_mode=output_mode,
         color_mode=color_mode,
         progress_mode=t.cast("ProgressMode", namespace.progress),
-        effort=_effective_search_effort(namespace, scope=scope),
-        scope_provenance=_effective_scope_provenance(
-            namespace,
-            query_scope=search_query_scope,
-        ),
+        effort=effort,
+        scope_provenance=scope_provenance,
         base_scope_provenance=_base_scope_provenance(namespace),
         conversation_limit=conversation_limit,
         threshold=threshold,

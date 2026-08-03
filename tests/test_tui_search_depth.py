@@ -89,6 +89,54 @@ def _idle_query() -> SearchQuery:
     )
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("layout_name", registry.layout_names())
+async def test_typed_depth_starts_a_targeted_run_without_a_prior_offer(
+    tmp_path: pathlib.Path,
+    layout_name: str,
+) -> None:
+    """Reach targeted effort by typing ``depth:`` directly, skipping the offer panel.
+
+    Unlike :func:`test_idle_canvas_depth_offer_starts_a_targeted_run`, no
+    click or arrow-key selection is involved — the box's own text carries the
+    request, through the same :func:`~agentgrep.query.build_query_from_input`
+    every layout's search box already calls; no TUI-local wrapper is needed.
+    """
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(
+            tmp_path,
+            _idle_query(),
+            control=SearchControl(),
+            layout=layout_name,
+        ),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
+        assert layout._run_summary is None
+
+        layout._search_input.load_query("depth:targeted needle")
+        layout._search_input.focus()
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert layout.search_query.terms == ("needle",)
+        summary = layout._run_summary
+        assert summary is not None
+        assert summary.requested_effort == "targeted"
+        assert summary.request.scope == "all"
+
+        # The typed token stays request-local: the next plain edit is back
+        # at the launch policy, exactly like a slash-command escalation.
+        rebuilt = layout.build_query("other")
+        assert rebuilt.effort == "prompt"
+        assert rebuilt.scope == "prompts"
+
+
 async def test_idle_canvas_depth_offer_starts_a_targeted_run(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -127,12 +175,42 @@ async def test_idle_canvas_depth_offer_starts_a_targeted_run(
         assert summary is not None
         assert summary.requested_effort == "targeted"
         assert summary.request.scope == "all"
+        assert layout._search_input.value == "needle depth:targeted"
         # Starting the search hides the idle canvas; focus must land back on
         # the input or every following keystroke is silently discarded.
         assert app.focused is layout._search_input
         # The escalation stays request-local: the next plain edit is prompt
         # effort again at the launch scope.
         assert layout.build_query("needle").effort == "prompt"
+
+
+async def test_depth_offer_click_replaces_an_already_typed_directive(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Selecting a further rung replaces, rather than doubles, the box's own directive."""
+    app = t.cast(
+        "t.Any",
+        build_streaming_ui_app(tmp_path, _idle_query(), control=SearchControl()),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        layout = app.screen
+        await pilot.pause()
+
+        layout._search_input.load_query("needle depth:targeted")
+        await pilot.pause()
+        rows = format_depth_offer_rows(layout.pending_depth_actions())
+        assert [action_id for action_id, _ in rows] == ["search.exhaustive"]
+
+        offer = layout.query_one("#empty-depth", DepthOffer)
+        await pilot.click(offer, offset=(2, 1))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        summary = layout._run_summary
+        assert summary is not None
+        assert summary.requested_effort == "exhaustive"
+        assert layout._search_input.value == "needle depth:exhaustive"
 
 
 class _StubInput:
@@ -451,8 +529,17 @@ def test_idle_depth_offer_matches_engine_authored_actions() -> None:
         "Enter searches prompt history; conversation bodies are not read."
     )
     assert format_depth_offer_rows(actions) == (
-        ("search.targeted", "Deep search — read the conversations selected from prompt evidence"),
-        ("search.exhaustive", "Search all conversations — read every readable conversation"),
+        (
+            "search.targeted",
+            (
+                "Deep search — read the conversations selected from prompt evidence "
+                "(type depth:targeted)"
+            ),
+        ),
+        (
+            "search.exhaustive",
+            "Search all conversations — read every readable conversation (type depth:exhaustive)",
+        ),
     )
 
 
@@ -1040,3 +1127,89 @@ def test_targeted_prompt_query_stays_editable_without_dispatch(
 
     assert not search_input.has_class("-error")
     assert search_input.value == "needle"
+
+
+@pytest.mark.parametrize("layout_name", registry.layout_names())
+def test_prompt_broad_scope_query_stays_editable_without_dispatch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    layout_name: str,
+) -> None:
+    """The symmetric contradiction (``depth:prompt`` + explicit broad scope) also blocks dispatch.
+
+    Mirrors ``test_targeted_prompt_query_stays_editable_without_dispatch``:
+    an explicitly-selected scope leaves ``resolve_request_modifiers``'
+    prompt-narrowing reconciliation off, so this combination still reaches
+    ``SearchWorkflow.on_query`` and must be rejected there instead of
+    dispatched.
+    """
+    query = SearchQuery(
+        terms=("initial",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("codex",),
+        limit=None,
+        effort="exhaustive",
+        scope_provenance="explicit",
+    )
+    control = SearchControl()
+    ctx = UiContext(
+        home=tmp_path,
+        invoker=t.cast("t.Any", object()),
+        query=query,
+        control=control,
+        base_scope="all",
+        base_effort="exhaustive",
+        base_scope_provenance="explicit",
+        base_conversation_limit=None,
+    )
+    layout_spec = registry.layout_spec(layout_name)
+    workflow_spec = registry.workflow_spec("search")
+    assert layout_spec is not None
+    assert workflow_spec is not None
+    workflow = workflow_spec.loader()()
+    layout = t.cast("t.Any", layout_spec.loader()(ctx, workflow))
+    invalid_text = "needle depth:prompt"
+    search_input = _QueryErrorInput(invalid_text)
+    layout._search_input = search_input
+    if layout_name == "greplog":
+        layout._status = types.SimpleNamespace(update=lambda _message: None)
+        monkeypatch.setattr(layout, "_update_command_completion", lambda _value: False)
+        monkeypatch.setattr(layout, "_hide_command_completion", lambda: None)
+    else:
+        monkeypatch.setattr(layout, "_update_search_dropdown", lambda _value: None)
+        monkeypatch.setattr(layout, "_set_results_view", lambda _state: None)
+    notices: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        layout,
+        "notify",
+        lambda message, *, title, severity: notices.append(
+            (message, title, severity),
+        ),
+    )
+    side_effects: list[str] = []
+    monkeypatch.setattr(layout, "request_cancel", lambda: side_effects.append("cancel"))
+    monkeypatch.setattr(
+        layout,
+        "record_history",
+        lambda _text: side_effects.append("history"),
+    )
+    monkeypatch.setattr(
+        layout,
+        "run_search",
+        lambda _query: side_effects.append("worker"),
+    )
+
+    workflow.on_query(layout, invalid_text)
+
+    assert side_effects == []
+    assert notices == [
+        (
+            "prompt effort requires prompt scope",
+            "Invalid query",
+            "error",
+        ),
+    ]
+    assert search_input.has_class("-error")
