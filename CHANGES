@@ -42,6 +42,31 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Control search depth with `depth:`/`effort:`
+
+`depth:targeted`, `depth:exhaustive`, and the `effort:` alias now work
+as typed search text, the same way `scope:all` already does, instead
+of requiring `--deep`/`--exhaustive` flags or the MCP `effort=`
+parameter. Conflicting or malformed combinations (`depth:targeted
+effort:exhaustive`, a `depth:` term under `NOT`) are rejected before a
+search runs. In the TUI, the depth-offer panel now shows and types the
+matching `depth:` term when clicked, so the syntax is discoverable
+without leaving the keyboard. See {ref}`library-query-language` for
+details. (#158)
+
+### Fixes
+
+#### Ctrl-C now stops a slow exhaustive search
+
+Previously, cancelling an exhaustive-effort search (`--exhaustive`,
+`/exhaustive`, or the new `depth:exhaustive`) could leave the TUI
+stuck while one especially large or slow store was still being read —
+sometimes for over a minute, with no way to interrupt it. Ctrl-C now
+stops the search immediately, whether it's still discovering which
+stores to search or already reading one. (#158)
+
 ## agentgrep 0.1.0a48 (2026-08-02)
 
 agentgrep 0.1.0a48 makes the query language and the idle canvas more
