@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a49 (Yet to be released)
+## agentgrep 0.1.0a50 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a49 (2026-08-03)
+
+agentgrep 0.1.0a49 unifies search-depth control and fixes a long-
+standing responsiveness gap. `depth:targeted`/`depth:exhaustive` and
+the `effort:` alias now work as typed search text across the CLI,
+MCP, and TUI, the same way `scope:all` already does — see
+{ref}`library-query-language` for details. Ctrl-C also now reliably
+cancels an exhaustive search stuck reading a large or slow store,
+instead of leaving the TUI unresponsive until that read finishes on
+its own.
 
 ### What's new
 
