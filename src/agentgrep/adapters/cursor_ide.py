@@ -112,13 +112,23 @@ def _cursor_worktree_origin(
     ``worktreePath`` is the absolute working directory the composer session ran
     in and ``branchName`` is a whole-value branch name. Neither key is one of
     :data:`_ORIGIN_MAPPING_KEYS`, so the generic walk never sees them.
+
+    The path fills ``cwd`` *and* ``worktree``. Cursor writes ``gitWorktree``
+    only for a linked checkout it created — never for an ordinary clone — so
+    the block is itself the evidence that this session ran in a worktree, and
+    the two fields answer different questions about the same directory:
+    ``cwd:`` asks where the session ran, ``worktree:`` asks whether it ran in a
+    worktree at all. Cursor IDE is the only store that records this, so
+    without the second assignment the ``worktree`` query field has no producer.
     """
     worktree = mapping.get("gitWorktree")
     if not isinstance(worktree, dict):
         return fallback
     worktree_map = t.cast("dict[str, object]", worktree)
+    worktree_path = _path_like_str(worktree_map.get("worktreePath"))
     return _record_origin(
-        cwd=_path_like_str(worktree_map.get("worktreePath")),
+        cwd=worktree_path,
+        worktree=worktree_path,
         branch=as_optional_str(worktree_map.get("branchName")),
         fallback=fallback,
     )
@@ -181,18 +191,24 @@ def _iter_cursor_composer_candidates(
     *,
     key: str,
     fallback_origin: RecordOrigin | None,
+    fallback_model: str | None = None,
 ) -> cabc.Iterator[MessageCandidate]:
     """Yield the turns of one ``composerData:`` or ``bubbleId:`` record.
 
     The model, working directory, and branch live on the enclosing document, so
     they are threaded down onto every turn it holds; a ``bubbleId:`` record is
     itself the turn, so the document is offered as one too.
+
+    A ``bubbleId:`` record is a *sibling* row of its ``composerData:`` document
+    rather than a child of it, so it cannot see that document's ``gitWorktree``
+    block or model on its own. ``fallback_origin`` and ``fallback_model`` carry
+    them across from :func:`_cursor_composer_context`.
     """
     if not isinstance(parsed, dict):
         return
     document = t.cast("dict[str, object]", parsed)
     origin = _cursor_worktree_origin(document, fallback=fallback_origin)
-    model = _cursor_nested_model(document)
+    model = _cursor_nested_model(document) or fallback_model
     conversation_id = as_optional_str(document.get("composerId")) or _cursor_composer_id(key) or key
     bubbles: list[object] = [document]
     conversation = document.get("conversation")
@@ -220,6 +236,60 @@ def _iter_cursor_composer_candidates(
         )
 
 
+def _cursor_composer_context(
+    connection: sqlite3.Connection,
+    table: str,
+) -> dict[str, tuple[RecordOrigin | None, str | None]]:
+    """Map each composer id to the origin and model on its session document.
+
+    Cursor splits a session across sibling ``cursorDiskKV`` rows: one
+    ``composerData:<id>`` document holding the session-level facts, and one
+    ``bubbleId:<id>:<turn>`` row per turn holding the text. **No composer
+    document carries its turns inline** — they are headers-only — so the
+    ``gitWorktree`` block and ``modelConfig`` on the document reach no record
+    unless they are collected first and threaded onto the bubbles.
+
+    This pre-pass is what makes ``cwd``, ``branch``, ``worktree``, and the
+    session model reachable for Cursor IDE at all. It costs one extra scan of
+    the composer rows, which are a small fraction of the bubble rows.
+
+    Parameters
+    ----------
+    connection : sqlite3.Connection
+        Open read-only connection to ``state.vscdb``.
+    table : str
+        Key/value table to scan, normally ``cursorDiskKV``.
+
+    Returns
+    -------
+    dict[str, tuple[RecordOrigin | None, str | None]]
+        Composer id mapped to its ``(origin, model)`` pair. Composers with
+        neither are omitted so the caller falls back to the source origin.
+    """
+    context: dict[str, tuple[RecordOrigin | None, str | None]] = {}
+    for key, raw_value in iter_key_value_rows(
+        connection,
+        table,
+        exact_keys=(),
+        key_prefixes=("composerData:",),
+    ):
+        composer_id = _cursor_composer_id(key)
+        if composer_id is None:
+            continue
+        decoded = decode_sqlite_value(raw_value)
+        if decoded is None:
+            continue
+        parsed = parse_embedded_json(decoded)
+        if not isinstance(parsed, dict):
+            continue
+        document = t.cast("dict[str, object]", parsed)
+        origin = _cursor_worktree_origin(document, fallback=None)
+        model = _cursor_nested_model(document)
+        if origin is not None or model is not None:
+            context[composer_id] = (origin, model)
+    return context
+
+
 def parse_cursor_state_db(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -237,6 +307,11 @@ def parse_cursor_state_db(
         tables = sqlite_table_names(connection)
         candidate_tables = [name for name in ("ItemTable", "cursorDiskKV") if name in tables]
         source_origin = _cursor_workspace_origin(source)
+        composer_context = (
+            _cursor_composer_context(connection, "cursorDiskKV")
+            if "cursorDiskKV" in candidate_tables
+            else {}
+        )
         seen: set[tuple[str | None, str, str | None, str | None]] = set()
         for table in candidate_tables:
             for key, raw_value in iter_key_value_rows(
@@ -252,14 +327,20 @@ def parse_cursor_state_db(
                 if parsed is None:
                     continue
                 is_composer = key.startswith(_CURSOR_COMPOSER_KEY_PREFIXES)
-                conversation_key = (_cursor_composer_id(key) if is_composer else None) or key
+                composer_id = _cursor_composer_id(key) if is_composer else None
+                conversation_key = composer_id or key
                 candidate_iters: list[cabc.Iterator[MessageCandidate]] = []
                 if is_composer:
+                    session_origin, session_model = composer_context.get(
+                        composer_id or "",
+                        (None, None),
+                    )
                     candidate_iters.append(
                         _iter_cursor_composer_candidates(
                             parsed,
                             key=key,
-                            fallback_origin=source_origin,
+                            fallback_origin=session_origin or source_origin,
+                            fallback_model=session_model,
                         ),
                     )
                 candidate_iters.append(
