@@ -11,7 +11,7 @@ plans, and skills. For searchable Antigravity history, reach for
 
 Base path: `~/.gemini/antigravity` (no observed env override).
 
-`observed_version`: Google Antigravity IDE (observed 2026-06-21).
+`observed_version`: `Antigravity 1.104.0` (observed 2026-08-08).
 
 Antigravity IDE is documented as its own backend instead of being folded
 into Gemini CLI.

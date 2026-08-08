@@ -126,7 +126,7 @@ is separately request-bounded, and routing evidence never establishes a result.
 
 ### Claude Code
 
-`observed_version`: ``claude-code v2.1.185`` (observed 2026-06-21).
+`observed_version`: ``claude-code v2.1.226`` (observed 2026-08-08).
 
 Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
 Its global prompt-history audit log lives at
@@ -202,7 +202,7 @@ because they have disjoint data homes and on-disk formats.
 
 ### Codex
 
-`observed_version`: ``github.com/openai/codex@3fb81667`` (2026-06-21).
+`observed_version`: ``codex-cli 0.147.0`` (observed 2026-08-08).
 Codex honours `CODEX_HOME` for primary files. SQLite files resolve
 through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
 `CODEX_HOME`.
@@ -221,10 +221,16 @@ Schemas are pinned directly to the upstream Rust types:
 
 The `_N.sqlite` files belong to the Codex CLI, not Cursor. Known
 SQLite stores are `state_5.sqlite`, `logs_2.sqlite`,
-`memories_1.sqlite`, and `goals_1.sqlite`. Prompt-bearing fields such
-as `threads.first_user_message`, `threads.preview`, memory summaries,
-goal objectives, and job instructions are inspectable storage rather
-than default search.
+`memories_1.sqlite`, `goals_1.sqlite`, `thread_history_1.sqlite`, and
+`queue_1.sqlite`. Prompt-bearing fields such as
+`threads.first_user_message`, `threads.preview`, memory summaries, and
+goal objectives are inspectable storage rather than default search.
+
+The numeric suffix is a schema generation, so a bumped file name is a
+rename agentgrep must follow rather than a variant it can glob past.
+`agent_jobs` no longer exists — `state_5.sqlite` reached migration 46
+and migration 42 is named *drop agent jobs* — so job instructions are
+no longer a Codex storage surface at all.
 Codex source version detection uses `shape_inference` for
 `history.jsonl`, legacy `history.json`, legacy root rollout JSON,
 `session_index.jsonl`, external import ledgers, memory Markdown,
@@ -238,9 +244,9 @@ present in Codex session metadata.
 
 ### Gemini CLI
 
-`observed_version`: ``gemini-cli v0.47.0`` stable (observed
-2026-06-21); types pinned at HEAD `927170fc`. Three adapters cover the
-three on-disk shapes:
+`observed_version`: ``gemini-cli v0.54.4`` (observed 2026-08-08); types
+pinned at HEAD `927170fc`. Three adapters cover the three on-disk
+shapes:
 
 - `gemini.tmp_chats_jsonl.v1` parses
   `tmp/<project_hash>/chats/session-*.jsonl`. Each file opens with
@@ -273,8 +279,13 @@ an inspectable (opt-in) store rather than searched by default.
 
 Gemini's
 [`sessionCleanup.ts`](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/cli/src/utils/sessionCleanup.ts)
-hard-deletes expired sessions via `fs.unlink()` — there is no
-`history/` archive. The Antigravity files some installs carry under
+hard-deletes expired sessions via `fs.unlink()`, so an expired session
+is gone rather than archived. `~/.gemini/history/` is a *different*
+tree and does exist: it is the checkpointing shadow-git root, one
+directory per project holding a `.project_root` marker and, where
+checkpointing ran, a full `.git/`. It holds file snapshots, not
+transcripts, and no store row covers it. The Antigravity files some
+installs carry under
 `~/.gemini/antigravity/conversations/` are written by the
 [Antigravity IDE](https://github.com/google-gemini/gemini-cli/blob/927170fc/packages/core/src/ide/detect-ide.ts),
 a separate Google product — Gemini CLI only detects Antigravity as
@@ -283,14 +294,25 @@ conversation files. They are documented as the separate
 {doc}`/backends/antigravity-ide` and {doc}`/backends/antigravity-cli`
 backends, not as Gemini adapters.
 
-The `project_hash` is `sha256(absolute_project_root)`. agentgrep
-exposes a Python mirror via
-{func}`~agentgrep.store_catalog.gemini_project_hash` so the CLI can
-answer "which Gemini sessions belong to *this* repo?".
+The `project_hash` was `sha256(absolute_project_root)`, and
+{func}`~agentgrep.store_catalog.gemini_project_hash` mirrors that
+derivation. Newer releases name most project directories after a
+slugified basename or a run stamp instead, so the helper answers
+"which Gemini directory holds this repo?" only for the hash-named
+share of a tree — 38 of 142 directories in the sample this catalogue
+was observed against. `projects.json` is the registry that maps every
+absolute project root to its directory name under both `tmp/` and
+`history/`, and it is the reverse lookup that still covers the whole
+tree.
+
+Because a slug is not a digest, `gemini.tmp_logs` and its siblings
+publish `origin.cwd_hash` only when the directory name has a digest
+shape. See {ref}`adr-storage-version-detection` for why the concrete
+shape wins over an app-version hint.
 
 ### Grok CLI
 
-`observed_version`: ``grok-cli v0.2.59`` (observed 2026-06-21).
+`observed_version`: ``grok 1.0.0`` (observed 2026-08-08).
 
 Grok stores data under `${GROK_HOME or ${HOME}/.grok}/sessions/`
 using URL-encoded absolute project paths as directory keys
@@ -328,7 +350,7 @@ all carrying no user prompt payload and catalogued with
 
 ### Pi
 
-`observed_version`: ``pi v0.79.9`` (observed 2026-06-21).
+`observed_version`: ``pi v0.84.1`` (observed 2026-08-08).
 
 Pi (earendil-works) stores each conversation as one append-only JSONL
 file under `${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/`,
@@ -363,7 +385,7 @@ log, and the npm extension install root.
 
 ### OpenCode
 
-`observed_version`: ``opencode v1.17.9`` (observed 2026-06-21).
+`observed_version`: ``opencode v1.18.15`` (observed 2026-08-08).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database under `${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/`,
@@ -385,12 +407,20 @@ prefilter. An absolute `OPENCODE_DB` value is discovered as that exact
 file, so channel installs are reachable by pointing `OPENCODE_DB` at
 their `opencode-<channel>.db`.
 
-OpenCode's unreleased v2 event-sourced tables (`session_input`,
-`session_message`, `event`/`event_sequence`, `todo`) share the same
-`opencode.db` file but are empty beta state on stable installs — the
-canonical transcript stays in `session`/`message`/`part` — so they are
-not searched. The secret-bearing `account`/`credential` tables are
-present but never enumerated.
+OpenCode's v2 event-sourced tables share the same `opencode.db` file.
+`session_input`, `session_message`, and `todo` are still empty on
+stable installs, but `event`/`event_sequence` are now populated and
+mirror the `part` transcript rather than replacing it — every event
+aggregate resolves to a session that already has `part` rows — so the
+canonical transcript stays in `session`/`message`/`part` and the event
+tables are left unsearched to avoid duplicate hits. The secret-bearing
+`account`/`credential` tables are present but never enumerated.
+
+OpenCode also writes a prompt-history log outside its data root, at
+`${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl`.
+Each line is `{input, parts, mode}` with no timestamp and no session
+id. It is not a duplicate of the database: prompts recalled there can
+be absent from `opencode.db` entirely.
 
 Documentary-only entries cover the legacy per-file JSON layout, config,
 auth (private credentials), snapshots, the repo cache, logs, and tool
@@ -398,8 +428,7 @@ output.
 
 ### VS Code (GitHub Copilot Chat)
 
-`observed_version`: ``VS Code GitHub Copilot Chat (chatSessions v3)``
-(observed 2026-06-21).
+`observed_version`: ``VS Code 1.132.0`` (observed 2026-08-08).
 
 VS Code's built-in Copilot Chat stores readable JSON transcripts under
 the workbench `User/` directory, covered across the `Code`,

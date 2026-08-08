@@ -10,7 +10,7 @@ route this backend.
 
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
-`observed_version`: `pi v0.79.9` (observed 2026-06-21).
+`observed_version`: `pi v0.84.1` (observed 2026-08-08).
 
 pi (the earendil-works "Pi Agent Harness") groups transcripts by
 working directory. The directory key is the cwd with its leading slash
