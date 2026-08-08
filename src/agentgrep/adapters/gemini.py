@@ -19,6 +19,7 @@ from agentgrep.adapters._generic import (
     parse_text_store_file,
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec
+from agentgrep.origin import origin_cwd_hash
 from agentgrep.readers import (
     as_optional_str,
     iter_jsonl,
@@ -129,6 +130,38 @@ def _gemini_message_record_to_candidate(
 _GEMINI_PROJECT_ROOT_FILE = ".project_root"
 
 
+GEMINI_PROJECT_HASH_LENGTH: int = 64
+"""Hex width of Gemini's project hash (``sha256`` of the absolute project root)."""
+
+
+def _gemini_cwd_hash(project_dir: pathlib.Path) -> str | None:
+    """Return the project directory name as a ``cwd_hash``, when it is one.
+
+    Gemini used to name every ``tmp/`` directory after
+    ``sha256(absolute_project_root)``. Newer releases name most of them after a
+    slugified project basename (``agentgrep``, ``libtmux``) or a run-scoped
+    stamp, and both schemes coexist with the old hashes in one tree. Passing
+    the bare directory name through would publish ``cwd_hash: agentgrep`` — a
+    searchable digest no agent ever wrote, which is precisely what
+    :func:`~agentgrep.origin.is_cwd_digest` exists to prevent.
+
+    A non-digest name is not a loss: the literal working directory still
+    arrives through the sibling ``.project_root`` file, and a session's own
+    metadata record carries a real ``projectHash`` when the store wrote one.
+
+    Parameters
+    ----------
+    project_dir : pathlib.Path
+        The ``tmp/<project>`` directory owning this source.
+
+    Returns
+    -------
+    str or None
+        The directory name when it has a sha256 digest shape, else ``None``.
+    """
+    return origin_cwd_hash(project_dir.name, length=GEMINI_PROJECT_HASH_LENGTH)
+
+
 def _gemini_project_root_cwd(project_dir: pathlib.Path) -> str | None:
     """Resolve the literal cwd of a Gemini ``tmp/<project_hash>/`` directory.
 
@@ -187,7 +220,7 @@ def parse_gemini_chat_file(
     project_dir = source.path.parent.parent
     session_origin: RecordOrigin | None = _record_origin(
         cwd=_gemini_project_root_cwd(project_dir),
-        cwd_hash=project_dir.name,
+        cwd_hash=_gemini_cwd_hash(project_dir),
     )
     for event in iter_jsonl(source.path):
         if not isinstance(event, dict):
@@ -238,7 +271,7 @@ def parse_gemini_chat_legacy_file(
         container,
         fallback=_record_origin(
             cwd=_gemini_project_root_cwd(project_dir),
-            cwd_hash=project_dir.name,
+            cwd_hash=_gemini_cwd_hash(project_dir),
         ),
     )
     messages = container.get("messages")
@@ -270,7 +303,7 @@ def parse_gemini_logs_file(
     project_dir = source.path.parent
     origin = _record_origin(
         cwd=_gemini_project_root_cwd(project_dir),
-        cwd_hash=project_dir.name,
+        cwd_hash=_gemini_cwd_hash(project_dir),
     )
     entries = payload if isinstance(payload, list) else []
     for entry in entries:
