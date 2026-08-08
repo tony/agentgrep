@@ -12,6 +12,15 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
+_GEMINI_OBSERVED_VERSION = "gemini-cli v0.54.4"
+"""App version the Gemini CLI rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="gemini",
@@ -23,7 +32,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.jsonl"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/"
@@ -75,7 +84,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/checkpoint-<tag>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L29"
@@ -95,7 +104,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_ARRAY,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/logs.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L21"
@@ -131,7 +140,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/"
@@ -175,7 +184,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/skills/",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Skill definitions; not chat.",
         search_by_default=False,
@@ -187,7 +196,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/settings.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Configuration; not chat.",
         search_by_default=False,
@@ -199,7 +208,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/GEMINI.md",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes=(
             "Global user-authored context/memory Markdown injected into Gemini "
@@ -234,7 +243,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "tool-outputs/session-<id>/<name>.txt"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes=(
             "Per-tool-call output text (run_shell_command / read_file / "

@@ -11,6 +11,15 @@ from agentgrep.stores import (
     StoreRole,
 )
 
+_ANTIGRAVITY_IDE_OBSERVED_VERSION = "Antigravity 1.104.0"
+"""App version the antigravity-ide rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="antigravity-ide",
@@ -18,7 +27,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity/conversations/<conversation_uuid>.pb",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Per-conversation transcripts as loose `.pb` files. The observed "
@@ -39,7 +48,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity/implicit/<conversation_uuid>.pb",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Implicit/background conversation captures as loose `.pb` files, "
@@ -57,7 +66,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity/brain/**/*.md",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Markdown planning and memory artifacts, not prompt recall.",
         search_by_default=False,
@@ -80,7 +89,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity/brain/<uuid>/task.md.resolved",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Expanded task Markdown (`task.md.resolved` plus numbered "
@@ -107,7 +116,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.INSTRUCTION,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${HOME}/.gemini/antigravity/skills/**/*.md",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Markdown skill definitions and instructions, not conversation history.",
         search_by_default=False,
@@ -130,7 +139,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity/user_settings.pb",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Protobuf user settings. Configuration, not chat content.",
         search_by_default=False,
@@ -141,7 +150,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.gemini/antigravity/mcp_config.json",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="MCP server configuration. Configuration, not chat content.",
         search_by_default=False,
@@ -152,7 +161,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SOURCE_TREE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.antigravity-server/",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Local IDE server state and binaries. Not conversation history.",
         search_by_default=False,
@@ -163,7 +172,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.CACHE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.cache/antigravity/staging/",
-        observed_version="Google Antigravity IDE (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Staging cache files. Cache state, not conversation history.",
         search_by_default=False,

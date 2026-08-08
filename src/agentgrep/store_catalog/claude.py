@@ -14,6 +14,15 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
+_CLAUDE_OBSERVED_VERSION = "claude-code v2.1.226"
+"""App version the Claude Code rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="claude",
@@ -22,7 +31,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/history.jsonl",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Global prompt history JSONL. Each line carries `display`, "
@@ -66,7 +75,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         upstream_ref="code.claude.com/docs/en/changelog",
         schema_notes=(
@@ -110,7 +119,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>/subagents/<agent>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Same JSONL line format as the parent session. Each file is one sub-agent "
@@ -149,7 +158,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/memory/*.md"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Markdown files with YAML frontmatter; the auto-memory feature. Each file "
@@ -184,7 +193,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "project roots/{CLAUDE.md,.claude.md}"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Persistent user and project memory Markdown loaded into Claude Code. "
@@ -224,7 +233,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/tasks/<task_list>/<task_id>.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Claude Code task JSON with `id`, `subject`, `description`, `status`, "
@@ -255,7 +264,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/todos/*.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Persistent todo lists keyed by agent UUID.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -283,7 +292,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/sessions/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Shell environment snapshots; rarely contains conversation text.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -307,7 +316,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/__store.db",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "SQLite conversation/app state. Observed tables include "
@@ -334,7 +343,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plans/*.md",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Markdown plans stored under the configured Claude Code root. "
@@ -364,7 +373,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/workflows/scripts/<name>.js"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Orchestration-workflow driver scripts emitted by the Workflow "
@@ -393,7 +402,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/usage-data/facets/<session>.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Claude Code's own derived per-session reflection summaries. The "
@@ -425,7 +434,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/session-memory/summary.md"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Per-session memory summary Markdown plus optional session-memory "
@@ -453,7 +462,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{settings*.json,keybindings.json}",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "User configuration, local overrides, keybindings, policy limits, "
@@ -491,7 +500,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/.credentials.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Authentication and account credentials. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
@@ -504,7 +513,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{.last-*,.last-update-result.json}",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Update and cleanup marker files; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -527,7 +536,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/stats-cache.json",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Cached usage and statistics state; not conversation content.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -550,7 +559,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/debug/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Debug output and diagnostics. Catalogued separately from transcripts.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -574,7 +583,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/backups/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Backup files retained by Claude Code; opaque inventory only.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -587,7 +596,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/cache/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="General cache directory; not a prompt/history source.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -600,7 +609,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/file-history/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Content-addressed file-history backups referenced by transcript "
@@ -616,7 +625,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/shell-snapshots/*.sh",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Shell integration snapshots; runtime state rather than prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -640,7 +649,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/image-cache/<session>/<image>",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Base64/image payload cache for pasted image references.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -653,7 +662,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/context-mode/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Context-mode counters and local app state, sometimes backed by SQLite.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -679,7 +688,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{security/,security_warnings_state_*.json}"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Security warning and repository baseline state.",
         coverage=StoreCoverage.PRIVATE,
@@ -692,7 +701,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/skills/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="User and managed skill instructions loaded into Claude Code behavior.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -721,7 +730,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/commands/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Legacy custom slash-command Markdown loaded through the skill loader.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -750,7 +759,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/<known_project_root>/.claude/{commands,agents,skills}/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Project-local commands, agents, and skills. Roots are bounded to "
@@ -805,7 +814,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/teams/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Team config JSON with member prompts and coordination metadata.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -833,7 +842,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/session-env/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Environment state captured for active or resumed sessions.",
         coverage=StoreCoverage.PRIVATE,
@@ -846,7 +855,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/ide/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="IDE integration state and bridge metadata.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -870,7 +879,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/chrome/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Claude-in-Chrome native-host and browser bridge state.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -894,7 +903,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/local/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Native installer and local binary-management state.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -918,7 +927,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/jobs/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Background job state and metadata, summarized without raw values.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -942,7 +951,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/uploads/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Attachment upload staging; documented as opaque cache inventory.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -955,7 +964,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/paste-cache/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes="Transient clipboard staging.",
         search_by_default=False,
@@ -967,7 +976,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/cache/",
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.185",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Installed plugin bundles. Manifest, command, agent, skill, and hook "
@@ -1047,7 +1056,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<repo>/<plugin>/{agents,commands,skills}/<name>.md"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
-        observed_version="claude-code v2.1.200",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=datetime.date(2026, 7, 3),
         schema_notes=(
             "Cloned plugin-marketplace repos under "

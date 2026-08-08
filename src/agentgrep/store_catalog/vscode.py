@@ -11,6 +11,15 @@ from agentgrep.stores import (
     StoreRole,
 )
 
+_VSCODE_OBSERVED_VERSION = "VS Code 1.132.0"
+"""App version the VS Code rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _VSCODE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="vscode",
@@ -28,7 +37,7 @@ _VSCODE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Code/User/workspaceStorage/<hash>/chatSessions/<uuid>.jsonl",
         },
         env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
-        observed_version="VS Code GitHub Copilot Chat (chatSessions v3)",
+        observed_version=_VSCODE_OBSERVED_VERSION,
         observed_at=_VSCODE_OBSERVED_AT,
         upstream_ref="agentgrep.parse_vscode_chat_session",
         schema_notes=(
@@ -104,7 +113,7 @@ _VSCODE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Code/User/globalStorage/state.vscdb",
         },
         env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
-        observed_version="VS Code GitHub Copilot Chat (inline-chat-history)",
+        observed_version=_VSCODE_OBSERVED_VERSION,
         observed_at=_VSCODE_OBSERVED_AT,
         upstream_ref="agentgrep.parse_vscode_inline_history",
         schema_notes=(
@@ -140,7 +149,7 @@ _VSCODE_STORES: tuple[StoreDescriptor, ...] = (
             "${HOME}/.config/Code/User/workspaceStorage/<hash>/chatEditingSessions/<sessionId>/"
         ),
         env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
-        observed_version="VS Code GitHub Copilot Chat (chatEditingSessions)",
+        observed_version=_VSCODE_OBSERVED_VERSION,
         observed_at=_VSCODE_OBSERVED_AT,
         schema_notes=(
             "Per-chat working-set snapshots written when a Copilot Chat turn edits "
@@ -161,7 +170,7 @@ _VSCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.config/Code/User/globalStorage/state.vscdb",
         env_overrides=("VSCODE_APPDATA", "AGENTGREP_WSL_USERS_ROOT"),
-        observed_version="VS Code GitHub Copilot Chat (state.vscdb secrets)",
+        observed_version=_VSCODE_OBSERVED_VERSION,
         observed_at=_VSCODE_OBSERVED_AT,
         schema_notes=(
             "The same global `state.vscdb` holds `secret://...` keys with provider "
