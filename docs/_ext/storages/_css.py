@@ -21,6 +21,7 @@ class StorageCSS:
     CATALOG_SUMMARY = "gp-sphinx-storage__catalog-summary"
     CATALOG_SUMMARY_CARD = "gp-sphinx-storage__catalog-summary-card"
     KEY_VALUE = "gp-sphinx-storage__key-value"
+    RECORD_SHAPE = "gp-sphinx-storage__record-shape"
     CHIP_LIST = "gp-sphinx-storage__chip-list"
     STORE_LINK_LIST = "gp-sphinx-storage__store-link-list"
     STORE_LINK_ITEM = "gp-sphinx-storage__store-link-item"

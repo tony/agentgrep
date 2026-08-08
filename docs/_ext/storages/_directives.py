@@ -21,6 +21,7 @@ from sphinx_ux_autodoc_layout import (
 from ._badges import build_store_badge_group
 from ._css import StorageCSS
 from ._domain import StorageDomain
+from ._observations import UNKNOWN_VERSION, WILDCARD_BUCKET
 from ._utils import (
     literal_paragraph,
     markup_body,
@@ -35,6 +36,8 @@ if t.TYPE_CHECKING:
     from collections.abc import Sequence
 
     from agentgrep.stores import StoreCatalog, StoreDescriptor
+
+    from ._observations import AgentObservation, ObservedShape
 
 _AGENT_LABELS: dict[str, str] = {
     "antigravity-cli": "Antigravity CLI",
@@ -155,6 +158,54 @@ def _key_value_section(rows: Sequence[ApiFactRow]) -> nodes.Element:
     )
 
 
+def _observed_shape_block(
+    observation: AgentObservation,
+    shape: ObservedShape,
+) -> nodes.container:
+    """Build the observed-record-shape block for one store card.
+
+    Schema only: the discriminator, the key set per discriminator value, and
+    SQLite tables. Source and record counts describe the observing machine, so
+    they never reach the page.
+    """
+    rows = [
+        ApiFactRow(
+            "Keys" if bucket == WILDCARD_BUCKET else bucket,
+            _literal_chip_list(keys),
+        )
+        for bucket, keys in shape.record_keys
+    ]
+    rows.extend(
+        ApiFactRow(f"{table} columns", _literal_chip_list(columns))
+        for table, columns in shape.tables
+    )
+
+    heading = "Record keys"
+    if shape.discriminator:
+        heading = f"Record keys by {shape.discriminator}"
+    if shape.tables and not shape.record_keys:
+        heading = "SQLite tables"
+    # An unreadable app version says nothing; date alone is the honest stamp.
+    stamp = observation.observed_at
+    if observation.app_version != UNKNOWN_VERSION:
+        stamp = f"{observation.app_version}, {observation.observed_at}"
+
+    block = nodes.container(classes=[StorageCSS.RECORD_SHAPE])
+    block += nodes.rubric("", f"{heading} observed ({stamp})")
+    block += _key_value_section(rows)
+    return block
+
+
+def _note_observation_dependencies(directive: SphinxDirective) -> None:
+    """Make this page depend on every manifest.
+
+    Sphinx then re-reads it when one is edited or deleted, without any extra
+    state of our own.
+    """
+    for path in _storage_domain(directive).observations.paths:
+        directive.env.note_dependency(str(path))
+
+
 def _card_shell(entry: nodes.Element, *, classes: Sequence[str]) -> nodes.container:
     """Wrap a shared API card entry in a card shell container."""
     card = nodes.container(classes=[API.CARD_SHELL, *classes])
@@ -164,11 +215,12 @@ def _card_shell(entry: nodes.Element, *, classes: Sequence[str]) -> nodes.contai
 
 def _store_card(directive: SphinxDirective, store: StoreDescriptor) -> nodes.section:
     """Build one gp-sphinx card for a storage descriptor."""
+    domain = _storage_domain(directive)
     node_id = store_target_id(store.store_id)
     section = nodes.section(ids=[node_id])
     section["classes"].extend((StorageCSS.STORE_SECTION, API.CARD_SHELL))
 
-    _storage_domain(directive).note_object(
+    domain.note_object(
         "store",
         store.store_id,
         node_id,
@@ -211,6 +263,11 @@ def _store_card(directive: SphinxDirective, store: StoreDescriptor) -> nodes.sec
         ),
         _key_value_section(facts),
     ]
+    # One dictionary lookup: the manifest tree was read once on
+    # ``builder-inited``, whatever number of cards this page renders.
+    observed = domain.observations.observed(store.agent, store.store_id)
+    if observed is not None:
+        content_nodes.append(_observed_shape_block(*observed))
     if store.search_notes:
         content_nodes.append(
             build_api_section(
@@ -425,6 +482,8 @@ class StorageAgentDirective(SphinxDirective):
             title=_AGENT_LABELS.get(agent, agent),
         )
 
+        _note_observation_dependencies(self)
+
         # The domain advertises this id in objects.inv, so some node has to
         # carry it. Without the anchor the entry still resolves for intersphinx
         # and then lands nowhere on the page.
@@ -461,6 +520,7 @@ class StorageStoreDirective(SphinxDirective):
                     line=self.lineno,
                 ),
             ]
+        _note_observation_dependencies(self)
         return [_store_card(self, store)]
 
 
