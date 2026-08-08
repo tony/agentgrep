@@ -37,13 +37,25 @@ if t.TYPE_CHECKING:
     from agentgrep.stores import StoreCatalog, StoreDescriptor
 
 _AGENT_LABELS: dict[str, str] = {
+    "antigravity-cli": "Antigravity CLI",
+    "antigravity-ide": "Antigravity IDE",
     "claude": "Claude",
     "codex": "Codex",
     "cursor-cli": "Cursor CLI",
     "cursor-ide": "Cursor IDE",
     "gemini": "Gemini",
     "grok": "Grok",
+    "opencode": "OpenCode",
+    "pi": "Pi",
+    "vscode": "VS Code",
+    "windsurf": "Windsurf",
 }
+"""Display label per agent id.
+
+Every catalogue agent needs one: the fallback is :meth:`str.title`, which
+writes ``Opencode`` into published HTML without failing.
+``tests/test_storage_agent_labels.py`` holds that line.
+"""
 
 
 _SUPPORT_GROUP_LABELS = (
