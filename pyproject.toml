@@ -74,7 +74,7 @@ dev = [
   # Sphinx, but pinned here so the lexer and its test stay importable.
   "pygments",
   # Lint / typecheck
-  "ruff>=0.16.0",
+  "ruff>=0.16.1",
   "ty>=0.0.58",
   # scripts/mcp_swap.py is a PEP 723 standalone with `tomlkit` as its only
   # third-party dependency. Keep tomlkit in the dev group so the module remains
