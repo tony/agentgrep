@@ -45,7 +45,7 @@ may be absent in older (v1) files.
 ```json
 {"type": "session", "version": 3, "id": "019e5691-...",
  "timestamp": "2026-05-23T20:41:01.417Z",
- "cwd": "/home/d/work/python/agentgrep"}
+ "cwd": "/home/you/work/project"}
 ```
 
 Every later line is a `SessionEntry` sharing `id` / `parentId` /
