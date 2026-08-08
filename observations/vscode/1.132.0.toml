@@ -1,0 +1,93 @@
+manifest_version = 1
+unclaimed = [
+    { path_pattern = "${HOME}/.config/Code/User/keybindings.json", kind = "file" },
+    { path_pattern = "${HOME}/.config/Code/User/settings.json", kind = "file" },
+]
+
+[agent]
+id = "vscode"
+app_version = "1.132.0"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 37
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "vscode.chat_sessions"
+path_pattern = "${HOME}/.config/Code/User/workspaceStorage/<hash>/chatSessions/<uuid>.jsonl"
+role = "primary_chat"
+format = "json_object"
+has_discovery = true
+source_count = 27
+discovers_as = [
+    "vscode.chat_sessions",
+]
+records_sampled = 64
+
+[store.record_keys]
+"*" = [
+    "attachments",
+    "contrib",
+    "creationDate",
+    "customTitle",
+    "hasPendingEdits",
+    "i",
+    "initialLocation",
+    "inputState",
+    "inputText",
+    "isImported",
+    "k",
+    "kind",
+    "lastMessageDate",
+    "mode",
+    "requesterAvatarIconUri",
+    "requesterUsername",
+    "requests",
+    "responderAvatarIconUri",
+    "responderUsername",
+    "selectedModel",
+    "selections",
+    "sessionId",
+    "v",
+    "version",
+]
+
+[[store]]
+id = "vscode.inline_history"
+path_pattern = "${HOME}/.config/Code/User/globalStorage/state.vscdb"
+role = "prompt_history"
+format = "sqlite"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "vscode.inline_history",
+]
+
+[store.tables]
+ItemTable = [
+    "key",
+    "value",
+]
+cursorDiskKV = [
+    "key",
+    "value",
+]
+
+[[store]]
+id = "vscode.editing_sessions"
+path_pattern = "${HOME}/.config/Code/User/workspaceStorage/<hash>/chatEditingSessions/<sessionId>/"
+role = "source_tree"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "vscode.auth"
+path_pattern = "${HOME}/.config/Code/User/globalStorage/state.vscdb"
+role = "app_state"
+format = "sqlite"
+has_discovery = false
+source_count = 0

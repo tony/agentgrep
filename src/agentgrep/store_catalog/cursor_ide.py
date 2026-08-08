@@ -5,10 +5,21 @@ from __future__ import annotations
 from agentgrep.store_catalog._common import _CURSOR_IDE_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
+    StoreCoverage,
     StoreDescriptor,
     StoreFormat,
     StoreRole,
+    VersionDetectionStrategy,
 )
+
+_CURSOR_IDE_OBSERVED_VERSION = "Cursor IDE 3.15.6"
+"""App version the Cursor IDE rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
 
 _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
@@ -22,7 +33,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/globalStorage/state.vscdb",
         },
         env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
-        observed_version="Cursor IDE (current observed paths)",
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
         observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / Cursor state key selectors"),
         schema_notes=(
@@ -76,7 +87,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/workspaceStorage/<hash>/state.vscdb",
         },
         env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
-        observed_version="Cursor IDE (current observed paths)",
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
         observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / Cursor state key selectors"),
         schema_notes=(
@@ -104,5 +115,62 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
                 root_key="ide_workspace",
             ),
         ),
+    ),
+    StoreDescriptor(
+        agent="cursor-ide",
+        store_id="cursor-ide.composer_headers",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.config/Cursor/User/globalStorage/state.vscdb",
+        platform_variants={
+            "darwin": "${HOME}/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+            "win32": "%APPDATA%/Cursor/User/globalStorage/state.vscdb",
+        },
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
+        schema_notes=(
+            "A third table in the same `state.vscdb` as `ItemTable` and "
+            "`cursorDiskKV`, holding one row per session: `composerHeaders("
+            "composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, "
+            "isSubagent, recency, checkpointAt, value)`. The `value` JSON carries "
+            "session identity and origin — `name`, `isWorktree`, `trackedGitRepos`, "
+            "`agentLocation`, `workspaceIdentifier`, `referencedPlans`. Notably it "
+            "lists sessions that have neither a `composerData:` nor a `bubbleId:` "
+            "row, which no other store can see at all; the readers gate to "
+            "`ItemTable` and `cursorDiskKV`, so nothing opens this table today."
+        ),
+        distinguishes_from=("cursor-ide.state_vscdb",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.SHAPE_INFERENCE,),
+    ),
+    StoreDescriptor(
+        agent="cursor-ide",
+        store_id="cursor-ide.conversation_search",
+        role=StoreRole.CACHE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${HOME}/.config/Cursor/User/globalStorage/conversation-search.db",
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Cursor/User/globalStorage/"
+                "conversation-search.db"
+            ),
+            "win32": "%APPDATA%/Cursor/User/globalStorage/conversation-search.db",
+        },
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
+        schema_notes=(
+            "Cursor's own FTS5 index over conversation bodies, beside "
+            "`state.vscdb`. `conversations(fts_rowid, source, scope, id, title, "
+            "updated_at, is_archived, root_fingerprint, cache_fingerprint)` with "
+            "`source` constrained to `local` or `cloud-cache`, plus a virtual "
+            "`conversation_fts(title, body)` using unicode61. Derived data — the "
+            "bodies also live in `cursorDiskKV` — so it is catalogued as a cache "
+            "rather than a transcript, and searching it would duplicate hits."
+        ),
+        distinguishes_from=("cursor-ide.state_vscdb",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.SHAPE_INFERENCE,),
     ),
 )

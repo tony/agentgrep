@@ -12,6 +12,15 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
+_CODEX_OBSERVED_VERSION = "codex-cli 0.147.0"
+"""App version the Codex rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _CODEX_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="codex",
@@ -20,7 +29,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/history.jsonl",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/message-history/src/lib.rs#L56"),
         schema_notes=(
@@ -69,7 +78,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl"
         ),
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/protocol/src/protocol.rs#L2929"),
         schema_notes=(
@@ -122,7 +131,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/session_index.jsonl",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@3fb81667/codex-rs/rollout/src/session_index.rs",
         schema_notes=(
@@ -154,7 +163,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/state_5.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@3fb81667/codex-rs/state/src/lib.rs#L95",
         schema_notes=(
@@ -187,7 +196,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/logs_2.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@3fb81667/codex-rs/state/src/lib.rs#L92",
         schema_notes=(
@@ -220,7 +229,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/memories_1.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "SQLite memory pipeline state. Observed tables include `stage1_outputs` "
@@ -246,12 +255,85 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="codex",
+        store_id="codex.thread_history_db",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.SQLITE,
+        path_pattern=(
+            "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/thread_history_1.sqlite"
+        ),
+        env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "SQLite projection of the rollout transcript. `thread_items(thread_id, "
+            "turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type, "
+            "updated_at_ordinal)` carries the turn payload, with a partial index "
+            "`idx_thread_items_user_messages` on `item_type = 'userMessage'`. "
+            "`thread_turns` adds `first_user_item_id`, `final_agent_item_id`, and "
+            "`rollout_byte_offset`. Documented, not searched: the same turns are "
+            "already read from `codex.sessions`, so parsing both would double every "
+            "hit. The byte offset makes this the index a targeted route would use."
+        ),
+        distinguishes_from=("codex.sessions",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.queue_db",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/queue_1.sqlite",
+        env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Pending user turns not yet sent. `queued_items(id, thread_id, "
+            "payload_json, queue_order, created_at_ms, updated_at_ms)` with a unique "
+            "index on `(thread_id, queue_order)`. `payload_json` holds prompt text, "
+            "so the store is prompt-bearing, but a queued turn is one the user has "
+            "not committed to; it is documented rather than searched."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.attachments",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${CODEX_HOME or ${HOME}/.codex}/attachments/<attachment_uuid>/pasted-text-<n>.txt"
+        ),
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Plain-text spillover for pastes too large to inline in a turn, one "
+            "directory per attachment id. The directory name is an attachment id, "
+            "not a thread id, so an attachment does not name the session that used "
+            "it. Parity with `cursor-cli.uploads`."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+    ),
+    StoreDescriptor(
+        agent="codex",
         store_id="codex.goals_db",
         role=StoreRole.PLAN,
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/goals_1.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "SQLite goal tracker with `thread_goals(objective, status, "
@@ -283,7 +365,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/external_agent_session_imports.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@3fb81667/codex-rs/external-agent-sessions/src/ledger.rs",
         schema_notes=(
@@ -314,7 +396,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/instructions.md",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="User-level Codex instructions loaded into new sessions.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -336,7 +418,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/memories/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Persistent memory workspace: `MEMORY.md`, `memory_summary.md`, "
@@ -368,7 +450,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/{config.toml,*.toml}",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Codex TOML configuration, including optional `sqlite_home`. "
@@ -410,7 +492,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/{config.toml.bak*,config.toml.backup-*}",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Historical config backups. Catalogued separately from active config.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -441,7 +523,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/auth.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Authentication state. Documented but never enumerated or searched.",
         coverage=StoreCoverage.PRIVATE,
@@ -454,7 +536,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/installation_id",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Stable local installation identifier. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
@@ -467,7 +549,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/secrets/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Local secret store. Documented but never enumerated or searched.",
         coverage=StoreCoverage.PRIVATE,
@@ -480,7 +562,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/.env",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Environment file for local runtime configuration. Private inventory only.",
         coverage=StoreCoverage.PRIVATE,
@@ -493,7 +575,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/update-check.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Update-check cache metadata; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -516,7 +598,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/version.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Local app-version cache used as an inventory hint.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -539,7 +621,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/.personality_migration",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Migration marker for Codex personality defaults; not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -562,7 +644,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/models_cache.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Cached model metadata: client version, ETag, fetch time, and models.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -585,7 +667,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/internal_storage.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Small app flags and migration markers.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -608,7 +690,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/plugins/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Installed plugin bundles, commands, skills, and cached metadata.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -692,7 +774,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/plugins/**/marketplace.json",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Plugin marketplace metadata for installed or project-local plugin roots. "
@@ -724,7 +806,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/skills/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="User-level Codex skill instructions.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -753,7 +835,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/rules/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="User-defined rule files that can affect agent behavior.",
         coverage=StoreCoverage.INSPECTABLE,
@@ -795,7 +877,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "${HOME}/<known_project_root>/.codex/hooks.json"
         ),
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Hook configuration JSON. User/project hook shape is summarized without "
@@ -835,7 +917,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/<known_project_root>/.codex/config.toml",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Project-local Codex configuration discovered only from roots already "
@@ -867,7 +949,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/<known_project_root>/.codex/skills/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Project-local Codex skill Markdown from known project roots. Kept "
@@ -900,7 +982,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/policy/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Policy state and downloaded policy metadata.",
         coverage=StoreCoverage.PRIVATE,
@@ -913,7 +995,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/{cache,tmp,.tmp,sqlite}/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Runtime cache and temporary files. The `sqlite/` subdir is a "
@@ -931,7 +1013,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/tmp/arg0/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Arg0 runtime coordination state, summarized without raw values.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -955,7 +1037,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/*.sqlite-{wal,shm}",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="SQLite WAL/SHM sidecars for Codex databases.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -968,7 +1050,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/log/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
             "Runtime log files. Search the structured logs DB only by explicit inspection."
@@ -994,7 +1076,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/process_manager/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Process-manager state for background jobs.",
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -1018,7 +1100,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/shell_snapshots/",
         env_overrides=("CODEX_HOME",),
-        observed_version="github.com/openai/codex@3fb81667 (2026-06-21)",
+        observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes="Shell/runtime snapshots, not prompt history.",
         coverage=StoreCoverage.CATALOG_ONLY,

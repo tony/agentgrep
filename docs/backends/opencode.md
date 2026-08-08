@@ -3,14 +3,18 @@
 # OpenCode
 
 OpenCode is a SQLite-backed conversation backend. agentgrep reconstructs turns
-from the relational session/message/part tables. Because OpenCode has no
-dedicated prompt-history store, `--exhaustive` is required for user text;
-assistant and reasoning parts additionally require conversation scope.
-Targeted effort cannot route this backend.
+from the relational session/message/part tables. No searched store carries a
+fast prompt log, so `--exhaustive` is required for user text; assistant and
+reasoning parts additionally require conversation scope. Targeted effort
+cannot route this backend.
+
+OpenCode does write a prompt-history log, but outside its data root — at
+`${XDG_STATE_HOME:-~/.local/state}/opencode/prompt-history.jsonl` — and no
+store row covers that path yet, so it does not shorten the search today.
 
 Base path: `~/.local/share/opencode` (env overrides: `XDG_DATA_HOME`, `OPENCODE_DB`).
 
-`observed_version`: `opencode v1.17.9` (observed 2026-06-21).
+`observed_version`: `opencode v1.18.15` (observed 2026-08-08).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database, `opencode.db`, under its XDG data directory

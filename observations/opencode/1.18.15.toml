@@ -1,0 +1,422 @@
+manifest_version = 1
+
+[agent]
+id = "opencode"
+app_version = "1.18.15"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 37
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "opencode.db"
+path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/opencode.db"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "opencode.db",
+]
+
+[store.tables]
+__drizzle_migrations = [
+    "id",
+    "hash",
+    "created_at",
+    "name",
+    "applied_at",
+]
+account = [
+    "id",
+    "email",
+    "url",
+    "access_token",
+    "refresh_token",
+    "token_expiry",
+    "time_created",
+    "time_updated",
+]
+account_state = [
+    "id",
+    "active_account_id",
+    "active_org_id",
+]
+control_account = [
+    "email",
+    "url",
+    "access_token",
+    "refresh_token",
+    "token_expiry",
+    "active",
+    "time_created",
+    "time_updated",
+]
+credential = [
+    "id",
+    "integration_id",
+    "label",
+    "value",
+    "connector_id",
+    "method_id",
+    "active",
+    "time_created",
+    "time_updated",
+]
+data_migration = [
+    "name",
+    "time_completed",
+]
+event = [
+    "id",
+    "aggregate_id",
+    "seq",
+    "type",
+    "data",
+]
+event_sequence = [
+    "aggregate_id",
+    "seq",
+    "owner_id",
+]
+message = [
+    "id",
+    "session_id",
+    "time_created",
+    "time_updated",
+    "data",
+]
+migration = [
+    "id",
+    "time_completed",
+]
+part = [
+    "id",
+    "message_id",
+    "session_id",
+    "time_created",
+    "time_updated",
+    "data",
+]
+permission = [
+    "id",
+    "project_id",
+    "action",
+    "resource",
+    "time_created",
+    "time_updated",
+]
+project = [
+    "id",
+    "worktree",
+    "vcs",
+    "name",
+    "icon_url",
+    "icon_color",
+    "time_created",
+    "time_updated",
+    "time_initialized",
+    "sandboxes",
+    "commands",
+    "icon_url_override",
+]
+project_directory = [
+    "project_id",
+    "directory",
+    "type",
+    "strategy",
+    "time_created",
+]
+session = [
+    "id",
+    "project_id",
+    "parent_id",
+    "slug",
+    "directory",
+    "title",
+    "version",
+    "share_url",
+    "summary_additions",
+    "summary_deletions",
+    "summary_files",
+    "summary_diffs",
+    "revert",
+    "permission",
+    "time_created",
+    "time_updated",
+    "time_compacting",
+    "time_archived",
+    "workspace_id",
+    "path",
+    "agent",
+    "model",
+    "cost",
+    "tokens_input",
+    "tokens_output",
+    "tokens_reasoning",
+    "tokens_cache_read",
+    "tokens_cache_write",
+    "metadata",
+]
+session_context_epoch = [
+    "session_id",
+    "baseline",
+    "snapshot",
+    "baseline_seq",
+]
+session_input = [
+    "id",
+    "session_id",
+    "prompt",
+    "delivery",
+    "admitted_seq",
+    "promoted_seq",
+    "time_created",
+]
+session_message = [
+    "id",
+    "session_id",
+    "type",
+    "time_created",
+    "time_updated",
+    "data",
+    "seq",
+]
+session_share = [
+    "session_id",
+    "id",
+    "secret",
+    "url",
+    "time_created",
+    "time_updated",
+]
+todo = [
+    "session_id",
+    "content",
+    "status",
+    "priority",
+    "position",
+    "time_created",
+    "time_updated",
+]
+workspace = [
+    "id",
+    "type",
+    "name",
+    "branch",
+    "directory",
+    "extra",
+    "project_id",
+    "time_used",
+]
+
+[[store]]
+id = "opencode.storage_legacy"
+path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/storage/{session,message,part}/**/*.json"
+role = "primary_chat"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.prompt_history"
+path_pattern = "${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl"
+role = "prompt_history"
+format = "jsonl"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.config"
+path_pattern = "${XDG_CONFIG_HOME or ${HOME}/.config}/opencode/opencode.{json,jsonc}"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.auth"
+path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/auth.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.snapshots"
+path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/snapshot/"
+role = "source_tree"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.repos"
+path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/repos/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.logs"
+path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/log/"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.tool_output"
+path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/tool-output/"
+role = "cache"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[unclaimed]]
+path_pattern = "${HOME}/.local/share/opencode/storage/migration"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.local/share/opencode/storage/session_diff"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/.gitignore"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/agents"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/commands"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/package-lock.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/package.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/agents/.gitkeep"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/commands/.gitkeep"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/.bin"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/.package-lock.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/@msgpackr-extract"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/@opencode-ai"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/@standard-schema"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/cross-spawn"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/detect-libc"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/effect"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/fast-check"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/find-my-way-ts"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/ini"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/isexe"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/kubernetes-types"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/msgpackr"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/msgpackr-extract"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/multipasta"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/node-gyp-build-optional-packages"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/path-key"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/pure-rand"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/shebang-command"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/shebang-regex"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/toml"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/uuid"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/which"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/yaml"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.config/opencode/node_modules/zod"
+kind = "dir"

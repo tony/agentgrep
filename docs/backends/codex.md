@@ -14,7 +14,7 @@ Base path: `~/.codex` (env override: `CODEX_HOME`).
 SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
 `config.toml`, then `CODEX_HOME`.
 
-`observed_version`: `github.com/openai/codex@3fb81667` (2026-06-21).
+`observed_version`: `codex-cli 0.147.0` (observed 2026-08-08).
 
 ## Stores
 

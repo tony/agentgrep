@@ -1,0 +1,101 @@
+manifest_version = 1
+unclaimed = [
+    { path_pattern = "${HOME}/.gemini/antigravity/browserAllowlist.txt", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity/code_tracker", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity/context_state", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity/installation_id", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity/code_tracker/active", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity/code_tracker/history", kind = "dir" },
+]
+
+[agent]
+id = "antigravity-ide"
+app_version = "unknown"
+version_source = "unknown"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 37
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "antigravity-ide.conversations"
+path_pattern = "${HOME}/.gemini/antigravity/conversations/<conversation_uuid>.pb"
+role = "primary_chat"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-ide.implicit"
+path_pattern = "${HOME}/.gemini/antigravity/implicit/<conversation_uuid>.pb"
+role = "supplementary_chat"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-ide.brain"
+path_pattern = "${HOME}/.gemini/antigravity/brain/**/*.md"
+role = "plan"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "antigravity-ide.brain",
+]
+
+[[store]]
+id = "antigravity-ide.brain_resolved"
+path_pattern = "${HOME}/.gemini/antigravity/brain/<uuid>/task.md.resolved"
+role = "plan"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "antigravity-ide.brain_resolved",
+]
+
+[[store]]
+id = "antigravity-ide.skills"
+path_pattern = "${HOME}/.gemini/antigravity/skills/**/*.md"
+role = "instruction"
+format = "md_frontmatter"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "antigravity-ide.skills",
+]
+
+[[store]]
+id = "antigravity-ide.user_settings"
+path_pattern = "${HOME}/.gemini/antigravity/user_settings.pb"
+role = "app_state"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-ide.mcp_config"
+path_pattern = "${HOME}/.gemini/antigravity/mcp_config.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-ide.server"
+path_pattern = "${HOME}/.antigravity-server/"
+role = "source_tree"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-ide.cache"
+path_pattern = "${HOME}/.cache/antigravity/staging/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0

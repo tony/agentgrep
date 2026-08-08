@@ -12,7 +12,82 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
+_GEMINI_OBSERVED_VERSION = "gemini-cli v0.54.4"
+"""App version the Gemini CLI rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
+    StoreDescriptor(
+        agent="gemini",
+        store_id="gemini.projects_registry",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/projects.json",
+        env_overrides=("GEMINI_CLI_HOME",),
+        observed_version=_GEMINI_OBSERVED_VERSION,
+        observed_at=_GEMINI_OBSERVED_AT,
+        schema_notes=(
+            '`{"projects": {<absolute_project_root>: <directory_name>}}` — the '
+            "registry mapping each project to the directory Gemini chose for it "
+            "under both `tmp/` and `history/`. It is the only lookup that covers "
+            "every naming scheme: `gemini_project_hash` reproduces the sha256 "
+            "scheme alone, and most directories are now basename slugs or run "
+            "stamps. No prompt text, but the reverse index a project-scoped "
+            "query wants."
+        ),
+        distinguishes_from=("gemini.tmp.chats",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.SHAPE_INFERENCE,),
+    ),
+    StoreDescriptor(
+        agent="gemini",
+        store_id="gemini.history",
+        role=StoreRole.SOURCE_TREE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/history/<project>/",
+        env_overrides=("GEMINI_CLI_HOME",),
+        observed_version=_GEMINI_OBSERVED_VERSION,
+        observed_at=_GEMINI_OBSERVED_AT,
+        schema_notes=(
+            "Checkpointing shadow-git root, one directory per project holding a "
+            "`.project_root` marker and, where checkpointing has run, a full "
+            "`.git/`. File snapshots for restore, not conversation: despite the "
+            "name it is not an archive of expired sessions, which "
+            "`sessionCleanup.ts` hard-deletes. Catalogued so the name does not "
+            "mislead a future adapter into reading it as prompt history."
+        ),
+        distinguishes_from=("gemini.tmp.chats", "gemini.tmp.checkpoints"),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+    ),
+    StoreDescriptor(
+        agent="gemini",
+        store_id="gemini.worktrees",
+        role=StoreRole.SOURCE_TREE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="<project_root>/.gemini/worktrees/<name>",
+        observed_version=_GEMINI_OBSERVED_VERSION,
+        observed_at=_GEMINI_OBSERVED_AT,
+        schema_notes=(
+            "Git worktrees created by `-w/--worktree` behind the "
+            "`experimental.worktrees` setting, checked out inside the repository "
+            "on a branch named `worktree-<name>` — the same convention as "
+            "`claude.worktrees`. No index file; a worktree gets its own hashed "
+            "`tmp/` directory with no pointer back, so `projects.json` is the "
+            "only mapping. Catalogued so the adapter never indexes a working "
+            "tree as chat."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+    ),
     StoreDescriptor(
         agent="gemini",
         store_id="gemini.tmp.chats",
@@ -23,7 +98,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.jsonl"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/"
@@ -75,7 +150,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/checkpoint-<tag>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L29"
@@ -95,7 +170,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_ARRAY,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/logs.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/packages/core/src/core/logger.ts#L21"
@@ -131,7 +206,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "session-<timestamp><id>.json"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         upstream_ref=(
             "github.com/google-gemini/gemini-cli@927170fc/"
@@ -175,7 +250,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/skills/",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Skill definitions; not chat.",
         search_by_default=False,
@@ -187,7 +262,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/settings.json",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes="Configuration; not chat.",
         search_by_default=False,
@@ -199,7 +274,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${GEMINI_CLI_HOME or ${HOME}/.gemini}/GEMINI.md",
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes=(
             "Global user-authored context/memory Markdown injected into Gemini "
@@ -234,7 +309,7 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
             "tool-outputs/session-<id>/<name>.txt"
         ),
         env_overrides=("GEMINI_CLI_HOME",),
-        observed_version="gemini-cli v0.47.0 stable",
+        observed_version=_GEMINI_OBSERVED_VERSION,
         observed_at=_GEMINI_OBSERVED_AT,
         schema_notes=(
             "Per-tool-call output text (run_shell_command / read_file / "
