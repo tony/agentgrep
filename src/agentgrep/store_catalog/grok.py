@@ -228,9 +228,13 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         schema_notes=(
             "Persistent memory Markdown managed by Grok's memory system. Covers "
             "the flat `memory/MEMORY.md` and the per-project "
-            "`memory/<project_hash>/MEMORY.md` subtree; the companion "
-            "`index.sqlite` FTS index of the same content is not separately "
-            "enumerated. Inspectable opt-in."
+            "`memory/<project-slug>-<hash8>/MEMORY.md` subtree. The companion "
+            "`index.sqlite` is not separately enumerated; it is a chunk store "
+            "(`chunks`) with both an FTS5 mirror (`chunks_fts`) and a "
+            "sqlite-vec embedding index (`chunks_vec`), not an FTS index "
+            "alone. Grok derives the directory name from the git remote URL, "
+            "so every clone and worktree of one repository shares a memory "
+            "directory. Inspectable opt-in."
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
