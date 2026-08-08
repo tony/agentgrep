@@ -416,20 +416,26 @@ class StorageAgentDirective(SphinxDirective):
         except ValueError as exc:
             return [self.state.document.reporter.warning(str(exc), line=self.lineno)]
 
+        node_id = f"storage-agent-{agent}"
         domain = _storage_domain(self)
         domain.note_object(
             "agent",
             agent,
-            f"storage-agent-{agent}",
+            node_id,
             title=_AGENT_LABELS.get(agent, agent),
         )
 
-        result: list[nodes.Node] = [
-            build_api_summary_section(
-                _agent_store_index(stores),
-                classes=(StorageCSS.BODY_SECTION,),
-            ),
-        ]
+        # The domain advertises this id in objects.inv, so some node has to
+        # carry it. Without the anchor the entry still resolves for intersphinx
+        # and then lands nowhere on the page.
+        summary = build_api_summary_section(
+            _agent_store_index(stores),
+            classes=(StorageCSS.BODY_SECTION,),
+        )
+        summary["ids"].append(node_id)
+        self.state.document.note_explicit_target(summary)
+
+        result: list[nodes.Node] = [summary]
         result.extend(_store_card(self, store) for store in stores)
         return result
 
