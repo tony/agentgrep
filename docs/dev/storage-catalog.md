@@ -510,6 +510,36 @@ snapshots (a byproduct of the transcripts, keyed by the same session
 UUID) and the `secret://…` auth keys in `state.vscdb` (private
 credentials, never enumerated).
 
+(storage-observations)=
+
+## Observed record shapes
+
+An `observed_version` stamp says *when* someone last looked. It does not say
+what they saw, so bumping one destroys the previous observation and schema
+drift stays invisible until a human re-audits by hand.
+
+`docs/_observations/<agent>/<version>.toml` records the observation itself.
+Each manifest holds, per store, the record discriminator, the key set seen for
+each of its values, and the tables and columns of any SQLite file. Two
+manifests for the same agent at different versions diff as text, so "did Grok
+stop writing `timestamp`?" is a question you answer by reading rather than by
+re-opening the store.
+
+Backend pages render those shapes beside each store card, and the build warns
+when a catalogue stamp and the newest manifest disagree. The warning names both
+repairs, because either side can be the stale one: re-observing is a no-op when
+the manifest is already ahead.
+
+Refresh one agent with `uv run scripts/observe_stores.py observe --agent grok`,
+or compare live disk against what is recorded with
+`uv run scripts/observe_stores.py check --agent all`. Those are written inline
+rather than as `console` blocks on purpose — the documentation suite executes
+every console fence under `docs/`, and `observe` writes into the manifest tree.
+
+Manifests carry schema only. Source counts and the unclaimed-path list describe
+the machine an observation ran on rather than the agent it observed, so they
+stay out of the rendered page.
+
 ## Adding or updating a store
 
 1. Edit the per-agent module under `src/agentgrep/store_catalog/`
@@ -524,7 +554,9 @@ credentials, never enumerated).
    `tests/samples/<agent>/<store_id>/`.
 5. Bump `catalog_version` in the same commit that changes
    descriptor shape.
-6. Run `just test-all`.
+6. Re-observe the agent so the recorded shape matches the stamp — see
+   {ref}`storage-observations`.
+7. Run `just test-all`.
 
 ## See also
 
