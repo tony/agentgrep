@@ -1,5 +1,23 @@
 manifest_version = 1
-unclaimed = []
+unclaimed = [
+    { path_pattern = "${HOME}/.claude/.gitignore", kind = "file" },
+    { path_pattern = "${HOME}/.claude/daemon", kind = "dir" },
+    { path_pattern = "${HOME}/.claude/daemon.log", kind = "file" },
+    { path_pattern = "${HOME}/.claude/gh-pr-status-cache.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/policy-limits.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/remote", kind = "dir" },
+    { path_pattern = "${HOME}/.claude/remote-settings.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/daemon/control.key", kind = "file" },
+    { path_pattern = "${HOME}/.claude/daemon/dispatch", kind = "dir" },
+    { path_pattern = "${HOME}/.claude/daemon/roster.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/plugins/.last_inuse_sweep", kind = "file" },
+    { path_pattern = "${HOME}/.claude/plugins/blocklist.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/plugins/installed_plugins.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/plugins/known_marketplaces.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/plugins/plugin-catalog-cache.json", kind = "file" },
+    { path_pattern = "${HOME}/.claude/remote/run", kind = "dir" },
+    { path_pattern = "${HOME}/.claude/remote/srv", kind = "dir" },
+]
 
 [agent]
 id = "claude"
@@ -9,8 +27,32 @@ version_source = "cli"
 [observation]
 observed_at = 2026-08-08
 platform = "linux"
-catalog_version = 35
+catalog_version = 37
 generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "claude.global_config"
+path_pattern = "${HOME}/.claude.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.projects.subagent_meta"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/<session_uuid>/subagents/<agent>.meta.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.worktrees"
+path_pattern = "<project_root>/.claude/worktrees/<name>"
+role = "source_tree"
+format = "opaque"
+has_discovery = false
+source_count = 0
 
 [[store]]
 id = "claude.history"
@@ -43,7 +85,7 @@ discovers_as = [
     "claude.projects",
 ]
 discriminator = "type"
-records_sampled = 4188
+records_sampled = 4014
 
 [store.record_keys]
 agent-name = [
@@ -194,8 +236,10 @@ user = [
     "sourceToolAssistantUUID",
     "sourceToolUseID",
     "timestamp",
+    "toolDenialKind",
     "toolUseResult",
     "type",
+    "userFeedback",
     "userType",
     "uuid",
     "version",
@@ -207,7 +251,7 @@ path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_projec
 role = "supplementary_chat"
 format = "jsonl"
 has_discovery = true
-source_count = 5914
+source_count = 5880
 discovers_as = [
     "claude.projects_subagents",
 ]

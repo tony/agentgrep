@@ -31,7 +31,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-08-08
 platform = "linux"
-catalog_version = 35
+catalog_version = 37
 generator = "scripts/observe_stores.py"
 
 [[store]]

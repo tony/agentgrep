@@ -8,7 +8,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-08-08
 platform = "linux"
-catalog_version = 35
+catalog_version = 37
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -218,6 +218,14 @@ id = "opencode.storage_legacy"
 path_pattern = "${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/storage/{session,message,part}/**/*.json"
 role = "primary_chat"
 format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "opencode.prompt_history"
+path_pattern = "${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl"
+role = "prompt_history"
+format = "jsonl"
 has_discovery = false
 source_count = 0
 

@@ -9,6 +9,7 @@ from agentgrep.stores import (
     StoreDescriptor,
     StoreFormat,
     StoreRole,
+    VersionDetectionStrategy,
 )
 
 _OPENCODE_OBSERVED_VERSION = "opencode v1.18.15"
@@ -101,6 +102,30 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         distinguishes_from=("opencode.db",),
         search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="opencode",
+        store_id="opencode.prompt_history",
+        role=StoreRole.PROMPT_HISTORY,
+        format=StoreFormat.JSONL,
+        path_pattern=("${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl"),
+        env_overrides=("XDG_STATE_HOME",),
+        observed_version=_OPENCODE_OBSERVED_VERSION,
+        observed_at=_OPENCODE_OBSERVED_AT,
+        schema_notes=(
+            "Recalled prompt log, one JSON object per line with the key set "
+            "`{input, parts, mode}`. `input` is the prompt text, `parts` holds "
+            "`{type, text, source}` entries, and `mode` was only ever observed as "
+            "`normal`. There is no timestamp and no session id, so a record here "
+            "cannot be joined to a session in `opencode.db`. Not a duplicate of "
+            "that database either: prompts present here can be absent from it "
+            "entirely. Documented pending an adapter; wiring it would give "
+            "OpenCode the fast prompt path it currently lacks."
+        ),
+        distinguishes_from=("opencode.db",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
     ),
     StoreDescriptor(
         agent="opencode",

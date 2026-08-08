@@ -26,6 +26,83 @@ is how one row drifted to a date its own module constant disagreed with.
 _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="claude",
+        store_id="claude.global_config",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${HOME}/.claude.json",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Sibling *file* of the Claude home, not a member of it, so no "
+            "path pattern rooted at `${CLAUDE_CONFIG_DIR or ${HOME}/.claude}` "
+            "reaches it. A `projects` object keyed by absolute project root "
+            "records per-project state including `lastSessionId`, "
+            "`lastSessionFirstPrompt`, `lastSessionModified`, and per-project "
+            "MCP server lists; the top level carries `oauthAccount`, `userID`, "
+            "`machineID`, and usage counters. `lastSessionFirstPrompt` is the "
+            "only prompt text, and it duplicates the transcript, so the row is "
+            "an inventory of which projects Claude knows rather than a search "
+            "surface. Older versions kept per-project `history` arrays here; "
+            "those are now empty."
+        ),
+        distinguishes_from=("claude.history", "claude.settings"),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.SHAPE_INFERENCE,),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.projects.subagent_meta",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/"
+            "<session_uuid>/subagents/<agent>.meta.json"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Sidecar beside each subagent transcript, carrying `spawnDepth`, "
+            "`agentType`, and — when the dispatch came from the Task tool — "
+            "`toolUseId`, `description`, `model`, and `parentAgentId`. "
+            "`description` is the dispatch text and `model` is the model that "
+            "subagent ran under; neither is recoverable from the `.jsonl` "
+            "transcript beside it, so this is the only record of why a subagent "
+            "was spawned. Worktree-scoped runs also carry `worktreePath` and "
+            "`spawnedWithWorktree`."
+        ),
+        distinguishes_from=("claude.projects.subagent",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.SHAPE_INFERENCE,),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.worktrees",
+        role=StoreRole.SOURCE_TREE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="<project_root>/.claude/worktrees/<name>",
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Git worktrees Claude Code creates with `-w/--worktree`, checked out "
+            "*inside* the repository on a branch named `worktree-<name>`. There "
+            "is no index file: the record is git's own `.git/worktrees/` "
+            "registry plus the `cwd` and `gitBranch` fields every transcript "
+            "line repeats. Each worktree mints its own encoded directory under "
+            "`projects/`, so one repository's history splits across several "
+            "store keys — see the worktree section of the backends index. "
+            "Catalogued so the adapter never indexes a working tree as chat, "
+            "parity with `cursor-cli.worktrees`."
+        ),
+        distinguishes_from=("claude.projects.session",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.history",
         role=StoreRole.PROMPT_HISTORY,
         format=StoreFormat.JSONL,

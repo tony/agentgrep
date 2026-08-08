@@ -512,12 +512,18 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
     # brace instead collapses a row like ``.../{settings*.json,keybindings.json}``
     # to the bare agent home, which then claims every entry underneath it and
     # silently reports zero gaps for the agent with the most stores.
+    # A prefix is usable only if it reaches *inside* an agent home. Two kinds of
+    # row otherwise produce one that swallows everything: a brace row whose
+    # widest alternative truncates to the home itself, and a project-local row
+    # like "${HOME}/<known_project_root>/.claude/..." that truncates to
+    # "${HOME}/" and would claim every file the user owns.
     roots = {_tokenize_path(pathlib.Path.home() / home).rstrip("/") for home in probe.homes}
     prefixes = [
         prefix
         for pattern in claimed
         for expanded in _expand_braces(pattern)
-        if (prefix := _strip_pattern(expanded)) != "\x00" and prefix.rstrip("/") not in roots
+        if (prefix := _strip_pattern(expanded)) != "\x00"
+        and any(prefix.startswith(f"{root}/") and prefix.rstrip("/") != root for root in roots)
     ]
 
     entries: list[dict[str, object]] = []
@@ -555,6 +561,12 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
 
 _ENV_HEAD_RE = re.compile(r"\$\{[A-Z_]+ or (\$\{HOME\}[^}]*)\}")
 _BRACE_GROUP_RE = re.compile(r"(?<!\$)\{([^{}]*)\}")
+_DATE_PLACEHOLDER_RE = re.compile(r"(?<=/)(?:YYYY|MM|DD)(?=/)")
+"""A date placeholder occupying a whole path segment.
+
+Anchored to segment boundaries on purpose: a bare ``ss`` alternative matches
+inside ``sessions`` and truncates the prefix mid-word.
+"""
 
 
 def _expand_braces(pattern: str) -> list[str]:
@@ -619,7 +631,15 @@ def _strip_pattern(pattern: str) -> str:
     '\x00'
     """
     pattern = _ENV_HEAD_RE.sub(r"\1", pattern)
-    stops = [pattern.find("<"), pattern.find("*"), _brace_group_index(pattern)]
+    # Codex spells its date-sharded path with literal YYYY/MM/DD placeholders
+    # rather than <tokens>, so those are a third kind of wildcard to stop at.
+    date_stop = _DATE_PLACEHOLDER_RE.search(pattern)
+    stops = [
+        pattern.find("<"),
+        pattern.find("*"),
+        _brace_group_index(pattern),
+        date_stop.start() if date_stop else -1,
+    ]
     cuts = [index for index in stops if index != -1]
     if cuts:
         pattern = pattern[: min(cuts)]
