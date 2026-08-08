@@ -255,6 +255,79 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="codex",
+        store_id="codex.thread_history_db",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.SQLITE,
+        path_pattern=(
+            "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/thread_history_1.sqlite"
+        ),
+        env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "SQLite projection of the rollout transcript. `thread_items(thread_id, "
+            "turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type, "
+            "updated_at_ordinal)` carries the turn payload, with a partial index "
+            "`idx_thread_items_user_messages` on `item_type = 'userMessage'`. "
+            "`thread_turns` adds `first_user_item_id`, `final_agent_item_id`, and "
+            "`rollout_byte_offset`. Documented, not searched: the same turns are "
+            "already read from `codex.sessions`, so parsing both would double every "
+            "hit. The byte offset makes this the index a targeted route would use."
+        ),
+        distinguishes_from=("codex.sessions",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.queue_db",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/queue_1.sqlite",
+        env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Pending user turns not yet sent. `queued_items(id, thread_id, "
+            "payload_json, queue_order, created_at_ms, updated_at_ms)` with a unique "
+            "index on `(thread_id, queue_order)`. `payload_json` holds prompt text, "
+            "so the store is prompt-bearing, but a queued turn is one the user has "
+            "not committed to; it is documented rather than searched."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.attachments",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${CODEX_HOME or ${HOME}/.codex}/attachments/<attachment_uuid>/pasted-text-<n>.txt"
+        ),
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Plain-text spillover for pastes too large to inline in a turn, one "
+            "directory per attachment id. The directory name is an attachment id, "
+            "not a thread id, so an attachment does not name the session that used "
+            "it. Parity with `cursor-cli.uploads`."
+        ),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+    ),
+    StoreDescriptor(
+        agent="codex",
         store_id="codex.goals_db",
         role=StoreRole.PLAN,
         format=StoreFormat.SQLITE,
