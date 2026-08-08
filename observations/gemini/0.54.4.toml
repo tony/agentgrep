@@ -1,0 +1,726 @@
+manifest_version = 1
+
+[agent]
+id = "gemini"
+app_version = "0.54.4"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 35
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "gemini.tmp.chats"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/session-<timestamp><id>.jsonl"
+role = "primary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 201
+discovers_as = [
+    "gemini.tmp_chats",
+]
+discriminator = "type"
+records_sampled = 1338
+
+[store.record_keys]
+"*" = [
+    "$rewindTo",
+    "$set",
+    "kind",
+    "lastUpdated",
+    "projectHash",
+    "sessionId",
+    "startTime",
+]
+gemini = [
+    "content",
+    "id",
+    "model",
+    "thoughts",
+    "timestamp",
+    "tokens",
+    "toolCalls",
+    "type",
+]
+info = [
+    "content",
+    "id",
+    "timestamp",
+    "type",
+]
+user = [
+    "content",
+    "displayContent",
+    "id",
+    "timestamp",
+    "type",
+]
+
+[[store]]
+id = "gemini.tmp.checkpoints"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/checkpoint-<tag>.json"
+role = "supplementary_chat"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "gemini.tmp.logs"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/logs.json"
+role = "prompt_history"
+format = "json_array"
+has_discovery = true
+source_count = 50
+discovers_as = [
+    "gemini.tmp_logs",
+]
+discriminator = "type"
+records_sampled = 432
+
+[store.record_keys]
+user = [
+    "message",
+    "messageId",
+    "sessionId",
+    "timestamp",
+    "type",
+]
+
+[[store]]
+id = "gemini.tmp.chats_legacy"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/chats/session-<timestamp><id>.json"
+role = "supplementary_chat"
+format = "json_object"
+has_discovery = true
+source_count = 998
+discovers_as = [
+    "gemini.tmp_chats_legacy",
+]
+discriminator = "kind"
+records_sampled = 40
+
+[store.record_keys]
+main = [
+    "kind",
+    "lastUpdated",
+    "messages",
+    "projectHash",
+    "sessionId",
+    "startTime",
+]
+
+[[store]]
+id = "gemini.skills"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/skills/"
+role = "app_state"
+format = "md_frontmatter"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "gemini.settings"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/settings.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "gemini.memory"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/GEMINI.md"
+role = "persistent_memory"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "gemini.memory",
+]
+
+[[store]]
+id = "gemini.tool_outputs"
+path_pattern = "${GEMINI_CLI_HOME or ${HOME}/.gemini}/tmp/<project_hash>/tool-outputs/session-<id>/<name>.txt"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "gemini.tool_outputs",
+]
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/config"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/google_account_id"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/google_accounts.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/installation_id"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/oauth_creds.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/projects.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/state.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/trustedFolders.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/user_id"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/brain"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/browserAllowlist.txt"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/code_tracker"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/context_state"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/conversations"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/implicit"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/installation_id"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/mcp_config.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity/user_settings.pb"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/antigravity-oauth-token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/bin"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/brain"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/builtin"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/cache"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/cli.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/conversation_summaries.db"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/conversations"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/crashes"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/history.jsonl"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/implicit"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/installation_id"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/jetski_state.pbtxt"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/knowledge"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/last_check.timestamp"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/mcp"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/presence"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/scratch"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/antigravity-cli/updater"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/config/.migrated"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/config/config.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/config/mcp_config.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/config/plugins"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/config/projects"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260330-225455z-73698-4200"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260411-193030z-140846-e2fb"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260411-202117z-405831-b0e2"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260411-212148z-723205-7b45"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260411-221418z-994471-4823"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260411-234401z-1452989-31bd"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260412-005934z-1892326-8762"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260412-120539z-115489-c4a2"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260412-223510z-1508928-94b5"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260413-111829-serene-bliss"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260413-163533-serene-bliss"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260413-171358z-2099069-f303"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260413-214004z-2121691-b5e2"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260414-174134z-2727549-ee4f"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260414-233801z-3135834-e3dd"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260415-030751z-3628430-8613"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260416-170241z-1985748-c514"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260416-182129z-2227624-1cd2"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260419-124850z-560417-9a50"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260420-113357z-112108-baa4"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260422-190846z-4027862-fe8d"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260424-214247z-3714694-63ea"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260425-133151z-1265028-77af"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260426-110108z-201379-abca"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260426-121710z-601469-687e"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260426-150300z-971301-2937"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260427-135147z-7851-487c"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260502-170426z-1821848-b321"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260502-203858z-2724149-8643"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260508-101844z-3460281-121e"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260508-132621z-3747235-61ec"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260509-105340z-113691-0d5c"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260509-110256z-178377-29c5"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260509-110312z-179100-e3c1"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260509-110825z-195615-5a90"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260509-131121z-1415079-d067"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260510-133558z-2260247-d931"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260511-222907z-271796-2608"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260511-233954z-321036-4f3d"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260514-232009z-440149-86b3"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260517-154646z-133940-178e"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260523-141242z-33046-8548"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260523-143910z-80422-d325"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260523-152940z-51027-20ed"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260523-192540z-63352-6e3c"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260523-223632z-70749-9417"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260524-015948z-39446-92b5"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260524-020324z-44981-20ca"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260524-175158z-1400053-336a"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260527-193946z-639649-acb4"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260528-000051z-1269413-8b10"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260528-212920z-2898112-ecca"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260529-015526z-3332147-eb56"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260530-140433z-2366216-7cb4"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260606-131456z-916699-c9d6"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260607-120041z-2974555-d5ad"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260607-120058z-2975704-d6ff"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260607-131053z-3291105-a7b4"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260607-162722z-122963-bff9"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260607-205019z-1140868-91a7"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/20260725-152104z-1386012-4a91"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/81407500dae0f2cd60e8c914a74ff3cc0bbcaaeb9b12ef877334e52079d80a8e"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/agentex"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/agentgrep"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/ai-workflow-plugins"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/codex"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/crdt-patterns"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/cv"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/dot-config"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/furo"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/gemini-proj"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/gp-libs"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/gp-sphinx"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/gp-sphinx-autodoc-skip-documented-fields"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/gtest1"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/libtmux"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/libtmux-mcp"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/libtmux-mcp-chainable-commands"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/libvcs"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/multicli"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/notes"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/pass-0002"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/rampa"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/react"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/scratchpad"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/scripts"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/serene-bliss-20260505-175222"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/session-1"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/social-embed"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/terraform"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/tmp-8rcgueomrd"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/tmux"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/tmuxp"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/tony-ui"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/vcspull"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/vibe-tmux"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/vim"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/work"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.gemini/history/ws"
+kind = "dir"

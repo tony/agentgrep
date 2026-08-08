@@ -1,0 +1,637 @@
+manifest_version = 1
+unclaimed = []
+
+[agent]
+id = "claude"
+app_version = "2.1.226"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 35
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "claude.history"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/history.jsonl"
+role = "prompt_history"
+format = "jsonl"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "claude.history",
+]
+records_sampled = 400
+
+[store.record_keys]
+"*" = [
+    "display",
+    "pastedContents",
+    "project",
+    "timestamp",
+]
+
+[[store]]
+id = "claude.projects.session"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/<session_uuid>.jsonl"
+role = "primary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 1888
+discovers_as = [
+    "claude.projects",
+]
+discriminator = "type"
+records_sampled = 4188
+
+[store.record_keys]
+agent-name = [
+    "agentName",
+    "sessionId",
+    "type",
+]
+ai-title = [
+    "aiTitle",
+    "sessionId",
+    "type",
+]
+assistant = [
+    "apiErrorStatus",
+    "attributionPlugin",
+    "attributionSkill",
+    "cwd",
+    "effort",
+    "entrypoint",
+    "error",
+    "forkedFrom",
+    "gitBranch",
+    "isApiErrorMessage",
+    "isSidechain",
+    "message",
+    "parentUuid",
+    "requestId",
+    "sessionId",
+    "session_id",
+    "slug",
+    "timestamp",
+    "type",
+    "userType",
+    "uuid",
+    "version",
+]
+attachment = [
+    "attachment",
+    "cwd",
+    "entrypoint",
+    "forkedFrom",
+    "gitBranch",
+    "isSidechain",
+    "parentUuid",
+    "sessionId",
+    "session_id",
+    "slug",
+    "timestamp",
+    "type",
+    "userType",
+    "uuid",
+    "version",
+]
+file-history-delta = [
+    "backup",
+    "messageId",
+    "snapshotMessageId",
+    "timestamp",
+    "trackingPath",
+    "type",
+]
+file-history-snapshot = [
+    "isSnapshotUpdate",
+    "messageId",
+    "snapshot",
+    "type",
+]
+last-prompt = [
+    "lastPrompt",
+    "leafUuid",
+    "sessionId",
+    "type",
+]
+mode = [
+    "mode",
+    "sessionId",
+    "type",
+]
+permission-mode = [
+    "permissionMode",
+    "sessionId",
+    "type",
+]
+pr-link = [
+    "prNumber",
+    "prRepository",
+    "prUrl",
+    "sessionId",
+    "timestamp",
+    "type",
+]
+queue-operation = [
+    "content",
+    "operation",
+    "sessionId",
+    "timestamp",
+    "type",
+]
+system = [
+    "content",
+    "cwd",
+    "durationMs",
+    "entrypoint",
+    "forkedFrom",
+    "gitBranch",
+    "hasOutput",
+    "hookAdditionalContext",
+    "hookCount",
+    "hookErrors",
+    "hookInfos",
+    "isMeta",
+    "isSidechain",
+    "level",
+    "messageCount",
+    "parentUuid",
+    "pendingBackgroundAgentCount",
+    "pendingWorkflowCount",
+    "preventedContinuation",
+    "sessionId",
+    "session_id",
+    "slug",
+    "stopReason",
+    "subtype",
+    "timestamp",
+    "toolUseID",
+    "type",
+    "userType",
+    "uuid",
+    "version",
+]
+user = [
+    "cwd",
+    "entrypoint",
+    "forkedFrom",
+    "gitBranch",
+    "isMeta",
+    "isSidechain",
+    "message",
+    "origin",
+    "parentUuid",
+    "permissionMode",
+    "promptId",
+    "promptSource",
+    "queuePriority",
+    "sessionId",
+    "session_id",
+    "slug",
+    "sourceToolAssistantUUID",
+    "sourceToolUseID",
+    "timestamp",
+    "toolUseResult",
+    "type",
+    "userType",
+    "uuid",
+    "version",
+]
+
+[[store]]
+id = "claude.projects.subagent"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/<session_uuid>/subagents/<agent>.jsonl"
+role = "supplementary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 5914
+discovers_as = [
+    "claude.projects_subagents",
+]
+discriminator = "type"
+records_sampled = 6675
+
+[store.record_keys]
+assistant = [
+    "agentId",
+    "attributionAgent",
+    "attributionPlugin",
+    "attributionSkill",
+    "cwd",
+    "effort",
+    "entrypoint",
+    "gitBranch",
+    "isSidechain",
+    "message",
+    "parentUuid",
+    "requestId",
+    "sessionId",
+    "timestamp",
+    "type",
+    "userType",
+    "uuid",
+    "version",
+]
+attachment = [
+    "agentId",
+    "attachment",
+    "cwd",
+    "entrypoint",
+    "gitBranch",
+    "isSidechain",
+    "parentUuid",
+    "sessionId",
+    "timestamp",
+    "type",
+    "userType",
+    "uuid",
+    "version",
+]
+result = [
+    "agentId",
+    "key",
+    "result",
+    "type",
+]
+started = [
+    "agentId",
+    "key",
+    "type",
+]
+user = [
+    "agentId",
+    "cwd",
+    "entrypoint",
+    "gitBranch",
+    "isSidechain",
+    "message",
+    "parentUuid",
+    "promptId",
+    "sessionId",
+    "sourceToolAssistantUUID",
+    "timestamp",
+    "toolEndsTurn",
+    "toolUseResult",
+    "type",
+    "userType",
+    "uuid",
+    "version",
+]
+
+[[store]]
+id = "claude.projects.memory"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/memory/*.md"
+role = "persistent_memory"
+format = "md_frontmatter"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.projects.memory",
+]
+
+[[store]]
+id = "claude.memory_files"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/CLAUDE.md and known project roots/{CLAUDE.md,.claude.md}"
+role = "persistent_memory"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.memory_files",
+]
+
+[[store]]
+id = "claude.tasks"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/tasks/<task_list>/<task_id>.json"
+role = "todo"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.tasks",
+]
+
+[[store]]
+id = "claude.todos"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/todos/*.json"
+role = "todo"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.todos",
+]
+
+[[store]]
+id = "claude.sessions"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/sessions/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.sessions",
+]
+
+[[store]]
+id = "claude.store_db"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/__store.db"
+role = "app_state"
+format = "sqlite"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.store_db",
+]
+
+[[store]]
+id = "claude.plans"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plans/*.md"
+role = "plan"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.plans",
+]
+
+[[store]]
+id = "claude.projects.workflows"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/<session_uuid>/workflows/scripts/<name>.js"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.projects.workflows",
+]
+
+[[store]]
+id = "claude.usage_data"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/usage-data/facets/<session>.json"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.usage_data",
+]
+
+[[store]]
+id = "claude.projects.session_memory"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_project>/<session_uuid>/session-memory/summary.md"
+role = "persistent_memory"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.projects_session_memory",
+]
+
+[[store]]
+id = "claude.settings"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{settings*.json,keybindings.json}"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.settings",
+]
+
+[[store]]
+id = "claude.credentials"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/.credentials.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.update_state"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{.last-*,.last-update-result.json}"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.update_state",
+]
+
+[[store]]
+id = "claude.stats_cache"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/stats-cache.json"
+role = "cache"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.stats_cache",
+]
+
+[[store]]
+id = "claude.debug_logs"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/debug/"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.debug_logs",
+]
+
+[[store]]
+id = "claude.backups"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/backups/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.generic_cache"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/cache/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.file_history"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/file-history/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.shell_snapshots"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/shell-snapshots/*.sh"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.shell_snapshots",
+]
+
+[[store]]
+id = "claude.image_cache"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/image-cache/<session>/<image>"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.context_mode"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/context-mode/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.context_mode",
+]
+
+[[store]]
+id = "claude.security_state"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{security/,security_warnings_state_*.json}"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.skills"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/skills/"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.skills",
+]
+
+[[store]]
+id = "claude.commands"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/commands/"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.commands",
+]
+
+[[store]]
+id = "claude.project_instructions"
+path_pattern = "${HOME}/<known_project_root>/.claude/{commands,agents,skills}/"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.project_instructions",
+]
+
+[[store]]
+id = "claude.teams"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/teams/"
+role = "instruction"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.teams",
+]
+
+[[store]]
+id = "claude.session_env"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/session-env/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.ide"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/ide/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.ide",
+]
+
+[[store]]
+id = "claude.chrome"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/chrome/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.chrome",
+]
+
+[[store]]
+id = "claude.native_install"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/local/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.native_install",
+]
+
+[[store]]
+id = "claude.jobs"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/jobs/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.jobs",
+]
+
+[[store]]
+id = "claude.uploads"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/uploads/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.paste_cache"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/paste-cache/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.plugins_cache"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/cache/"
+role = "cache"
+format = "opaque"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "claude.plugins_cache",
+]
+
+[[store]]
+id = "claude.plugins_marketplaces"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/marketplaces/<repo>/<plugin>/{agents,commands,skills}/<name>.md"
+role = "instruction"
+format = "md_frontmatter"
+has_discovery = false
+source_count = 0

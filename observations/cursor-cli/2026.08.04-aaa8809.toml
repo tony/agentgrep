@@ -1,0 +1,265 @@
+manifest_version = 1
+unclaimed = [
+    { path_pattern = "${HOME}/.cursor/.gitignore", kind = "file" },
+    { path_pattern = "${HOME}/.cursor/cli-config.json", kind = "file" },
+    { path_pattern = "${HOME}/.cursor/ide_state.json", kind = "file" },
+    { path_pattern = "${HOME}/.cursor/managed", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/mcp.json", kind = "file" },
+    { path_pattern = "${HOME}/.cursor/plugins", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/snapshots", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/managed/team_21685005", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/managed/team_6175793", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/plugins/cache", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/plugins/installed.json", kind = "file" },
+    { path_pattern = "${HOME}/.cursor/plugins/local", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/plugins/marketplaces", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor/snapshots/66a8d169451de797d29d39f2464de4bb-1", kind = "dir" },
+    { path_pattern = "${HOME}/.config/cursor/auth.json", kind = "file" },
+    { path_pattern = "${HOME}/.config/cursor/cli-config.json", kind = "file" },
+    { path_pattern = "${HOME}/.config/cursor/statsig-cache.json", kind = "file" },
+    { path_pattern = "${HOME}/.config/cursor/workers", kind = "dir" },
+]
+
+[agent]
+id = "cursor-cli"
+app_version = "2026.08.04-aaa8809"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 35
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "cursor-cli.transcripts"
+path_pattern = "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl"
+role = "primary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 319
+discovers_as = [
+    "cursor-cli.transcripts",
+]
+discriminator = "role"
+records_sampled = 2713
+
+[store.record_keys]
+"*" = [
+    "status",
+    "type",
+]
+assistant = [
+    "message",
+    "role",
+]
+user = [
+    "message",
+    "role",
+]
+
+[[store]]
+id = "cursor-cli.subagent_transcripts"
+path_pattern = "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
+role = "supplementary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 290
+discovers_as = [
+    "cursor-cli.subagent_transcripts",
+]
+discriminator = "role"
+records_sampled = 980
+
+[store.record_keys]
+assistant = [
+    "message",
+    "role",
+]
+user = [
+    "message",
+    "role",
+]
+
+[[store]]
+id = "cursor-cli.repo_meta"
+path_pattern = "${HOME}/.cursor/projects/<id>/repo.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-cli.tools"
+path_pattern = "${HOME}/.cursor/projects/<id>/{mcps/*/SERVER_METADATA.json,tools/*.json,mcp-approvals.json}"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-cli.terminals"
+path_pattern = "${HOME}/.cursor/projects/<id>/terminals/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-cli.canvases"
+path_pattern = "${HOME}/.cursor/projects/<id>/canvases/"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-cli.plans"
+path_pattern = "${HOME}/.cursor/plans/*.plan.md"
+role = "plan"
+format = "md_frontmatter"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-cli.state"
+path_pattern = "${HOME}/.cursor/agent-cli-state.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-cli.worktrees"
+path_pattern = "${HOME}/.cursor/worktrees/"
+role = "source_tree"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-cli.ai_tracking"
+path_pattern = "${HOME}/.cursor/ai-tracking/ai-code-tracking.db"
+role = "supplementary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "cursor-cli.ai_tracking",
+]
+
+[store.tables]
+ai_code_hashes = [
+    "hash",
+    "source",
+    "fileExtension",
+    "fileName",
+    "requestId",
+    "conversationId",
+    "timestamp",
+    "model",
+    "createdAt",
+]
+ai_deleted_files = [
+    "gitPath",
+    "composerId",
+    "conversationId",
+    "model",
+    "deletedAt",
+]
+conversation_summaries = [
+    "conversationId",
+    "title",
+    "tldr",
+    "overview",
+    "summaryBullets",
+    "model",
+    "mode",
+    "updatedAt",
+]
+scored_commits = [
+    "commitHash",
+    "branchName",
+    "scoredAt",
+    "linesAdded",
+    "linesDeleted",
+    "tabLinesAdded",
+    "tabLinesDeleted",
+    "composerLinesAdded",
+    "composerLinesDeleted",
+    "humanLinesAdded",
+    "humanLinesDeleted",
+    "blankLinesAdded",
+    "blankLinesDeleted",
+    "commitMessage",
+    "commitDate",
+    "v1AiPercentage",
+    "v2AiPercentage",
+]
+tracked_file_content = [
+    "gitPath",
+    "content",
+    "conversationId",
+    "model",
+    "fileExtension",
+    "createdAt",
+]
+tracking_state = [
+    "key",
+    "value",
+]
+
+[[store]]
+id = "cursor-cli.prompt_history"
+path_pattern = "${HOME}/.config/cursor/prompt_history.json"
+role = "prompt_history"
+format = "json_array"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "cursor-cli.prompt_history",
+]
+
+[[store]]
+id = "cursor-cli.chats"
+path_pattern = "${HOME}/.config/cursor/chats/<project_hash>/<session_uuid>/store.db"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "cursor-cli.chats",
+]
+
+[[store]]
+id = "cursor-cli.skills"
+path_pattern = "${HOME}/.cursor/{skills,skills-cursor}/<skill>/SKILL.md"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "cursor-cli.skills",
+]
+
+[[store]]
+id = "cursor-cli.uploads"
+path_pattern = "${HOME}/.cursor/projects/<id>/uploads/<name>.md"
+role = "supplementary_chat"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "cursor-cli.uploads",
+]
+
+[[store]]
+id = "cursor-cli.agent_tools"
+path_pattern = "${HOME}/.cursor/projects/<id>/agent-tools/<name>.txt"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "cursor-cli.agent_tools",
+]

@@ -1,0 +1,128 @@
+manifest_version = 1
+unclaimed = [
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/bin", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/builtin", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/cli.log", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/conversation_summaries.db", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/crashes", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/installation_id", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/jetski_state.pbtxt", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/knowledge", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/last_check.timestamp", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/mcp", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/presence", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/scratch", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/settings.json", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/updater", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/bin/agentapi", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/bin/webm_encoder", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/builtin/.checksum", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/builtin/keep.txt", kind = "file" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/builtin/skills", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/mcp/tmux", kind = "dir" },
+    { path_pattern = "${HOME}/.gemini/antigravity-cli/updater/update_status.json", kind = "file" },
+]
+
+[agent]
+id = "antigravity-cli"
+app_version = "1.1.11"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 35
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "antigravity-cli.history"
+path_pattern = "${HOME}/.gemini/antigravity-cli/history.jsonl"
+role = "prompt_history"
+format = "jsonl"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "antigravity-cli.history",
+]
+discriminator = "type"
+records_sampled = 47
+
+[store.record_keys]
+"*" = [
+    "conversationId",
+    "display",
+    "timestamp",
+    "workspace",
+]
+slash_command = [
+    "conversationId",
+    "display",
+    "timestamp",
+    "type",
+    "workspace",
+]
+
+[[store]]
+id = "antigravity-cli.conversations"
+path_pattern = "${HOME}/.gemini/antigravity-cli/conversations/<conversation_uuid>.db"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "antigravity-cli.conversations",
+]
+
+[[store]]
+id = "antigravity-cli.transcript"
+path_pattern = "${HOME}/.gemini/antigravity-cli/brain/<conversation_uuid>/.system_generated/logs/transcript_full.jsonl"
+role = "supplementary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "antigravity-cli.transcript",
+]
+
+[[store]]
+id = "antigravity-cli.implicit"
+path_pattern = "${HOME}/.gemini/antigravity-cli/implicit/<conversation_uuid>.pb"
+role = "supplementary_chat"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-cli.brain"
+path_pattern = "${HOME}/.gemini/antigravity-cli/brain/**/*.md"
+role = "plan"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "antigravity-cli.brain",
+]
+
+[[store]]
+id = "antigravity-cli.cache"
+path_pattern = "${HOME}/.gemini/antigravity-cli/cache/"
+role = "cache"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-cli.log"
+path_pattern = "${HOME}/.gemini/antigravity-cli/log/"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-cli.oauth"
+path_pattern = "${HOME}/.gemini/antigravity-cli/antigravity-oauth-token"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
