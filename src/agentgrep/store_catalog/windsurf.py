@@ -10,6 +10,15 @@ from agentgrep.stores import (
     StoreRole,
 )
 
+_WINDSURF_OBSERVED_VERSION = "Windsurf Cascade"
+"""App version the Windsurf rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="windsurf",
@@ -17,7 +26,7 @@ _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.codeium/windsurf/cascade/<session_uuid>.pb",
-        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_version=_WINDSURF_OBSERVED_VERSION,
         observed_at=_WINDSURF_OBSERVED_AT,
         schema_notes=(
             "Per-session Cascade conversation transcript as opaque binary "
@@ -37,7 +46,7 @@ _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.codeium/windsurf/implicit/<uuid>.pb",
-        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_version=_WINDSURF_OBSERVED_VERSION,
         observed_at=_WINDSURF_OBSERVED_AT,
         schema_notes=(
             "Implicit/background Cascade context-capture records as opaque, "
@@ -53,7 +62,7 @@ _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.codeium/windsurf/chat_state/<name>.pb",
-        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_version=_WINDSURF_OBSERVED_VERSION,
         observed_at=_WINDSURF_OBSERVED_AT,
         schema_notes=(
             "Per-file chat state for legacy Codeium chat, opaque "
@@ -70,7 +79,7 @@ _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.codeium/windsurf/memories/<uuid>.pb",
-        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_version=_WINDSURF_OBSERVED_VERSION,
         observed_at=_WINDSURF_OBSERVED_AT,
         schema_notes=(
             "Cascade memory entries as opaque, apparently-encrypted binary, one "
@@ -87,7 +96,7 @@ _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${HOME}/.codeium/windsurf/brain/<uuid>/plan.md",
-        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_version=_WINDSURF_OBSERVED_VERSION,
         observed_at=_WINDSURF_OBSERVED_AT,
         schema_notes=(
             "Cascade agent-authored implementation plans as Markdown "
@@ -105,7 +114,7 @@ _WINDSURF_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.INSTRUCTION,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.codeium/windsurf/memories/global_rules.md",
-        observed_version="Windsurf Cascade (observed 2026-06-21)",
+        observed_version=_WINDSURF_OBSERVED_VERSION,
         observed_at=_WINDSURF_OBSERVED_AT,
         schema_notes=(
             "User-authored global rules Markdown injected into Cascade "

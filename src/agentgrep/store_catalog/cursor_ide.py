@@ -10,6 +10,15 @@ from agentgrep.stores import (
     StoreRole,
 )
 
+_CURSOR_IDE_OBSERVED_VERSION = "Cursor IDE 3.15.6"
+"""App version the Cursor IDE rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="cursor-ide",
@@ -22,7 +31,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/globalStorage/state.vscdb",
         },
         env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
-        observed_version="Cursor IDE (current observed paths)",
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
         observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / Cursor state key selectors"),
         schema_notes=(
@@ -76,7 +85,7 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "win32": "%APPDATA%/Cursor/User/workspaceStorage/<hash>/state.vscdb",
         },
         env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
-        observed_version="Cursor IDE (current observed paths)",
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
         observed_at=_CURSOR_IDE_OBSERVED_AT,
         upstream_ref=("agentgrep.parse_cursor_state_db / Cursor state key selectors"),
         schema_notes=(

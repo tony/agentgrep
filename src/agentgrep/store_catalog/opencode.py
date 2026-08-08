@@ -11,6 +11,15 @@ from agentgrep.stores import (
     StoreRole,
 )
 
+_OPENCODE_OBSERVED_VERSION = "opencode v1.18.15"
+"""App version the OpenCode rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="opencode",
@@ -19,7 +28,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/opencode.db",
         env_overrides=("XDG_DATA_HOME", "OPENCODE_DB"),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         upstream_ref=(
             "github.com/anomalyco/opencode/blob/v1.17.9/packages/core/src/session/sql.ts#L23-L82"
@@ -76,7 +85,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
             "{session,message,part}/**/*.json"
         ),
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         upstream_ref=(
             "github.com/anomalyco/opencode/blob/v1.17.9/packages/opencode/"
@@ -100,7 +109,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${XDG_CONFIG_HOME or ${HOME}/.config}/opencode/opencode.{json,jsonc}",
         env_overrides=("XDG_CONFIG_HOME", "OPENCODE_CONFIG_DIR"),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes=(
             "Application config (`opencode.json`/`opencode.jsonc`): providers, "
@@ -115,7 +124,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/auth.json",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Provider API keys and OAuth tokens. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
@@ -128,7 +137,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/snapshot/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Per-project git repositories holding session file snapshots.",
         search_by_default=False,
@@ -140,7 +149,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/repos/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Cache of cloned git repositories referenced during sessions.",
         search_by_default=False,
@@ -152,7 +161,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/log/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Timestamped application logs. Diagnostics, not chat content.",
         search_by_default=False,
@@ -164,7 +173,7 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/tool-output/",
         env_overrides=("XDG_DATA_HOME",),
-        observed_version="opencode v1.17.9 (observed 2026-06-21)",
+        observed_version=_OPENCODE_OBSERVED_VERSION,
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes="Overflow storage for large tool output that exceeds inline limits.",
         search_by_default=False,
