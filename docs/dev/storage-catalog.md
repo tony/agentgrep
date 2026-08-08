@@ -77,6 +77,55 @@ roles are opened. This distinction lets the catalogue describe auth files,
 runtime logs, shell snapshots, and file-history caches without making them
 part of ordinary prompt search.
 
+(storage-kinds)=
+
+## Kinds of storage an agent keeps
+
+Coding agents keep far more than transcripts, and `StoreRole` is how the
+catalogue names each kind. The distribution across the 161 rows shows
+where the modelling is dense and where it is thin:
+
+| Role | Rows | What it holds |
+|------|-----:|---------------|
+| `app_state` | 74 | Settings, registries, session indexes, runtime markers |
+| `primary_chat` | 15 | The canonical transcript of a session |
+| `cache` | 15 | Derived data reconstructible from a source of truth |
+| `instruction` | 15 | Skills, rules, and memory files that steer future sessions |
+| `supplementary_chat` | 13 | Subagent turns, delegations, secondary transcripts |
+| `persistent_memory` | 8 | Long-lived notes an agent writes to itself |
+| `plan` | 8 | Plan-mode Markdown |
+| `prompt_history` | 7 | Append-only logs of what you typed |
+| `source_tree` | 4 | Working trees the agent created |
+| `todo` | 2 | Task lists |
+
+`app_state` carrying almost half the rows is the honest signal that it
+is the catch-all: it absorbs anything that is neither chat nor
+instruction. Splitting it is a future concern, not a defect.
+
+### Kinds no row models yet
+
+Three kinds exist on disk for several agents and have no representation
+here at all. They are recorded so a future adapter does not rediscover
+them as if they were chat:
+
+**Vector and embedding indexes.** Agents increasingly ship a semantic
+index beside their text one. Grok's `memory/<project>/index.sqlite`
+carries a sqlite-vec `chunks_vec` table alongside `chunks_fts`; the
+Codeium and Windsurf trees carry an `embedding_database.sqlite` with
+`embeddings`, `snippets`, and `code_context_items`. These index the
+user's *source code*, not their prompts, so they are a privacy surface
+worth naming even though agentgrep has no reason to read them.
+
+**Checkpoints, snapshots, and rewind state.** Several agents keep the
+file state needed to undo their own edits: Gemini's shadow-git roots
+under `history/`, Grok's per-session `rewind_points.jsonl`, Cursor's
+bare repositories under `snapshots/`. There is no snapshot role, so the
+few rows that do cover this land under `source_tree` or `cache`.
+
+**Telemetry.** Usage counters and analytics payloads — `statsig/`
+directories, Grok's `memtrace/`, per-agent analytics JSON. No row names
+any of them.
+
 ## Version detection strategies
 
 Discovery payloads include a `version_detection` object for each source
