@@ -1,0 +1,240 @@
+manifest_version = 1
+
+[agent]
+id = "windsurf"
+app_version = "unknown"
+version_source = "unknown"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 37
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "windsurf.cascade"
+path_pattern = "${HOME}/.codeium/windsurf/cascade/<session_uuid>.pb"
+role = "primary_chat"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "windsurf.implicit"
+path_pattern = "${HOME}/.codeium/windsurf/implicit/<uuid>.pb"
+role = "supplementary_chat"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "windsurf.chat_state"
+path_pattern = "${HOME}/.codeium/windsurf/chat_state/<name>.pb"
+role = "supplementary_chat"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "windsurf.memories"
+path_pattern = "${HOME}/.codeium/windsurf/memories/<uuid>.pb"
+role = "persistent_memory"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "windsurf.brain"
+path_pattern = "${HOME}/.codeium/windsurf/brain/<uuid>/plan.md"
+role = "plan"
+format = "md_frontmatter"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "windsurf.global_rules"
+path_pattern = "${HOME}/.codeium/windsurf/memories/global_rules.md"
+role = "instruction"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/code_tracker"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/codemaps"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/context_state"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/database"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/installation_id"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/mcp_config.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/onboarding.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/recipes"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/user_settings.pb"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-profile"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/code_tracker/active"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/code_tracker/history"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/codemaps/codemapindex.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/database/9c0694567290725d9dcba14ade58e297"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/ai-workflow-plugins-vercel"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/codex-cli"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/cursor-cli"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/find-skills"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/gemini-cli"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/gpt-cli"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/multi-model-architecture"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/multi-model-ask"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/multi-model-execute"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/multi-model-fix-review"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/multi-model-plan"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/multi-model-prompt"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/multi-model-review"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/vercel-react-best-practices"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/skills/web-design-guidelines"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/windsurf/workflows"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser/.links"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser/chromium-1169"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser/chromium_headless_shell-1169"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser/ffmpeg-1011"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/contentScript.js"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/contentScript.js.map"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/icons"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/manifest.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/parent_injection.js"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/parent_injection.js.LICENSE.txt"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/serviceWorker.js"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.codeium/windsurf/ws-browser-extension/serviceWorker.js.map"
+kind = "file"
