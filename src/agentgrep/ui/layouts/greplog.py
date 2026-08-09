@@ -278,6 +278,7 @@ class GrepLogLayout(LayoutScreen):
         if self._dispatch_slash_text(text) is not None:
             return
         self._remember_active_search_text(text)
+        self._search_input.remember_query_draft()
         self._workflow.on_query(self, text)
 
     def action_stop_search(self) -> None:

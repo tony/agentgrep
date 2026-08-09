@@ -266,8 +266,10 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
-# These modules own intentional terminal output.
-"src/agentgrep/cli/render.py" = ["T201"]
+# This module owns intentional terminal output. Its export phase boundaries
+# also redact arbitrary adapter, renderer, and output failures before they can
+# expose store paths or record bodies on stderr.
+"src/agentgrep/cli/render.py" = ["T201", "BLE001"]
 # typer.Option / typer.Argument calls are metadata, not real callables —
 # B008 does not apply. E501 is suppressed because a few error messages
 # (e.g. the mutually-exclusive-selector message in _select_targets) read
@@ -303,6 +305,14 @@ convention = "numpy"
 "src/agentgrep/_engine/search.py" = ["BLE001"]
 "src/agentgrep/ui/layouts/_hud_search.py" = ["PLC0414", "BLE001"]
 "src/agentgrep/ui/layouts/greplog.py" = ["BLE001"]
+# The export worker redacts arbitrary renderer and filesystem failures at the
+# thread boundary so backend details and destination paths cannot reach the UI.
+"src/agentgrep/ui/layouts/hud.py" = ["BLE001"]
+# Ref resolution and inline export are path-redacting MCP boundaries over
+# arbitrary adapters and renderers. They convert every implementation failure
+# into a stable, path-free client error rather than leaking backend details.
+"src/agentgrep/mcp/resolver.py" = ["BLE001"]
+"src/agentgrep/mcp/tools/export_tools.py" = ["BLE001"]
 # Catalog inspection walks whatever an adapter can parse out of a real store,
 # so any reader failure is data the client asked about. The MCP contract is to
 # return it as `error_message` with its exception type, not to fail the tool
