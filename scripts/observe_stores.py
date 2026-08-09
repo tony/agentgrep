@@ -65,6 +65,7 @@ import typing as t
 
 import rich.console
 import rich.table
+import rich.text
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src"
@@ -995,7 +996,8 @@ def main(argv: list[str] | None = None) -> int:
         table = rich.table.Table(title=f"{probe.agent}: drift vs {stored.name}")
         table.add_column("change")
         for line in lines:
-            table.add_row(line)
+            # Bucket names arrive bracketed; rich would read them as markup.
+            table.add_row(rich.text.Text(line))
         console.print(table)
 
     return 1 if drifted else 0
