@@ -221,6 +221,7 @@ class SearchQueryFactory(t.Protocol):
         case_sensitive: bool,
         agents: tuple[str, ...],
         limit: int | None,
+        dedupe: bool = True,
         effort: str | None = None,
         scope_provenance: str = "inferred",
         conversation_limit: int | None = None,
