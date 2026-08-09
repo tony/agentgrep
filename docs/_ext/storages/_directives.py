@@ -23,6 +23,7 @@ from ._css import StorageCSS
 from ._domain import StorageDomain
 from ._observations import UNKNOWN_VERSION, WILDCARD_BUCKET
 from ._utils import (
+    comma_literal_list,
     literal_paragraph,
     markup_body,
     store_adapter_ids,
@@ -124,17 +125,6 @@ def _adapter_literal(store: StoreDescriptor) -> nodes.paragraph:
     return literal_paragraph(adapters) if adapters else text_paragraph("-")
 
 
-def _literal_chip_list(values: Sequence[str]) -> nodes.paragraph:
-    """Return a wrapping literal-chip paragraph."""
-    paragraph = nodes.paragraph(classes=[StorageCSS.CHIP_LIST])
-    if not values:
-        paragraph += nodes.inline("", "-", classes=[StorageCSS.EMPTY_VALUE])
-        return paragraph
-    for value in values:
-        paragraph += nodes.literal("", value)
-    return paragraph
-
-
 def _store_link_list(stores: Sequence[StoreDescriptor]) -> nodes.container:
     """Return one linked store per line."""
     store_list = nodes.container(classes=[StorageCSS.STORE_LINK_LIST])
@@ -171,12 +161,12 @@ def _observed_shape_block(
     rows = [
         ApiFactRow(
             "Keys" if bucket == WILDCARD_BUCKET else bucket,
-            _literal_chip_list(keys),
+            comma_literal_list(keys),
         )
         for bucket, keys in shape.record_keys
     ]
     rows.extend(
-        ApiFactRow(f"{table} columns", _literal_chip_list(columns))
+        ApiFactRow(f"{table} columns", comma_literal_list(columns))
         for table, columns in shape.tables
     )
 
@@ -296,7 +286,7 @@ def _store_index_card(store: StoreDescriptor) -> nodes.container:
         ApiFactRow("Role", literal_paragraph(store.role.value)),
         ApiFactRow("Format", literal_paragraph(store.format.value)),
         ApiFactRow("Coverage", literal_paragraph(store.coverage_level.value)),
-        ApiFactRow("Adapter", _literal_chip_list(adapter_values)),
+        ApiFactRow("Adapter", comma_literal_list(adapter_values)),
     ]
     entry = build_api_card_entry(
         profile_class=API.profile("storage-store-index"),

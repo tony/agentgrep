@@ -115,22 +115,6 @@
   margin-top: 0.3rem;
 }
 
-/* The card layout wraps a field value in one span, so the gap has to be set on
-   that wrapper too or it lands nowhere. */
-.gp-sphinx-storage__chip-list,
-.gp-sphinx-storage__chip-list > .gp-sphinx-field-prefix {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem 0.4rem;
-  margin: 0;
-}
-
-.gp-sphinx-storage__chip-list code.literal {
-  white-space: normal;
-  /* Wrap between chips, not inside an identifier. */
-  overflow-wrap: break-word;
-}
-
 .gp-sphinx-storage__store-link-list {
   display: flex;
   flex-direction: column;
