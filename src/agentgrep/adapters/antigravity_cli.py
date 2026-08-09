@@ -7,16 +7,19 @@ import sqlite3
 import typing as t
 
 from agentgrep.adapters._common import (
+    _catalog_uuid_path_token,
     _path_like_str,
     _record_origin,
     _unix_millis_to_isoformat,
 )
+from agentgrep.adapters._extract import _record_position
 from agentgrep.adapters._generic import (
     parse_text_store_file,
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
 from agentgrep.readers import (
     _iter_jsonl,
+    _iter_jsonl_positioned,
     as_optional_str,
     isoformat_from_mtime_ns,
     iter_protobuf_text_fields,
@@ -39,16 +42,17 @@ def parse_antigravity_cli_history_file(
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Antigravity CLI's ``history.jsonl`` prompt recall log."""
     events = (
-        _iter_jsonl(
+        _iter_jsonl_positioned(
             source.path,
             skip_line=raw_skip_line,
             skip_line_mode="line",
             reverse=reverse,
         )
         if raw_skip_line is not None
-        else _iter_jsonl(source.path, reverse=reverse)
+        else _iter_jsonl_positioned(source.path, reverse=reverse)
     )
-    for event in events:
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         mapping = t.cast("dict[str, object]", event)
@@ -74,6 +78,10 @@ def parse_antigravity_cli_history_file(
                 "workspace": workspace or "",
                 "type": as_optional_str(mapping.get("type")) or "",
             },
+            identity_namespace=("antigravity.conversation" if session_id is not None else None),
+            position=_record_position(
+                ordinal=positioned_event.source_ordinal(),
+            ),
         )
 
 
@@ -157,6 +165,7 @@ def parse_antigravity_cli_conversation_db(
     The model is not in ``steps``; see :func:`_antigravity_conversation_model`.
     """
     session_id = source.path.stem
+    native_session_id = _catalog_uuid_path_token(source)
     timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     connection = open_readonly_sqlite(source.path)
     try:
@@ -196,6 +205,9 @@ def parse_antigravity_cli_conversation_db(
                         "step_index": idx,
                         "step_format": step_format,
                     },
+                    identity_namespace=(
+                        "antigravity.conversation" if native_session_id is not None else None
+                    ),
                 )
     except sqlite3.DatabaseError:
         return
@@ -216,6 +228,7 @@ def parse_antigravity_cli_transcript(
     """
     parents = source.path.parents
     conversation_id = parents[2].name if len(parents) > 2 else None
+    native_conversation_id = _catalog_uuid_path_token(source)
     for event in _iter_jsonl(source.path):
         if not isinstance(event, dict):
             continue
@@ -228,6 +241,14 @@ def parse_antigravity_cli_transcript(
         metadata: dict[str, object] = {}
         if record_type:
             metadata["type"] = record_type
+        step_index_raw = mapping.get("step_index")
+        step_index = (
+            step_index_raw
+            if isinstance(step_index_raw, int)
+            and not isinstance(step_index_raw, bool)
+            and step_index_raw >= 0
+            else None
+        )
         yield SearchRecord(
             kind="prompt" if is_user else "history",
             agent=source.agent,
@@ -240,6 +261,10 @@ def parse_antigravity_cli_transcript(
             session_id=conversation_id,
             conversation_id=conversation_id,
             metadata=metadata,
+            identity_namespace=(
+                "antigravity.conversation" if native_conversation_id is not None else None
+            ),
+            position=_record_position(native_id=step_index, ordinal=step_index),
         )
 
 

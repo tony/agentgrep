@@ -16,8 +16,10 @@ from agentgrep.adapters._common import (
 )
 from agentgrep.adapters._extract import (
     _origin_from_mapping,
+    _record_position,
     build_search_record,
     candidate_from_mapping,
+    extract_message_id,
 )
 from agentgrep.adapters._generic import (
     parse_file_metadata_summary_file,
@@ -32,7 +34,7 @@ from agentgrep.readers import (
     _CODEX_SESSION_META_MARKER,
     _file_size,
     _is_codex_function_call_output_line,
-    _iter_jsonl,
+    _iter_jsonl_positioned,
     _keep_jsonl_header_lines,
     _read_first_matching_jsonl_record,
     as_optional_str,
@@ -146,6 +148,7 @@ def parse_codex_session_file(
     prefiltered iteration.
     """
     session_id = source.path.stem
+    native_session_id: str | None = None
     session_model: str | None = _codex_turn_context_model(source.path)
     session_origin: RecordOrigin | None = None
     if reverse:
@@ -163,7 +166,8 @@ def parse_codex_session_file(
             and isinstance(header_payload, dict)
         ):
             payload = t.cast("dict[str, object]", header_payload)
-            session_id = as_optional_str(payload.get("id")) or session_id
+            native_session_id = as_optional_str(payload.get("id"))
+            session_id = native_session_id or session_id
             session_origin = _origin_from_mapping(payload, fallback=session_origin)
             session_model = session_model or _codex_session_meta_model(payload)
     codex_skip_line = (
@@ -183,7 +187,7 @@ def parse_codex_session_file(
         # prefilter is active: the prefix predicate discards oversized
         # function_call_output lines in chunks while the text prefilter
         # still sees every surviving line in full before JSON decode.
-        events = _iter_jsonl(
+        events = _iter_jsonl_positioned(
             source.path,
             skip_line=codex_skip_line,
             skip_line_mode="prefix",
@@ -191,30 +195,35 @@ def parse_codex_session_file(
             reverse=reverse,
         )
     elif kept_raw_skip is not None:
-        events = _iter_jsonl(
+        events = _iter_jsonl_positioned(
             source.path,
             skip_line=kept_raw_skip,
             skip_line_mode="line",
             reverse=reverse,
         )
     else:
-        events = _iter_jsonl(source.path, reverse=reverse)
-    for event in events:
+        events = _iter_jsonl_positioned(source.path, reverse=reverse)
+    for positioned_event in events:
+        event = positioned_event.value
         if not isinstance(event, dict):
             continue
         event_type = str(event.get("type", ""))
         payload = event.get("payload")
         if event_type == "session_meta" and isinstance(payload, dict):
             payload_map = t.cast("dict[str, object]", payload)
-            session_id = as_optional_str(payload_map.get("id")) or session_id
+            observed_session_id = as_optional_str(payload_map.get("id"))
+            if observed_session_id is not None:
+                native_session_id = observed_session_id
+                session_id = observed_session_id
             session_origin = _origin_from_mapping(payload_map, fallback=session_origin)
             # The turn_context slug wins: session_meta offers only a provider id.
             session_model = session_model or _codex_session_meta_model(payload_map)
             continue
         if event_type != "response_item" or not isinstance(payload, dict):
             continue
+        payload_map = t.cast("dict[str, object]", payload)
         candidate = candidate_from_mapping(
-            t.cast("dict[str, object]", payload),
+            payload_map,
             timestamp=as_optional_str(event.get("timestamp")),
             model=session_model,
             session_id=session_id,
@@ -223,6 +232,11 @@ def parse_codex_session_file(
         )
         if candidate is None:
             continue
+        candidate.identity_namespace = "codex.session" if native_session_id is not None else None
+        candidate.position = _record_position(
+            native_id=payload_map.get("id"),
+            ordinal=positioned_event.source_ordinal(),
+        )
         yield build_search_record(source, candidate)
 
 
@@ -235,7 +249,8 @@ def parse_codex_legacy_session_file(
         return
     session_raw = payload.get("session")
     session = t.cast("dict[str, object]", session_raw) if isinstance(session_raw, dict) else {}
-    session_id = as_optional_str(session.get("id")) or source.path.stem
+    native_session_id = as_optional_str(session.get("id"))
+    session_id = native_session_id or source.path.stem
     timestamp = as_optional_str(session.get("timestamp")) or as_optional_str(
         session.get("created_at"),
     )
@@ -247,7 +262,7 @@ def parse_codex_legacy_session_file(
     items = payload.get("items")
     if not isinstance(items, list):
         return
-    for item in items:
+    for raw_index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
         candidate = candidate_from_mapping(
@@ -259,6 +274,11 @@ def parse_codex_legacy_session_file(
         )
         if candidate is None:
             continue
+        candidate.identity_namespace = "codex.session" if native_session_id is not None else None
+        candidate.position = _record_position(
+            native_id=extract_message_id(t.cast("dict[str, object]", item)),
+            ordinal=raw_index,
+        )
         yield build_search_record(source, candidate)
 
 
@@ -279,23 +299,26 @@ def parse_codex_history_file(
     Neither shape records a cwd, a branch, or a model: this is a flat prompt
     log, so ``origin`` and ``model`` stay ``None`` by design.
     """
-    entries: cabc.Iterable[JSONValue]
+    entries: cabc.Iterable[tuple[int, JSONValue]]
     if source.source_kind == "json":
         payload = read_json_file(source.path)
-        entries = payload if isinstance(payload, list) else []
+        entries = enumerate(payload if isinstance(payload, list) else [])
     else:
-        entries = (
-            _iter_jsonl(
+        positioned_entries = (
+            _iter_jsonl_positioned(
                 source.path,
                 skip_line=raw_skip_line,
                 skip_line_mode="line",
                 reverse=reverse,
             )
             if raw_skip_line is not None
-            else _iter_jsonl(source.path, reverse=reverse)
+            else _iter_jsonl_positioned(source.path, reverse=reverse)
+        )
+        entries = (
+            (positioned.source_ordinal(), positioned.value) for positioned in positioned_entries
         )
 
-    for entry in entries:
+    for source_ordinal, entry in entries:
         if not isinstance(entry, dict):
             continue
         text = as_optional_str(entry.get("text")) or as_optional_str(entry.get("command"))
@@ -326,6 +349,10 @@ def parse_codex_history_file(
             timestamp=timestamp,
             session_id=session_id,
             conversation_id=session_id,
+            identity_namespace=("codex.session" if session_id is not None else None),
+            position=_record_position(
+                ordinal=source_ordinal,
+            ),
         )
 
 
@@ -333,7 +360,7 @@ def parse_codex_session_index_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
     """Parse Codex ``session_index.jsonl`` records as opt-in thread summaries."""
-    for entry in iter_jsonl(source.path):
+    for raw_index, entry in enumerate(iter_jsonl(source.path)):
         if not isinstance(entry, dict):
             continue
         mapping = t.cast("dict[str, object]", entry)
@@ -353,6 +380,8 @@ def parse_codex_session_index_file(
             timestamp=as_optional_str(mapping.get("updated_at")),
             session_id=session_id,
             conversation_id=session_id,
+            identity_namespace=("codex.session" if session_id is not None else None),
+            position=_record_position(ordinal=raw_index),
         )
 
 
@@ -456,6 +485,9 @@ def parse_codex_state_db(
                             conversation_id=conversation_id,
                             metadata=metadata,
                             origin=origin,
+                            identity_namespace=(
+                                "codex.session" if conversation_id is not None else None
+                            ),
                         )
                     preview_text = decode_sqlite_value(preview) or as_optional_str(preview)
                     if preview_text and preview_text != text:
@@ -477,6 +509,9 @@ def parse_codex_state_db(
                             conversation_id=conversation_id,
                             metadata=metadata,
                             origin=origin,
+                            identity_namespace=(
+                                "codex.session" if conversation_id is not None else None
+                            ),
                         )
         if "agent_jobs" in tables:
             columns = sqlite_column_names(connection, "agent_jobs")
@@ -507,6 +542,10 @@ def parse_codex_state_db(
                         session_id=conversation_id,
                         conversation_id=conversation_id,
                         metadata={"job_id": as_optional_str(job_id) or ""},
+                        identity_namespace=(
+                            "codex.session" if conversation_id is not None else None
+                        ),
+                        position=_record_position(native_id=job_id),
                     )
     except sqlite3.DatabaseError:
         return
@@ -566,6 +605,8 @@ def parse_codex_logs_db(
                 session_id=conversation_id,
                 conversation_id=conversation_id,
                 metadata=metadata,
+                identity_namespace=("codex.session" if conversation_id is not None else None),
+                position=_record_position(native_id=row_id),
             )
     except sqlite3.DatabaseError:
         return
@@ -614,6 +655,7 @@ def parse_codex_memories_db(
                     session_id=conversation_id,
                     conversation_id=conversation_id,
                     metadata={"field": field_name},
+                    identity_namespace=("codex.session" if conversation_id is not None else None),
                 )
     except sqlite3.DatabaseError:
         return
@@ -706,6 +748,8 @@ def parse_codex_goals_db(
                     "goal_id": as_optional_str(goal_id) or "",
                     "status": as_optional_str(status) or "",
                 },
+                identity_namespace=("codex.session" if conversation_id is not None else None),
+                position=_record_position(native_id=goal_id),
             )
     except sqlite3.DatabaseError:
         return

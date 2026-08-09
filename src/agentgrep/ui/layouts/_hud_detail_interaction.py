@@ -602,13 +602,13 @@ class _HudDetailInteractionBase(_HudDetailBase):
 
     @staticmethod
     def _wrap_aware_row(offset: int, width: int, header_text: str, body: str) -> int:
-        """Count header wrapped rows, then body wrapped rows up to ``offset``."""
+        """Count no-wrap header rows, then wrapped body rows to ``offset``."""
         from rich._wrap import divide_line
 
         def rows(line: str) -> int:
             return len(divide_line(line, width)) + 1
 
-        row = sum(rows(line) for line in header_text.split("\n"))
+        row = header_text.count("\n")
         pos = 0
         for line in body.split("\n"):
             if pos + len(line) >= offset:
