@@ -325,8 +325,13 @@ class _HudDetailBase(LayoutScreen):
         for label, value, value_style in leading_rows:
             header.append(f"{label} ", style="bold")
             header.append(f"{value}\n", style=value_style)
+        record_id = None if identity is None else identity.record_id
+        bookmarked_ids = t.cast("set[str]", getattr(self, "_bookmarked_ids", set()))
+        record_value = (
+            f"★ {record_id}" if record_id is not None and record_id in bookmarked_ids else record_id
+        )
         identity_rows = (
-            ("Record:", None if identity is None else identity.record_id),
+            ("Record:", record_value),
             ("Content:", None if identity is None else identity.content_id),
             ("Thread:", None if identity is None else identity.thread_id),
         )
@@ -534,8 +539,9 @@ class _HudDetailBase(LayoutScreen):
         if self._detail_find_active:
             # A same-record re-render (e.g. a theme switch re-renders the
             # current record) with find open just painted the plain body;
-            # re-overlay the find highlights so they survive the re-render.
-            self._present_detail_find()
+            # recompute from live state before re-overlaying so a query opened
+            # while worker preparation was pending sees the final body.
+            self._run_detail_find(self._detail_find_query, reset_cursor=False)
 
     def _detail_render_width(self) -> int:
         """Return the pane width markdown is baked to (and keyed on).
