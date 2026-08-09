@@ -100,3 +100,35 @@ def test_drift_message_names_both_repairs() -> None:
     (drift,) = detect_version_drift(index, {"grok": ("grok 1.0.0",)})
     assert "observe --agent grok" in drift.message
     assert "store_catalog/grok.py" in drift.message
+
+
+def test_script_and_extension_pick_the_same_manifest(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The observer and the docs reader must agree on which manifest is newest.
+
+    Two implementations of one selection rule drifted once already: the script
+    globbed unsorted, so a same-day tie fell to filesystem order.
+    """
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("_observe", "scripts/observe_stores.py")
+    assert spec is not None and spec.loader is not None
+    script = importlib.util.module_from_spec(spec)
+    sys.modules["_observe"] = script
+    spec.loader.exec_module(script)
+    monkeypatch.setattr(script, "OBSERVATIONS_ROOT", tmp_path)
+
+    for name, version in (
+        ("1.0.0.toml", "1.0.0"),
+        ("9.0.0.toml", "9.0.0"),
+        ("2.0.0.toml", "2.0.0"),
+    ):
+        _write(tmp_path, name, app_version=version)
+
+    picked = script.newest_manifest("grok")
+    assert picked is not None
+    observed = load_observation_index(tmp_path).agents["grok"]
+    assert picked.stem == observed.app_version

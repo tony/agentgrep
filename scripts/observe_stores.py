@@ -65,7 +65,6 @@ import typing as t
 
 import rich.console
 import rich.table
-import tomli_w
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src"
@@ -811,6 +810,8 @@ def write_manifest(payload: dict[str, object]) -> pathlib.Path:
     """
     agent = t.cast("dict[str, str]", payload["agent"])
     target = manifest_path(agent["id"], agent["app_version"])
+    import tomli_w  # only the writer needs it; check/read paths do not
+
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("wb") as handle:
         tomli_w.dump(payload, handle, multiline_strings=False)
@@ -829,12 +830,13 @@ def newest_manifest(agent: str) -> pathlib.Path | None:
     -------
     pathlib.Path or None
         Newest manifest by ``observed_at``, or ``None`` when none exists.
+        Dates have day granularity, so the file name breaks a same-day tie.
     """
     directory = OBSERVATIONS_ROOT / agent
     if not directory.is_dir():
         return None
-    best: tuple[datetime.date, pathlib.Path] | None = None
-    for candidate in directory.glob("*.toml"):
+    best: tuple[datetime.date, str, pathlib.Path] | None = None
+    for candidate in sorted(directory.glob("*.toml")):
         try:
             payload = tomllib.loads(candidate.read_text(encoding="utf-8"))
         except OSError, tomllib.TOMLDecodeError:
@@ -842,9 +844,10 @@ def newest_manifest(agent: str) -> pathlib.Path | None:
         observed = payload.get("observation", {}).get("observed_at")
         if not isinstance(observed, datetime.date):
             continue
-        if best is None or observed > best[0]:
-            best = (observed, candidate)
-    return None if best is None else best[1]
+        key = (observed, candidate.name)
+        if best is None or key > best[:2]:
+            best = (observed, candidate.name, candidate)
+    return None if best is None else best[2]
 
 
 def diff_manifest(previous: dict[str, object], current: dict[str, object]) -> list[str]:
