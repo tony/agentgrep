@@ -9,7 +9,7 @@ so `--deep` does not select Gemini conversations.
 
 Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 
-`observed_version`: `gemini-cli v0.47.0` stable (observed 2026-06-21);
+`observed_version`: `gemini-cli v0.54.4` (observed 2026-08-08);
 types pinned at HEAD `927170fc`.
 
 ## Stores
@@ -51,14 +51,30 @@ context/memory file injected into Gemini CLI sessions, the analogue of
 Claude's `CLAUDE.md`. Standing instructions rather than chat, so it is
 inspectable (opt-in) rather than searched by default.
 
-## Path hashing
+## How a project directory is named
 
-Legacy `tmp/` project directories are named by the SHA-256 of the
-project root; current Gemini CLI also uses timestamp-style and plain
-project-basename directory names. Discovery does not depend on the
-scheme — agentgrep walks `tmp/` recursively — but agentgrep still
-exposes {func}`~agentgrep.store_catalog.gemini_project_hash` to
-reproduce the legacy hash directories.
+Gemini has named `tmp/` project directories three different ways over
+time, and a long-lived home holds all three at once. One tree here
+carries 38 SHA-256 directories, 59 run-scoped names shaped like
+`20260424-214247z-3714694-63ea`, and 45 plain project-basename slugs.
+
+You do not have to care for search: agentgrep walks `tmp/` recursively,
+so every scheme is found. You do have to care for two narrower things.
+
+{func}`~agentgrep.store_catalog.gemini_project_hash` reproduces the
+SHA-256 scheme only. It still answers "which directory holds this
+repo?" for a hash-named tree, and answers nothing for the other two —
+so treat it as a reader for older layouts, not as a general lookup.
+The reverse index that does cover every scheme is `projects.json`,
+which maps each absolute project root to the directory name Gemini
+chose for it.
+
+A `cwd_hash` is published only when the directory name really is a
+digest. A basename slug is not one, and labelling it as such would
+answer `cwd_hash:` with a value no agent ever wrote, so agentgrep
+leaves the field unset instead — see {ref}`backend-cwd-tiers`. The
+literal working directory is unaffected; it comes from the sibling
+`.project_root` file either way.
 
 ## Project context
 
@@ -68,16 +84,19 @@ reproduce the legacy hash directories.
 | {storage:storeref}`gemini.tmp.chats_legacy` | — | sibling `.project_root` | — |
 | {storage:storeref}`gemini.tmp.logs` | — | sibling `.project_root` | — |
 
-All three prompt stores live under `tmp/<project_hash>/`, so the
-directory name gives every record its `origin.cwd_hash`. The literal path
-is on disk too, in two places: the session metadata line names it in a
-plural `directories` array — where every other agent writes a scalar
-`cwd` — and Gemini drops a `.project_root` file next to the hashed
-directory. agentgrep reads both, so Gemini records carry `cwd` and
-`cwd_hash` together and answer `--cwd`, `cwd:`, `repo:`, and `project:`
-alongside `cwd_hash:`. Both sources are
-{ref}`lossless <backend-cwd-tiers>`; a missing `.project_root` is ordinary
-on older trees and simply leaves the record without a `cwd`.
+All three prompt stores live under one `tmp/<project>/` directory, and
+the literal path is on disk in two places: the session metadata line
+names it in a plural `directories` array — where every other agent
+writes a scalar `cwd` — and Gemini drops a `.project_root` file beside
+the directory. agentgrep reads both, so Gemini records answer `--cwd`,
+`cwd:`, `repo:`, and `project:`. Both sources are
+{ref}`lossless <backend-cwd-tiers>`; a missing `.project_root` is
+ordinary on older trees and simply leaves the record without a `cwd`.
+
+`cwd_hash` is the narrower field. A record carries one only when its
+project directory is genuinely a digest, so a hash-named tree answers
+`cwd_hash:` and a slug-named tree does not. Filtering by `cwd:` reaches
+both, which is why it is the better habit for this backend.
 
 Gemini records no git branch in any of its prompt stores, so `branch:`
 does not reach this backend.

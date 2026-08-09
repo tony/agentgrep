@@ -8,6 +8,7 @@ import sqlite3
 import typing as t
 
 from agentgrep.adapters._common import (
+    _path_like_str,
     _record_origin,
     _unix_to_isoformat,
 )
@@ -25,8 +26,10 @@ from agentgrep.origin import (
 from agentgrep.readers import (
     _iter_jsonl,
     as_optional_str,
+    isoformat_from_mtime_ns,
     open_readonly_sqlite,
     read_json_file,
+    read_text_file,
 )
 from agentgrep.records import (
     JSONValue,
@@ -47,8 +50,16 @@ def _grok_project_dir_origin(directory: pathlib.Path) -> RecordOrigin | None:
     ``session_docs.cwd``, which is what lets the JSONL transcript and the FTS
     index answer a ``cwd:`` filter with one working directory instead of two.
 
-    A directory whose decoded name is not path-shaped is not a project
-    directory and yields no origin.
+    That encoding has one documented exception. Grok's own user guide, *Session
+    storage layout*, states: "When the encoded name exceeds 255 bytes, it
+    instead uses a slug plus a hash and records the original path in a ``.cwd``
+    file inside the group." A slug-plus-hash name does not invert, so the
+    sibling file is the only recovery — and without reading it a deeply nested
+    project silently loses ``cwd`` on every record while shallow projects keep
+    it, which is worse than losing it uniformly.
+
+    A directory that neither decodes nor carries a ``.cwd`` file is not a
+    project directory and yields no origin.
 
     Examples
     --------
@@ -58,9 +69,28 @@ def _grok_project_dir_origin(directory: pathlib.Path) -> RecordOrigin | None:
     >>> _grok_project_dir_origin(pathlib.Path("session-1234")) is None
     True
     """
-    return _record_origin(
-        cwd=decode_project_dir(directory.name, encoding=OriginEncoding.URL),
-    )
+    decoded = decode_project_dir(directory.name, encoding=OriginEncoding.URL)
+    return _record_origin(cwd=decoded or _grok_cwd_sidecar(directory))
+
+
+def _grok_cwd_sidecar(directory: pathlib.Path) -> str | None:
+    """Read the working directory Grok writes beside a hashed project group.
+
+    Parameters
+    ----------
+    directory : pathlib.Path
+        Project group directory under ``sessions/``.
+
+    Returns
+    -------
+    str or None
+        Absolute path recorded in ``.cwd``, or ``None`` when the file is
+        absent, unreadable, or does not hold a path.
+    """
+    # read_text_file returns "" for a missing or unreadable file rather than
+    # raising, so absence and empty content collapse to the same falsey answer.
+    text = read_text_file(directory / ".cwd").strip()
+    return _path_like_str(text) if text else None
 
 
 def parse_grok_prompt_history(
@@ -140,6 +170,11 @@ def parse_grok_chat_history(
     """
     conversation_id = source.path.parent.name
     session_origin = _grok_project_dir_origin(source.path.parent.parent)
+    # Grok 1.0.0 transcripts carry no per-record ``timestamp``; the sibling
+    # ``prompt_history.jsonl`` keeps the per-prompt clock instead. Backfill the
+    # file mtime so transcript records stay orderable and reachable by date
+    # filters, matching what the Cursor CLI transcript store already does.
+    fallback_timestamp = isoformat_from_mtime_ns(source.mtime_ns)
     events = (
         _iter_jsonl(
             source.path,
@@ -170,7 +205,7 @@ def parse_grok_chat_history(
             path=source.path,
             text=content_text,
             role=record_type,
-            timestamp=as_optional_str(mapping.get("timestamp")),
+            timestamp=as_optional_str(mapping.get("timestamp")) or fallback_timestamp,
             model=as_optional_str(mapping.get("model_id")),
             session_id=conversation_id,
             conversation_id=conversation_id,

@@ -11,12 +11,14 @@ from sphinx.util import logging
 from sphinx.util.nodes import make_refnode
 
 from ._badges import build_coverage_badge
+from ._observations import ObservationIndex
 from ._roles import StorageStoreXRefRole
 
 if t.TYPE_CHECKING:
     from sphinx.addnodes import pending_xref
     from sphinx.builders import Builder
-    from sphinx.environment import BuildEnvironment
+
+from sphinx.environment import BuildEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,12 @@ class StorageDomain(Domain):
     initial_data: t.ClassVar[dict[str, t.Any]] = {
         "objects": {},
     }
+
+    def __init__(self, env: BuildEnvironment) -> None:
+        super().__init__(env)
+        # Set on builder-inited. Never pickled: BuildEnvironment.__getstate__
+        # drops domains, so a stale index cannot survive into a later build.
+        self.observations = ObservationIndex({}, ())
 
     @property
     def objects(self) -> dict[tuple[str, str], StorageObject]:

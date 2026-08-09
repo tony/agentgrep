@@ -102,16 +102,17 @@
   margin: 0;
 }
 
-.gp-sphinx-storage__chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem 0.4rem;
-  margin: 0;
+.gp-sphinx-storage__record-shape p.rubric {
+  margin: 0.9rem 0 0;
+  font-size: var(--gp-sphinx-type-metadata);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-foreground-muted);
 }
 
-.gp-sphinx-storage__chip-list code.literal {
-  white-space: normal;
-  overflow-wrap: anywhere;
+.gp-sphinx-storage__record-shape .gp-sphinx-storage__key-value dl.field-list {
+  margin-top: 0.3rem;
 }
 
 .gp-sphinx-storage__store-link-list {

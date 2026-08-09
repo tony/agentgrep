@@ -21,7 +21,9 @@ from sphinx_ux_autodoc_layout import (
 from ._badges import build_store_badge_group
 from ._css import StorageCSS
 from ._domain import StorageDomain
+from ._observations import UNKNOWN_VERSION, WILDCARD_BUCKET
 from ._utils import (
+    comma_literal_list,
     literal_paragraph,
     markup_body,
     store_adapter_ids,
@@ -36,14 +38,28 @@ if t.TYPE_CHECKING:
 
     from agentgrep.stores import StoreCatalog, StoreDescriptor
 
+    from ._observations import AgentObservation, ObservedShape
+
 _AGENT_LABELS: dict[str, str] = {
+    "antigravity-cli": "Antigravity CLI",
+    "antigravity-ide": "Antigravity IDE",
     "claude": "Claude",
     "codex": "Codex",
     "cursor-cli": "Cursor CLI",
     "cursor-ide": "Cursor IDE",
     "gemini": "Gemini",
     "grok": "Grok",
+    "opencode": "OpenCode",
+    "pi": "Pi",
+    "vscode": "VS Code",
+    "windsurf": "Windsurf",
 }
+"""Display label per agent id.
+
+Every catalogue agent needs one: the fallback is :meth:`str.title`, which
+writes ``Opencode`` into published HTML without failing.
+``tests/test_storage_agent_labels.py`` holds that line.
+"""
 
 
 _SUPPORT_GROUP_LABELS = (
@@ -109,17 +125,6 @@ def _adapter_literal(store: StoreDescriptor) -> nodes.paragraph:
     return literal_paragraph(adapters) if adapters else text_paragraph("-")
 
 
-def _literal_chip_list(values: Sequence[str]) -> nodes.paragraph:
-    """Return a wrapping literal-chip paragraph."""
-    paragraph = nodes.paragraph(classes=[StorageCSS.CHIP_LIST])
-    if not values:
-        paragraph += nodes.inline("", "-", classes=[StorageCSS.EMPTY_VALUE])
-        return paragraph
-    for value in values:
-        paragraph += nodes.literal("", value)
-    return paragraph
-
-
 def _store_link_list(stores: Sequence[StoreDescriptor]) -> nodes.container:
     """Return one linked store per line."""
     store_list = nodes.container(classes=[StorageCSS.STORE_LINK_LIST])
@@ -143,6 +148,54 @@ def _key_value_section(rows: Sequence[ApiFactRow]) -> nodes.Element:
     )
 
 
+def _observed_shape_block(
+    observation: AgentObservation,
+    shape: ObservedShape,
+) -> nodes.container:
+    """Build the observed-record-shape block for one store card.
+
+    Schema only: the discriminator, the key set per discriminator value, and
+    SQLite tables. Source and record counts describe the observing machine, so
+    they never reach the page.
+    """
+    rows = [
+        ApiFactRow(
+            "Keys" if bucket == WILDCARD_BUCKET else bucket,
+            comma_literal_list(keys),
+        )
+        for bucket, keys in shape.record_keys
+    ]
+    rows.extend(
+        ApiFactRow(f"{table} columns", comma_literal_list(columns))
+        for table, columns in shape.tables
+    )
+
+    heading = "Record keys"
+    if shape.discriminator:
+        heading = f"Record keys by {shape.discriminator}"
+    if shape.tables and not shape.record_keys:
+        heading = "SQLite tables"
+    # An unreadable app version says nothing; date alone is the honest stamp.
+    stamp = observation.observed_at
+    if observation.app_version != UNKNOWN_VERSION:
+        stamp = f"{observation.app_version}, {observation.observed_at}"
+
+    block = nodes.container(classes=[StorageCSS.RECORD_SHAPE])
+    block += nodes.rubric("", f"{heading} observed ({stamp})")
+    block += _key_value_section(rows)
+    return block
+
+
+def _note_observation_dependencies(directive: SphinxDirective) -> None:
+    """Make this page depend on every manifest.
+
+    Sphinx then re-reads it when one is edited or deleted, without any extra
+    state of our own.
+    """
+    for path in _storage_domain(directive).observations.paths:
+        directive.env.note_dependency(str(path))
+
+
 def _card_shell(entry: nodes.Element, *, classes: Sequence[str]) -> nodes.container:
     """Wrap a shared API card entry in a card shell container."""
     card = nodes.container(classes=[API.CARD_SHELL, *classes])
@@ -152,11 +205,12 @@ def _card_shell(entry: nodes.Element, *, classes: Sequence[str]) -> nodes.contai
 
 def _store_card(directive: SphinxDirective, store: StoreDescriptor) -> nodes.section:
     """Build one gp-sphinx card for a storage descriptor."""
+    domain = _storage_domain(directive)
     node_id = store_target_id(store.store_id)
     section = nodes.section(ids=[node_id])
     section["classes"].extend((StorageCSS.STORE_SECTION, API.CARD_SHELL))
 
-    _storage_domain(directive).note_object(
+    domain.note_object(
         "store",
         store.store_id,
         node_id,
@@ -199,6 +253,11 @@ def _store_card(directive: SphinxDirective, store: StoreDescriptor) -> nodes.sec
         ),
         _key_value_section(facts),
     ]
+    # One dictionary lookup: the manifest tree was read once on
+    # ``builder-inited``, whatever number of cards this page renders.
+    observed = domain.observations.observed(store.agent, store.store_id)
+    if observed is not None:
+        content_nodes.append(_observed_shape_block(*observed))
     if store.search_notes:
         content_nodes.append(
             build_api_section(
@@ -227,7 +286,7 @@ def _store_index_card(store: StoreDescriptor) -> nodes.container:
         ApiFactRow("Role", literal_paragraph(store.role.value)),
         ApiFactRow("Format", literal_paragraph(store.format.value)),
         ApiFactRow("Coverage", literal_paragraph(store.coverage_level.value)),
-        ApiFactRow("Adapter", _literal_chip_list(adapter_values)),
+        ApiFactRow("Adapter", comma_literal_list(adapter_values)),
     ]
     entry = build_api_card_entry(
         profile_class=API.profile("storage-store-index"),
@@ -404,20 +463,28 @@ class StorageAgentDirective(SphinxDirective):
         except ValueError as exc:
             return [self.state.document.reporter.warning(str(exc), line=self.lineno)]
 
+        node_id = f"storage-agent-{agent}"
         domain = _storage_domain(self)
         domain.note_object(
             "agent",
             agent,
-            f"storage-agent-{agent}",
+            node_id,
             title=_AGENT_LABELS.get(agent, agent),
         )
 
-        result: list[nodes.Node] = [
-            build_api_summary_section(
-                _agent_store_index(stores),
-                classes=(StorageCSS.BODY_SECTION,),
-            ),
-        ]
+        _note_observation_dependencies(self)
+
+        # The domain advertises this id in objects.inv, so some node has to
+        # carry it. Without the anchor the entry still resolves for intersphinx
+        # and then lands nowhere on the page.
+        summary = build_api_summary_section(
+            _agent_store_index(stores),
+            classes=(StorageCSS.BODY_SECTION,),
+        )
+        summary["ids"].append(node_id)
+        self.state.document.note_explicit_target(summary)
+
+        result: list[nodes.Node] = [summary]
         result.extend(_store_card(self, store) for store in stores)
         return result
 
@@ -443,6 +510,7 @@ class StorageStoreDirective(SphinxDirective):
                     line=self.lineno,
                 ),
             ]
+        _note_observation_dependencies(self)
         return [_store_card(self, store)]
 
 

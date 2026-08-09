@@ -10,7 +10,7 @@ route this backend.
 
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
-`observed_version`: `pi v0.79.9` (observed 2026-06-21).
+`observed_version`: `pi v0.84.1` (observed 2026-08-08).
 
 pi (the earendil-works "Pi Agent Harness") groups transcripts by
 working directory. The directory key is the cwd with its leading slash
@@ -45,7 +45,7 @@ may be absent in older (v1) files.
 ```json
 {"type": "session", "version": 3, "id": "019e5691-...",
  "timestamp": "2026-05-23T20:41:01.417Z",
- "cwd": "/home/d/work/python/agentgrep"}
+ "cwd": "/home/you/work/project"}
 ```
 
 Every later line is a `SessionEntry` sharing `id` / `parentId` /

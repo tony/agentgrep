@@ -11,6 +11,15 @@ from agentgrep.stores import (
     StoreRole,
 )
 
+_ANTIGRAVITY_CLI_OBSERVED_VERSION = "agy v1.1.11"
+"""App version the antigravity-cli rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="antigravity-cli",
@@ -18,7 +27,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PROMPT_HISTORY,
         format=StoreFormat.JSONL,
         path_pattern="${HOME}/.gemini/antigravity-cli/history.jsonl",
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "JSONL prompt recall log. Observed keys: `display` (prompt text), "
@@ -51,7 +60,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PRIMARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.gemini/antigravity-cli/conversations/<conversation_uuid>.db",
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "One SQLite database per conversation. Table `steps` contains "
@@ -87,7 +96,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
             "${HOME}/.gemini/antigravity-cli/brain/<conversation_uuid>/"
             ".system_generated/logs/transcript_full.jsonl"
         ),
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Readable JSONL transcript log under a brain conversation's "
@@ -123,7 +132,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity-cli/implicit/<conversation_uuid>.pb",
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes=(
             "Implicit/background conversation captures as loose `.pb` files. "
@@ -145,7 +154,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.PLAN,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/brain/**/*.md",
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Markdown planning and memory artifacts, not prompt recall.",
         search_by_default=False,
@@ -168,7 +177,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.CACHE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.gemini/antigravity-cli/cache/",
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Runtime cache files. Cache state, not conversation history.",
         search_by_default=False,
@@ -179,7 +188,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/log/",
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="Application logs. Diagnostics, not chat content.",
         search_by_default=False,
@@ -190,7 +199,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.gemini/antigravity-cli/antigravity-oauth-token",
-        observed_version="agy v1.0.10 (observed 2026-06-21)",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_OBSERVED_AT,
         schema_notes="OAuth token material. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,

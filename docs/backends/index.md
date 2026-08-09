@@ -195,6 +195,71 @@ describes the source, not a promise about every record inside it — a
 Cursor composer bubble can name its own worktree — so those stores are
 still opened and filtered record by record.
 
+(backend-worktrees)=
+
+## Worktrees, and why a repo's history splits
+
+If you use `git worktree`, one repository's agent history is not in one
+place. Most agents key their session store on the working directory, so
+a worktree is a different directory and therefore a different store
+key. Searching "everything I asked about this repo" from the main
+checkout quietly misses the rest.
+
+Measured for a single repository on one machine: 8 directories under
+`~/.claude/projects`, 3 under `~/.cursor/projects`, 3 under
+`~/.pi/agent/sessions`, 2 under `~/.grok/sessions` — and 0 split for
+Codex, which shards sessions by date rather than by project and so
+never divides a repo at all.
+
+The practical habit is to filter by a `cwd:` glob that covers the
+worktree root rather than by the main checkout alone, because
+`--project-context` resolves the checkout you are standing in.
+
+### Where each agent puts them
+
+Five agents create worktrees, and they disagree about where.
+
+| Agent | Root | Recorded in |
+|-------|------|-------------|
+| Cursor CLI | `~/.cursor/worktrees/<repo>/<name>/` | git's own registry only |
+| Cursor IDE | the same root, `<repo>__WSL__<distro>_/<name>/` | `composerData` `gitWorktree` |
+| Claude Code | `<repo>/.claude/worktrees/<name>` | the session's `cwd` and `gitBranch` |
+| Gemini CLI | `<repo>/.gemini/worktrees/<name>` | the hashed `tmp/` directory |
+| Grok | not stated by the CLI | `~/.grok/worktrees.db` |
+
+Cursor CLI and Cursor IDE share one root outside the repository;
+Claude Code and Gemini CLI create theirs *inside* it, on a branch named
+`worktree-<name>`. Codex, Pi, OpenCode, Antigravity, VS Code Copilot
+Chat and Windsurf have no worktree feature at all.
+
+Only Grok keeps an index. `~/.grok/worktrees.db` holds a `worktrees`
+table with the checkout path, source repository, git ref, head commit,
+status, and — the useful part — a `session_id` joining each worktree
+straight to the session that created it. Everything else is recovered
+from the directory tree and from git's own `.git/worktrees/` registry.
+
+### What agentgrep can tell you
+
+`worktree:` matches records whose session ran in a git worktree. Today
+{doc}`cursor-ide` is the only backend that populates it, because its
+`gitWorktree` block is the only place an agent writes the worktree path
+*into the record*. Cursor writes that block only for a checkout it
+created, never for an ordinary clone, so its presence is itself the
+evidence.
+
+The other four are recoverable but not yet recorded: Claude Code and
+Gemini CLI repeat the working directory inside every record, so their
+worktree sessions stay resolvable by `cwd:` even after the checkout is
+deleted, and Grok's database has the join but no adapter reads it.
+
+Deleted worktrees are the sharp edge. Claude Code's encoded project
+directory survives the checkout, so its transcripts keep pointing at a
+path that no longer exists. That is harmless for `cwd:`, which matches
+text — but Cursor CLI recovers its working directory by probing the
+filesystem, so a removed worktree there leaves the record with no `cwd`
+at all rather than a stale one. See {ref}`backend-cwd-tiers` for why
+that tier answers with a known-unknown instead of a guess.
+
 ## Version detection
 
 Source discovery reports version metadata separately from record

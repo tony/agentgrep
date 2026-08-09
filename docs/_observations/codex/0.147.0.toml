@@ -1,0 +1,460 @@
+manifest_version = 1
+unclaimed = [
+    { path_pattern = "${HOME}/.codex/.sandbox_migration", kind = "file" },
+    { path_pattern = "${HOME}/.codex/AGENTS.md", kind = "file" },
+    { path_pattern = "${HOME}/.codex/mcp-oauth-locks", kind = "dir" },
+    { path_pattern = "${HOME}/.codex/thread-writer-locks", kind = "dir" },
+]
+
+[agent]
+id = "codex"
+app_version = "0.147.0"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 37
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "codex.history"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/history.jsonl"
+role = "prompt_history"
+format = "jsonl"
+has_discovery = true
+source_count = 2
+discovers_as = [
+    "codex.history",
+]
+records_sampled = 418
+
+[store.record_keys]
+"*" = [
+    "command",
+    "session_id",
+    "text",
+    "timestamp",
+    "ts",
+]
+
+[[store]]
+id = "codex.sessions"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl"
+role = "primary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 6256
+discovers_as = [
+    "codex.sessions",
+]
+discriminator = "type"
+records_sampled = 7891
+
+[store.record_keys]
+compacted = [
+    "payload",
+    "timestamp",
+    "type",
+]
+event_msg = [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type",
+]
+inter_agent_communication_metadata = [
+    "payload",
+    "timestamp",
+    "type",
+]
+response_item = [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type",
+]
+session_meta = [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type",
+]
+turn_context = [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type",
+]
+world_state = [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type",
+]
+
+[[store]]
+id = "codex.session_index"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/session_index.jsonl"
+role = "app_state"
+format = "jsonl"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.session_index",
+]
+
+[[store]]
+id = "codex.state_db"
+path_pattern = "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/state_5.sqlite"
+role = "app_state"
+format = "sqlite"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.state_db",
+]
+
+[[store]]
+id = "codex.logs_db"
+path_pattern = "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/logs_2.sqlite"
+role = "app_state"
+format = "sqlite"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.logs_db",
+]
+
+[[store]]
+id = "codex.memories_db"
+path_pattern = "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/memories_1.sqlite"
+role = "persistent_memory"
+format = "sqlite"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.memories_db",
+]
+
+[[store]]
+id = "codex.thread_history_db"
+path_pattern = "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/thread_history_1.sqlite"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.queue_db"
+path_pattern = "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/queue_1.sqlite"
+role = "app_state"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.attachments"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/attachments/<attachment_uuid>/pasted-text-<n>.txt"
+role = "supplementary_chat"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.goals_db"
+path_pattern = "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/goals_1.sqlite"
+role = "plan"
+format = "sqlite"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.goals_db",
+]
+
+[[store]]
+id = "codex.external_agent_imports"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/external_agent_session_imports.json"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.external_agent_imports",
+]
+
+[[store]]
+id = "codex.instructions"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/instructions.md"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.instructions",
+]
+
+[[store]]
+id = "codex.memories"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/memories/"
+role = "persistent_memory"
+format = "md_frontmatter"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.memories",
+]
+
+[[store]]
+id = "codex.config"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/{config.toml,*.toml}"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.config",
+]
+
+[[store]]
+id = "codex.config_backups"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/{config.toml.bak*,config.toml.backup-*}"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.config_backups",
+]
+
+[[store]]
+id = "codex.auth"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/auth.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.installation_id"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/installation_id"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.secrets"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/secrets/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.env"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/.env"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.update_check"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/update-check.json"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.update_check",
+]
+
+[[store]]
+id = "codex.version_file"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/version.json"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.version_file",
+]
+
+[[store]]
+id = "codex.personality_migration"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/.personality_migration"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.personality_migration",
+]
+
+[[store]]
+id = "codex.model_cache"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/models_cache.json"
+role = "cache"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.model_cache",
+]
+
+[[store]]
+id = "codex.internal_storage"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/internal_storage.json"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.internal_storage",
+]
+
+[[store]]
+id = "codex.plugins"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/plugins/"
+role = "instruction"
+format = "opaque"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.plugins",
+]
+
+[[store]]
+id = "codex.plugin_marketplace"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/plugins/**/marketplace.json"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.plugin_marketplace",
+]
+
+[[store]]
+id = "codex.skills"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/skills/"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.skills",
+]
+
+[[store]]
+id = "codex.rules"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/rules/"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.rules",
+]
+
+[[store]]
+id = "codex.hooks"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/hooks.json and ${HOME}/<known_project_root>/.codex/hooks.json"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.hooks",
+]
+
+[[store]]
+id = "codex.project_config"
+path_pattern = "${HOME}/<known_project_root>/.codex/config.toml"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.project_config",
+]
+
+[[store]]
+id = "codex.project_skills"
+path_pattern = "${HOME}/<known_project_root>/.codex/skills/"
+role = "instruction"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.project_skills",
+]
+
+[[store]]
+id = "codex.policy"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/policy/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.runtime_cache"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/{cache,tmp,.tmp,sqlite}/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.arg0_runtime"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/tmp/arg0/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.arg0_runtime",
+]
+
+[[store]]
+id = "codex.sqlite_sidecars"
+path_pattern = "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/*.sqlite-{wal,shm}"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.log_files"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/log/"
+role = "app_state"
+format = "text"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.log_files",
+]
+
+[[store]]
+id = "codex.process_manager"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/process_manager/"
+role = "app_state"
+format = "json_object"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.process_manager",
+]
+
+[[store]]
+id = "codex.shell_snapshots"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/shell_snapshots/"
+role = "app_state"
+format = "opaque"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "codex.shell_snapshots",
+]

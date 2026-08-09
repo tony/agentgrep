@@ -1,0 +1,396 @@
+manifest_version = 1
+
+[agent]
+id = "cursor-ide"
+app_version = "unknown"
+version_source = "unknown"
+
+[observation]
+observed_at = 2026-08-08
+platform = "linux"
+catalog_version = 37
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "cursor-ide.state_vscdb"
+path_pattern = "${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "cursor-ide.state_vscdb",
+]
+
+[store.tables]
+ItemTable = [
+    "key",
+    "value",
+]
+composerHeaders = [
+    "composerId",
+    "workspaceId",
+    "createdAt",
+    "lastUpdatedAt",
+    "isArchived",
+    "isSubagent",
+    "recency",
+    "checkpointAt",
+    "value",
+]
+cursorDiskKV = [
+    "key",
+    "value",
+]
+
+[[store]]
+id = "cursor-ide.workspace_state"
+path_pattern = "${HOME}/.config/Cursor/User/workspaceStorage/<hash>/state.vscdb"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 73
+discovers_as = [
+    "cursor-ide.workspace_state",
+]
+
+[store.tables]
+ItemTable = [
+    "key",
+    "value",
+]
+composerHeaders = [
+    "composerId",
+    "workspaceId",
+    "createdAt",
+    "lastUpdatedAt",
+    "isArchived",
+    "isSubagent",
+    "recency",
+    "checkpointAt",
+    "value",
+]
+cursorDiskKV = [
+    "key",
+    "value",
+]
+
+[[store]]
+id = "cursor-ide.composer_headers"
+path_pattern = "${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
+role = "app_state"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-ide.conversation_search"
+path_pattern = "${HOME}/.config/Cursor/User/globalStorage/conversation-search.db"
+role = "cache"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.03b87c23125652298159364a70a268fdad7195d0.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.03b87c23125652298159364a70a268fdad7195d0.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.074480df5696cf9fd4e72167fed05695c6d0bed0.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.074480df5696cf9fd4e72167fed05695c6d0bed0.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.0cf8b06883f54e26bb4f0fb8647c9500ccb43310.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.0cf8b06883f54e26bb4f0fb8647c9500ccb43310.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.0e64a4db03875241b355549b7497298283d232e0.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.0e64a4db03875241b355549b7497298283d232e0.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.0e849a87c83c8c4b4095649fcdd17164192ff680.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.0e849a87c83c8c4b4095649fcdd17164192ff680.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.162121a60ddf638794d208fc9fb045a0dd019840.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.162121a60ddf638794d208fc9fb045a0dd019840.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.199f9dfab72daeb2f76c4aad066fd9aeea196d10.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.199f9dfab72daeb2f76c4aad066fd9aeea196d10.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.251fe2954fc02bde617557cee00fcc1d27a6e590.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.251fe2954fc02bde617557cee00fcc1d27a6e590.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.2a298dd06944a9b9ea541d28225b779fcbcc6200.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.2a298dd06944a9b9ea541d28225b779fcbcc6200.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.3e548838cf824b70851dd3ef27d0c6aae371b3f0.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.3e548838cf824b70851dd3ef27d0c6aae371b3f0.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.4830a52b57b7283f2d1ae93f8121d2b10cfb8420.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.4830a52b57b7283f2d1ae93f8121d2b10cfb8420.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.5ba518892cbba89be0f876836745f69c8c7f72f0.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.5ba518892cbba89be0f876836745f69c8c7f72f0.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.7b988c9060d302d4752a7b58829dac7239ac3740.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.7b988c9060d302d4752a7b58829dac7239ac3740.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.9d6e5eddf3329b607975072e3a3a6a9d854ac770.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.9d6e5eddf3329b607975072e3a3a6a9d854ac770.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.a35c6137b003856e0beea5591910c649f5e97350.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.a35c6137b003856e0beea5591910c649f5e97350.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.a820109e9ea4d79557c17130d83d72a5b2430170.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.a820109e9ea4d79557c17130d83d72a5b2430170.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.bcdb543284ca11787a02f4d80877578a588fe770.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.bcdb543284ca11787a02f4d80877578a588fe770.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.d1553adb2e976c19f71d5530c5a9d9b25ccf4e70.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.d1553adb2e976c19f71d5530c5a9d9b25ccf4e70.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.d1a36a628792b1e615917859916162ea8a2f7e10.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.d1a36a628792b1e615917859916162ea8a2f7e10.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.d23f2fee4d488b7ec82617dac2a43426761a1620.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.d23f2fee4d488b7ec82617dac2a43426761a1620.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.dd838e4f1990071ce4b3f9f7ccc3a893bb711e00.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.dd838e4f1990071ce4b3f9f7ccc3a893bb711e00.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.e64b4f5f409b4d92c952bf936c243894a315db10.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.e64b4f5f409b4d92c952bf936c243894a315db10.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.e9ee1339915a927dfb2df4a836dd9c8337e17cc0.log"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/.e9ee1339915a927dfb2df4a836dd9c8337e17cc0.token"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/bin"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/data"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/bin/14fb48fd8d1eaf3ceb9b48e1d0ef9f8e9f832cb0-1783107522361189830"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/bin/14fb48fd8d1eaf3ceb9b48e1d0ef9f8e9f832cb0-1783107522361189830.tar.gz"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/data/CachedExtensionVSIXs"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/data/CachedProfilesData"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/data/Machine"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/data/languagepacks.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/data/logs"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/data/machineid"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/.37408c40-ed31-4e4b-b72f-6b47ba709e1a"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/.8657b20b-268f-46a2-9909-8f099f89f3e9"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/anysphere.cursorpyright-1.0.10"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/astro-build.astro-vscode-2.16.13-linux-x64"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/bierner.markdown-mermaid-1.32.0-universal"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/biomejs.biome-3.6.1-universal"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/extensions.json"
+kind = "file"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/github.vscode-github-actions-0.31.5-universal"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-playwright.playwright-1.1.19-universal"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-python.debugpy-2026.6.0-linux-x64"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-python.mypy-type-checker-2026.4.0-universal"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-python.python-2025.6.1-linux-x64"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-vscode.cmake-tools-1.23.52-universal"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-vscode.cpptools-1.23.6-linux-x64"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-vscode.cpptools-extension-pack-1.3.1"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-vscode.cpptools-themes-2.0.0"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/ms-vscode.makefile-tools-0.12.17"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/runem.lit-plugin-1.4.3"
+kind = "dir"
+
+[[unclaimed]]
+path_pattern = "${HOME}/.cursor-server/extensions/vitest.explorer-1.50.4-universal"
+kind = "dir"

@@ -13,6 +13,15 @@ from agentgrep.stores import (
     StoreRole,
 )
 
+_GROK_OBSERVED_VERSION = "grok 1.0.0"
+"""App version the Grok CLI rows below were verified against.
+
+The observation date lives in ``observed_at`` alone. Repeating it here
+is how one row drifted to a date its own module constant disagreed with.
+``observations/`` records the store shapes seen at this version.
+"""
+
+
 _GROK_STORES: tuple[StoreDescriptor, ...] = (
     StoreDescriptor(
         agent="grok",
@@ -23,7 +32,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/prompt_history.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL per-project user-prompt audit log. Keys: `timestamp` "
@@ -56,7 +65,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/chat_history.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "JSONL full session transcripts. `type` discriminates "
@@ -67,10 +76,15 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "`{type: summary_text, text}` blocks plus an opaque "
             "`encrypted_content` blob; agentgrep does not surface them because "
             "the adapter reads only `content`, which reasoning records omit. "
-            "`content` is text or a content-blocks array."
+            "`content` is text or a content-blocks array. No record of any "
+            "type carries a `timestamp` key, so the adapter backfills the "
+            "source mtime. Agent-injected turns are written as `user` records "
+            "tagged with `synthetic_reason` (`system_reminder`, "
+            "`project_instructions`); the adapter does not yet read that key, "
+            "so they are indexed as user prompts."
         ),
         sample_record=(
-            '{"type":"user","content":"<redacted>","timestamp":"2026-05-25T10:00:01.000000000Z"}'
+            '{"type":"user","content":"<redacted>","synthetic_reason":"system_reminder"}'
         ),
         distinguishes_from=("grok.prompt_history",),
         search_by_default=True,
@@ -96,13 +110,13 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/sessions/session_search.sqlite",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "SQLite with FTS5. Table `session_docs`: session_id, cwd, "
             "updated_at (unix seconds), title (generated), content "
             "(full-text index), content_hash, last_indexed_offset. A `meta` "
-            "table carries session_search_schema_version (3) and "
+            "table carries session_search_schema_version (4) and "
             "last_bootstrap_at; `PRAGMA user_version` stays 0."
         ),
         search_by_default=True,
@@ -131,7 +145,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/subagents/<subagent_uuid>/meta.json"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-subagent dispatch record. One JSON object per delegated "
@@ -174,7 +188,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/events.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session event stream. `type` values include turn_started, "
@@ -194,7 +208,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<url_encoded_project>/<session_uuid>/summary.json"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session summary: id, cwd, session_summary, created_at, "
@@ -209,14 +223,18 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/memory/**/MEMORY.md",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Persistent memory Markdown managed by Grok's memory system. Covers "
             "the flat `memory/MEMORY.md` and the per-project "
-            "`memory/<project_hash>/MEMORY.md` subtree; the companion "
-            "`index.sqlite` FTS index of the same content is not separately "
-            "enumerated. Inspectable opt-in."
+            "`memory/<project-slug>-<hash8>/MEMORY.md` subtree. The companion "
+            "`index.sqlite` is not separately enumerated; it is a chunk store "
+            "(`chunks`) with both an FTS5 mirror (`chunks_fts`) and a "
+            "sqlite-vec embedding index (`chunks_vec`), not an FTS index "
+            "alone. Grok derives the directory name from the git remote URL, "
+            "so every clone and worktree of one repository shares a memory "
+            "directory. Inspectable opt-in."
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -238,7 +256,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/logs/unified.jsonl",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Structured application logs: ts, src, pid, lvl, msg, ctx. "
@@ -253,7 +271,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/worktrees.db",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes="SQLite database tracking git worktrees created by Grok.",
         search_by_default=False,
@@ -265,7 +283,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/config.toml",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes="TOML configuration file.",
         search_by_default=False,
@@ -279,7 +297,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/plan.md"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-session plan-mode Markdown — the agent's working plan for the "
@@ -309,7 +327,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/system_prompt.txt"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "The rendered system prompt for the session (agent instructions "
@@ -328,7 +346,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/prompt_context.json"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Session prompt-context metadata: working_directory, "
@@ -347,7 +365,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/hunk_records.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Edit-attribution JSONL (filePath, hunkStart/End, linesAdded/"
@@ -366,7 +384,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/updates.jsonl"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "ACP-style session/update notification stream (method, "
@@ -385,7 +403,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "<session_uuid>/terminal/call-<id>.log"
         ),
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.59 (observed 2026-06-21)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
             "Per-tool-call terminal stdout/stderr logs (thousands per active "
@@ -401,7 +419,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${GROK_HOME or ${HOME}/.grok}/skills/<name>/SKILL.md",
         env_overrides=("GROK_HOME",),
-        observed_version="grok-cli v0.2.82 (observed 2026-07-03)",
+        observed_version=_GROK_OBSERVED_VERSION,
         observed_at=datetime.date(2026, 7, 3),
         schema_notes=(
             "`skills/<name>/SKILL.md` skill-instruction files (currently the "
