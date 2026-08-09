@@ -42,6 +42,54 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Every store an agent keeps is now catalogued
+
+The catalogue used to list the stores agentgrep searches. It now also
+carries the ones it deliberately does not — app state, derived caches,
+and stores whose contents are encrypted — so `find` and the MCP store
+tools describe an agent's real on-disk surface instead of only the
+searchable slice of it. Each row says which kind of store it is and
+why it is or is not searched. See {ref}`storage-kinds`. (#161)
+
+### Fixes
+
+- Cursor IDE records now carry their working directory, branch, model,
+  and worktree path. Every record previously arrived with none of
+  them, so the project-context filters documented for this backend
+  matched nothing. (#161)
+- Grok transcripts are dated from their source file rather than
+  arriving undated, which had dropped them out of date filters and
+  newest-first ordering. (#161)
+- Grok recovers the working directory for deeply nested projects,
+  which it stores beside the transcript when the directory name is too
+  long to encode. (#161)
+- Gemini no longer reports a slugified project name as a
+  working-directory hash. A name that is not a digest now yields no
+  hash instead of a searchable one no agent ever wrote. (#161)
+
+### Documentation
+
+#### Backend pages document the whole storage surface
+
+Each backend page now describes every kind of store that agent keeps
+and where it keeps it — including how it stores git worktrees — rather
+than only the paths agentgrep reads. See {ref}`backends` and
+{ref}`backend-worktrees`. (#161)
+
+### Development
+
+#### Recorded store observations
+
+`scripts/observe_stores.py` records the shape of each agent's stores —
+key names, table and column names, counts, never values — as a
+per-version TOML manifest, and `observe check` reports what has
+drifted since. The catalogue pages render the recorded shapes, so a
+documented claim traces back to a version it was observed against, and
+a store that changes upstream is caught rather than quietly
+misdescribed. See {ref}`storage-observations`. (#161)
+
 ## agentgrep 0.1.0a49 (2026-08-03)
 
 agentgrep 0.1.0a49 unifies search-depth control and fixes a long-
