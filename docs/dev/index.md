@@ -22,7 +22,7 @@ On-disk store layouts for Codex, Claude Code, Cursor, Gemini CLI, Antigravity, G
 :::{grid-item-card} DB index
 :link: db-index
 :link-type: doc
-SQLite cache and sync planner for the persistent DB index.
+SQLite cache, sync planner, and insight artifact substrate.
 :::
 
 :::{grid-item-card} Architecture decisions

@@ -1,4 +1,4 @@
-"""Tests for the persistent DB index layer."""
+"""Tests for the persistent DB, insights, and suggestions layers."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import pytest
 
 import agentgrep
 from agentgrep.db import DbRuntime, DbStatus, DbSyncProgress, SyncCoverage, SyncResult
+from agentgrep.insights import InsightEngine, VariantEdge
+from agentgrep.suggestions import SuggestionArtifact, SuggestionEngine
 
 
 class CachedSearchCase(t.NamedTuple):
@@ -27,6 +29,15 @@ class DuplicateRecordCase(t.NamedTuple):
     test_id: str
     texts: tuple[str, ...]
     expected_records: int
+
+
+class SyncFeatureModeCase(t.NamedTuple):
+    """Named case for feature-generation behavior during DB sync."""
+
+    test_id: str
+    features_mode: t.Literal["defer", "inline"]
+    expected_features: int
+    expected_deferred: int
 
 
 class StopAfterFirstSourceProgress:
@@ -77,6 +88,17 @@ class StopAfterFirstSourceProgress:
         self.early_result = result
 
 
+class InsightActivityProgress:
+    """Progress stub that records insight engine activity labels."""
+
+    def __init__(self) -> None:
+        self.activities: list[tuple[str, str | None]] = []
+
+    def set_activity(self, activity: str, *, detail: str | None = None) -> None:
+        """Capture one current-work update."""
+        self.activities.append((activity, detail))
+
+
 CACHED_SEARCH_CASES: tuple[CachedSearchCase, ...] = (
     CachedSearchCase(
         test_id="require-uses-index",
@@ -99,6 +121,22 @@ DUPLICATE_RECORD_CASES: tuple[DuplicateRecordCase, ...] = (
             "Run ruff check before committing.",
         ),
         expected_records=2,
+    ),
+)
+
+
+SYNC_FEATURE_MODE_CASES: tuple[SyncFeatureModeCase, ...] = (
+    SyncFeatureModeCase(
+        test_id="default-defer",
+        features_mode="defer",
+        expected_features=0,
+        expected_deferred=2,
+    ),
+    SyncFeatureModeCase(
+        test_id="inline-features",
+        features_mode="inline",
+        expected_features=2,
+        expected_deferred=0,
     ),
 )
 
@@ -203,6 +241,42 @@ def test_db_runtime_syncs_records_and_serves_fts_results(
     ]
 
 
+@pytest.mark.parametrize(
+    "case",
+    SYNC_FEATURE_MODE_CASES,
+    ids=[case.test_id for case in SYNC_FEATURE_MODE_CASES],
+)
+def test_db_runtime_sync_feature_modes(
+    case: SyncFeatureModeCase,
+    tmp_path: pathlib.Path,
+) -> None:
+    """DB sync can defer expensive feature generation without breaking FTS."""
+    source_path = tmp_path / "session.jsonl"
+    source_path.write_text("ruff", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+
+    result = runtime.sync_records(
+        (
+            (
+                source,
+                (
+                    _record(source, "Run ruff check before committing."),
+                    _record(source, "Run pytest for the focused suite."),
+                ),
+            ),
+        ),
+        features_mode=case.features_mode,
+    )
+
+    assert result.records_indexed == 2
+    assert result.features_deferred == case.expected_deferred
+    assert runtime.status().features == case.expected_features
+    assert [record.text for record in runtime.search_records(_query("ruff"))] == [
+        "Run ruff check before committing.",
+    ]
+
+
 def test_db_runtime_sync_skips_unchanged_sources_without_reading_records(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -227,6 +301,7 @@ def test_db_runtime_sync_skips_unchanged_sources_without_reading_records(
         records_indexed=0,
         records_removed=0,
         sources_skipped=1,
+        features_deferred=0,
     )
     assert runtime.status().records == 1
 
@@ -332,6 +407,7 @@ def test_db_runtime_sync_can_exit_early_between_sources(
         sources_synced=1,
         records_indexed=1,
         records_removed=0,
+        features_deferred=1,
     )
     assert progress.started_total == 2
     assert progress.finished_sources == ["first.jsonl"]
@@ -392,6 +468,422 @@ def test_run_search_query_respects_cache_mode(
     records = agentgrep.run_search_query(tmp_path, _query("ruff"), runtime=runtime)
 
     assert [record.text for record in records] == list(case.expected_texts)
+
+
+def test_insight_engine_records_duplicate_variant_edges(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Similarity insights persist deterministic variant edges with confidence."""
+    first_path = tmp_path / "one.jsonl"
+    second_path = tmp_path / "two.jsonl"
+    first_path.write_text("{}", encoding="utf-8")
+    second_path.write_text("{}", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing.", session_id="one"),)),
+            (second, (_record(second, "run ruff check before committing", session_id="two"),)),
+        ),
+    )
+
+    result = InsightEngine(runtime.store).run_similarity()
+    edges = InsightEngine(runtime.store).list_variant_edges()
+
+    assert result.variant_edges == 1
+    assert runtime.status().features == 2
+    assert len(edges) == 1
+    assert isinstance(edges[0], VariantEdge)
+    assert edges[0].variant_type == "exact_duplicate"
+    assert edges[0].confidence == pytest.approx(1.0)
+
+
+def test_insight_engine_counts_and_limits_variant_edges(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Variant edge listing can be paged without materializing every row."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    _record(
+                        source,
+                        "Run ruff check before committing.",
+                        session_id=f"duplicate-{index}",
+                    )
+                    for index in range(4)
+                ),
+            ),
+        ),
+    )
+    _ = InsightEngine(runtime.store).run_similarity()
+    engine = InsightEngine(runtime.store)
+
+    edges = engine.list_variant_edges(limit=2)
+
+    assert engine.count_variant_edges() == 6
+    assert len(edges) == 2
+
+
+def test_variant_edge_listing_uses_confidence_order_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The default variant-edge page can stop at the requested limit."""
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+
+    rows = runtime.store.connection.execute(
+        """
+        EXPLAIN QUERY PLAN
+        SELECT edge_id, run_id, left_record_id, right_record_id,
+               variant_type, confidence, explanation
+        FROM variant_edges
+        ORDER BY confidence DESC, edge_id
+        LIMIT 1
+        """,
+    ).fetchall()
+    plan = "\n".join(str(row["detail"]) for row in rows)
+
+    assert "idx_variant_edges_confidence_edge_id" in plan
+    assert "USE TEMP B-TREE" not in plan
+
+
+def test_insight_engine_reports_similarity_activity(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Similarity analysis reports the current backend phase."""
+    first_path = tmp_path / "one.jsonl"
+    second_path = tmp_path / "two.jsonl"
+    first_path.write_text("{}", encoding="utf-8")
+    second_path.write_text("{}", encoding="utf-8")
+    first = _source(first_path)
+    second = _source(second_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (first, (_record(first, "Run ruff check before committing.", session_id="one"),)),
+            (second, (_record(second, "run ruff check before committing", session_id="two"),)),
+        ),
+    )
+    progress = InsightActivityProgress()
+
+    _ = InsightEngine(runtime.store).run_similarity(progress=progress)
+
+    labels = [activity for activity, _detail in progress.activities]
+    first_seen_labels = tuple(dict.fromkeys(labels))
+    assert first_seen_labels == (
+        "checking feature cache",
+        "building feature signatures",
+        "writing feature cache",
+        "loading similarity rows",
+        "grouping duplicate prompts",
+        "writing similarity artifacts",
+    )
+
+
+def test_feature_refresh_reports_incremental_build_and_write_progress(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Feature refresh reports row-level progress inside long phases."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                (
+                    _record(source, "Run ruff check before committing.", session_id="one"),
+                    _record(source, "Run ty check before committing.", session_id="two"),
+                    _record(source, "Build docs before committing.", session_id="three"),
+                ),
+            ),
+        ),
+    )
+    progress = InsightActivityProgress()
+
+    refreshed = runtime.store.refresh_missing_features(workers=1, progress=progress)
+
+    assert refreshed == 3
+    build_details = [
+        detail
+        for activity, detail in progress.activities
+        if activity == "building feature signatures"
+    ]
+    write_details = [
+        detail for activity, detail in progress.activities if activity == "writing feature cache"
+    ]
+    assert build_details[-1] == "3/3 rows built (100.0%, 1w)"
+    assert write_details[-1] == "3/3 rows written (100.0%)"
+
+
+def test_similarity_analysis_reports_artifact_write_progress(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Similarity analysis reports cluster and edge write counters."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    _record(
+                        source,
+                        "Run ruff check before committing.",
+                        session_id=f"duplicate-{index}",
+                    )
+                    for index in range(4)
+                ),
+            ),
+        ),
+    )
+    progress = InsightActivityProgress()
+
+    result = InsightEngine(runtime.store).run_similarity(progress=progress)
+
+    write_details = [
+        detail
+        for activity, detail in progress.activities
+        if activity == "writing similarity artifacts"
+    ]
+    assert result.variant_edges == 6
+    assert write_details[-1] == "1/1 clusters, 6/6 edges"
+
+
+def _sync_prompts(
+    tmp_path: pathlib.Path,
+    texts: tuple[str, ...],
+) -> DbRuntime:
+    """Sync one synthetic prompt per text into a fresh DB runtime."""
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                tuple(
+                    _record(source, text, session_id=f"session-{index}")
+                    for index, text in enumerate(texts)
+                ),
+            ),
+        ),
+    )
+    return runtime
+
+
+def _near_duplicate_edges(runtime: DbRuntime) -> list[tuple[frozenset[str], float]]:
+    """Return near-duplicate edges as ``({left_text, right_text}, confidence)``."""
+    rows = runtime.store.connection.execute(
+        """
+        SELECT dl.text AS left_text, dr.text AS right_text, v.confidence AS confidence
+        FROM variant_edges v
+        JOIN records_search rl ON rl.record_id = v.left_record_id
+        JOIN record_details dl ON dl.rowid = rl.rowid
+        JOIN records_search rr ON rr.record_id = v.right_record_id
+        JOIN record_details dr ON dr.rowid = rr.rowid
+        WHERE v.variant_type = 'near_duplicate'
+        """,
+    ).fetchall()
+    return [
+        (frozenset({str(row["left_text"]), str(row["right_text"])}), float(row["confidence"]))
+        for row in rows
+    ]
+
+
+def _near_duplicate_cluster_member_texts(runtime: DbRuntime) -> list[frozenset[str]]:
+    """Return the record texts grouped in each near-duplicate cluster."""
+    rows = runtime.store.connection.execute(
+        """
+        SELECT c.cluster_id AS cluster_id, d.text AS text
+        FROM clusters c
+        JOIN cluster_members m ON m.cluster_id = c.cluster_id
+        JOIN records_search r ON r.record_id = m.record_id
+        JOIN record_details d ON d.rowid = r.rowid
+        WHERE c.kind = 'near_duplicate_prompt'
+        ORDER BY c.cluster_id, d.text
+        """,
+    ).fetchall()
+    by_cluster: dict[str, set[str]] = {}
+    for row in rows:
+        by_cluster.setdefault(str(row["cluster_id"]), set()).add(str(row["text"]))
+    return [frozenset(texts) for texts in by_cluster.values()]
+
+
+def test_insight_engine_links_near_duplicate_prompts(tmp_path: pathlib.Path) -> None:
+    """Slightly different prompts become one near-duplicate edge and cluster."""
+    left = "run ruff check across the repo"
+    right = "run ruff check across the whole repo"
+    runtime = _sync_prompts(tmp_path, (left, right))
+
+    result = InsightEngine(runtime.store).run_similarity()
+    edges = _near_duplicate_edges(runtime)
+    clusters = _near_duplicate_cluster_member_texts(runtime)
+
+    assert result.variant_edges == 1
+    assert result.clusters == 1
+    assert len(edges) == 1
+    pair, confidence = edges[0]
+    assert pair == frozenset({left, right})
+    # Confidence is the exact token-set Jaccard: 6 shared / 7 union tokens.
+    assert confidence == pytest.approx(6 / 7)
+    assert clusters == [frozenset({left, right})]
+
+
+def test_insight_engine_keeps_exact_and_near_duplicates_separate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Exact duplicates stay exact-only and are not re-reported as near."""
+    exact = "run ruff check across the repo"
+    variant = "run ruff check across the whole repo"
+    runtime = _sync_prompts(tmp_path, (exact, exact, variant))
+
+    result = InsightEngine(runtime.store).run_similarity()
+    exact_edges = runtime.store.connection.execute(
+        "SELECT confidence FROM variant_edges WHERE variant_type = 'exact_duplicate'",
+    ).fetchall()
+    near_edges = _near_duplicate_edges(runtime)
+
+    assert len(exact_edges) == 1
+    assert float(exact_edges[0]["confidence"]) == pytest.approx(1.0)
+    # The two identical prompts collapse to one representative, so their
+    # pair is never emitted as a near-duplicate edge.
+    assert frozenset({exact}) not in {pair for pair, _confidence in near_edges}
+    # The representative still links to the distinct near-duplicate variant.
+    assert near_edges == [(frozenset({exact, variant}), pytest.approx(6 / 7))]
+    assert result.variant_edges == 2
+
+
+def test_insight_engine_ignores_unrelated_prompts_for_near_duplicates(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Prompts below the Jaccard threshold produce no near-duplicate edge."""
+    runtime = _sync_prompts(
+        tmp_path,
+        (
+            "run ruff check across the repo",
+            "deploy the kubernetes cluster to staging tonight",
+        ),
+    )
+
+    result = InsightEngine(runtime.store).run_similarity()
+
+    assert result.variant_edges == 0
+    assert result.clusters == 0
+    assert _near_duplicate_edges(runtime) == []
+
+
+def test_insight_engine_clusters_transitive_near_duplicates(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A~B and B~C above threshold land in one cluster via union-find."""
+    a = "run ruff check across the repo before every commit"
+    b = "run ruff check across the repo"
+    c = "run ruff check across the repo inside docker containers"
+    runtime = _sync_prompts(tmp_path, (a, b, c))
+
+    result = InsightEngine(runtime.store).run_similarity()
+    edges = _near_duplicate_edges(runtime)
+    clusters = _near_duplicate_cluster_member_texts(runtime)
+
+    assert result.clusters == 1
+    assert clusters == [frozenset({a, b, c})]
+    # A~C (Jaccard 0.5) is below threshold, so only the two chain edges exist.
+    assert {pair for pair, _confidence in edges} == {
+        frozenset({a, b}),
+        frozenset({b, c}),
+    }
+    assert frozenset({a, c}) not in {pair for pair, _confidence in edges}
+    cluster_confidence = runtime.store.connection.execute(
+        "SELECT confidence FROM clusters WHERE kind = 'near_duplicate_prompt'",
+    ).fetchone()
+    # Cluster confidence is the weakest-link (minimum) pairwise Jaccard.
+    assert float(cluster_confidence["confidence"]) == pytest.approx(6 / 9)
+
+
+def test_near_duplicate_similarity_run_is_deterministic(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Re-running similarity yields identical near-duplicate ids and counts."""
+    runtime = _sync_prompts(
+        tmp_path,
+        (
+            "run ruff check across the repo before every commit",
+            "run ruff check across the repo",
+            "run ruff check across the repo inside docker containers",
+        ),
+    )
+
+    def snapshot() -> tuple[frozenset[str], frozenset[str]]:
+        edge_ids = frozenset(
+            str(row["edge_id"])
+            for row in runtime.store.connection.execute(
+                "SELECT edge_id FROM variant_edges WHERE variant_type = 'near_duplicate'",
+            )
+        )
+        cluster_ids = frozenset(
+            str(row["cluster_id"])
+            for row in runtime.store.connection.execute(
+                "SELECT cluster_id FROM clusters WHERE kind = 'near_duplicate_prompt'",
+            )
+        )
+        return edge_ids, cluster_ids
+
+    first_result = InsightEngine(runtime.store).run_similarity()
+    first_snapshot = snapshot()
+    second_result = InsightEngine(runtime.store).run_similarity()
+    second_snapshot = snapshot()
+
+    assert first_snapshot == second_snapshot
+    assert first_result.run_id == second_result.run_id
+    assert first_result.variant_edges == second_result.variant_edges == 2
+    assert first_result.clusters == second_result.clusters == 1
+
+
+def test_suggestion_engine_renders_review_only_instruction_suggestion(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Omission suggestions are persisted artifacts and do not edit the target file."""
+    source_path = tmp_path / "source.jsonl"
+    target_path = tmp_path / "AGENTS.md"
+    source_path.write_text("{}", encoding="utf-8")
+    target_path.write_text("Run pytest before committing.\n", encoding="utf-8")
+    source = _source(source_path)
+    runtime = DbRuntime.open(tmp_path / "agentgrep.sqlite")
+    _ = runtime.sync_records(
+        (
+            (
+                source,
+                (
+                    _record(
+                        source,
+                        "Run ruff check before committing.",
+                        session_id="instruction-source",
+                    ),
+                ),
+            ),
+        ),
+    )
+    insights = InsightEngine(runtime.store)
+    _ = insights.run_omissions(target_path=target_path, target_text=target_path.read_text())
+
+    suggestions = SuggestionEngine(runtime.store).create_from_omissions(target_path=target_path)
+
+    assert len(suggestions) == 1
+    assert isinstance(suggestions[0], SuggestionArtifact)
+    assert "Run ruff check before committing." in suggestions[0].body
+    assert "reload" in suggestions[0].reload_note.casefold()
+    assert target_path.read_text(encoding="utf-8") == "Run pytest before committing.\n"
 
 
 def test_resync_keeps_fts_index_consistent(tmp_path: pathlib.Path) -> None:
@@ -606,7 +1098,15 @@ def test_schema_version_mismatch_rebuilds_cache(tmp_path: pathlib.Path) -> None:
     runtime = DbRuntime.open(db_path)
     _ = runtime.sync_records(
         ((source, (_record(source, "Run ruff check before committing."),)),),
+        features_mode="inline",
     )
+    _ = InsightEngine(runtime.store).run_similarity()
+    fresh_tables = {
+        str(row["name"])
+        for row in runtime.store.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+    }
     with runtime.store.connection:
         _ = runtime.store.connection.execute(
             "UPDATE meta SET value = '999' WHERE key = 'schema_version'",
@@ -615,8 +1115,28 @@ def test_schema_version_mismatch_rebuilds_cache(tmp_path: pathlib.Path) -> None:
 
     reopened = DbRuntime.open(db_path)
 
-    assert reopened.status().records == 0
-    assert reopened.status().sources == 0
+    status = reopened.status()
+    assert status.records == 0
+    assert status.sources == 0
+    assert status.features == 0
+    assert status.variant_edges == 0
+    assert status.omission_findings == 0
+    assert status.suggestions == 0
+    rebuilt_tables = {
+        str(row["name"])
+        for row in reopened.store.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+    }
+    assert rebuilt_tables == fresh_tables
+    # Tables without a cascade path to records keep rows if the drop
+    # list misses them; count them directly since status() does not.
+    for table in ("insight_runs", "clusters"):
+        row = reopened.store.connection.execute(
+            f"SELECT COUNT(*) AS count FROM {table}",
+        ).fetchone()
+        assert row is not None
+        assert int(row["count"]) == 0, table
 
 
 class CacheDedupeCase(t.NamedTuple):
