@@ -82,25 +82,27 @@ part of ordinary prompt search.
 ## Kinds of storage an agent keeps
 
 Coding agents keep far more than transcripts, and `StoreRole` is how the
-catalogue names each kind. The distribution across the 161 rows shows
-where the modelling is dense and where it is thin:
+catalogue names each kind:
 
-| Role | Rows | What it holds |
-|------|-----:|---------------|
-| `app_state` | 74 | Settings, registries, session indexes, runtime markers |
-| `primary_chat` | 15 | The canonical transcript of a session |
-| `cache` | 15 | Derived data reconstructible from a source of truth |
-| `instruction` | 15 | Skills, rules, and memory files that steer future sessions |
-| `supplementary_chat` | 13 | Subagent turns, delegations, secondary transcripts |
-| `persistent_memory` | 8 | Long-lived notes an agent writes to itself |
-| `plan` | 8 | Plan-mode Markdown |
-| `prompt_history` | 7 | Append-only logs of what you typed |
-| `source_tree` | 4 | Working trees the agent created |
-| `todo` | 2 | Task lists |
+| Role | What it holds |
+|------|---------------|
+| `app_state` | Settings, registries, session indexes, runtime markers |
+| `primary_chat` | The canonical transcript of a session |
+| `cache` | Derived data reconstructible from a source of truth |
+| `instruction` | Skills, rules, and memory files that steer future sessions |
+| `supplementary_chat` | Subagent turns, delegations, secondary transcripts |
+| `persistent_memory` | Long-lived notes an agent writes to itself |
+| `plan` | Plan-mode Markdown |
+| `prompt_history` | Append-only logs of what you typed |
+| `source_tree` | Working trees the agent created |
+| `todo` | Task lists |
 
-`app_state` carrying almost half the rows is the honest signal that it
-is the catch-all: it absorbs anything that is neither chat nor
-instruction. Splitting it is a future concern, not a defect.
+How many rows each kind carries is in the *By role* card of the
+[catalog summary](#catalog-summary) above, rendered from the catalogue
+itself so it cannot drift. `app_state` holds more than any other kind,
+which is the honest signal that it is the catch-all: it absorbs anything
+that is neither chat nor instruction. Splitting it is a future concern,
+not a defect.
 
 ### Kinds no row models yet
 
