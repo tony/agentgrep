@@ -829,8 +829,10 @@ def newest_manifest(agent: str) -> pathlib.Path | None:
     Returns
     -------
     pathlib.Path or None
-        Newest manifest by ``observed_at``, or ``None`` when none exists.
-        Dates have day granularity, so the file name breaks a same-day tie.
+        Newest readable manifest by ``observed_at``, or ``None`` when none
+        exists. Dates have day granularity, so the file name breaks a
+        same-day tie. Skips schema versions the docs extension refuses, so
+        ``check`` cannot pass on a manifest the build rejects.
     """
     best: tuple[datetime.date, str, pathlib.Path] | None = None
     for candidate in sorted((OBSERVATIONS_ROOT / agent).glob("*.toml")):
@@ -839,7 +841,7 @@ def newest_manifest(agent: str) -> pathlib.Path | None:
         except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
             continue
         observed = _observation_date(payload)
-        if observed is None:
+        if observed is None or payload.get("manifest_version") != MANIFEST_VERSION:
             continue
         key = (observed, candidate.name)
         if best is None or key > best[:2]:
