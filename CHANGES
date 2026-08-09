@@ -36,11 +36,26 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a50 (Yet to be released)
+## agentgrep 0.1.0a51 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a50 (2026-08-09)
+
+agentgrep 0.1.0a50 makes the store catalogue describe an agent's whole
+on-disk surface rather than only the parts agentgrep searches, so
+`find` and the MCP store tools let you tell a deliberate omission from
+an undiscovered one — see {ref}`storage-kinds`. It also restores origin
+data three backends were dropping: Cursor IDE records now arrive with
+their working directory, branch, model, and worktree path, Grok
+transcripts are dated instead of falling out of date filters and
+ordering, and Gemini no longer reports a slugified project name as a
+working-directory hash. The backend pages document every kind of store
+each agent keeps, including where it puts git worktrees, and those
+claims are now backed by recorded per-version observations rather than
+a one-off audit.
 
 ### What's new
 
