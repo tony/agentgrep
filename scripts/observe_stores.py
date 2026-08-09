@@ -832,22 +832,35 @@ def newest_manifest(agent: str) -> pathlib.Path | None:
         Newest manifest by ``observed_at``, or ``None`` when none exists.
         Dates have day granularity, so the file name breaks a same-day tie.
     """
-    directory = OBSERVATIONS_ROOT / agent
-    if not directory.is_dir():
-        return None
     best: tuple[datetime.date, str, pathlib.Path] | None = None
-    for candidate in sorted(directory.glob("*.toml")):
+    for candidate in sorted((OBSERVATIONS_ROOT / agent).glob("*.toml")):
         try:
             payload = tomllib.loads(candidate.read_text(encoding="utf-8"))
-        except OSError, tomllib.TOMLDecodeError:
+        except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
             continue
-        observed = payload.get("observation", {}).get("observed_at")
-        if not isinstance(observed, datetime.date):
+        observed = _observation_date(payload)
+        if observed is None:
             continue
         key = (observed, candidate.name)
         if best is None or key > best[:2]:
             best = (observed, candidate.name, candidate)
     return None if best is None else best[2]
+
+
+def _observation_date(payload: dict[str, object]) -> datetime.date | None:
+    """Return ``observation.observed_at`` as a date.
+
+    TOML yields ``datetime`` for a timestamped value and ``date`` for a bare
+    one, and ``datetime`` subclasses ``date`` — so an isinstance guard admits
+    both and the later comparison raises.
+    """
+    observation = payload.get("observation")
+    if not isinstance(observation, dict):
+        return None
+    value = t.cast("dict[str, object]", observation).get("observed_at")
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    return value if isinstance(value, datetime.date) else None
 
 
 def diff_manifest(previous: dict[str, object], current: dict[str, object]) -> list[str]:
