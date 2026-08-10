@@ -108,6 +108,7 @@ class CompiledQuery:
     routing_predicate: t.Callable[[SearchRecord], bool] | None
     has_positive_routing_metadata: bool
     is_pure_text: bool
+    origin_fields: frozenset[str] = frozenset()
 
 
 def compile_query(
@@ -197,6 +198,7 @@ def compile_query(
         routing_predicate=routing_predicate,
         has_positive_routing_metadata=_has_positive_routing_metadata(ast, registry),
         is_pure_text=False,
+        origin_fields=frozenset(fields_in_ast(ast) & ORIGIN_QUERY_FIELDS),
     )
 
 
