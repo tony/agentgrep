@@ -42,6 +42,36 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### `mcp_swap.py` swaps opencode and pi
+
+The dev config-swap helper now writes two more agent CLIs:
+`$XDG_CONFIG_HOME/opencode/opencode.jsonc` (container key `mcp`, argv packed
+into one `command` array, environment spelled `environment`) and
+`~/.pi/agent/mcp.json`, which is read by the third-party `pi-mcp-adapter`
+rather than by pi itself — `detect` says so rather than reporting a swap that
+cannot take effect. Both files are JSONC, so the swap edits them through a
+splicing codec that rewrites only the members that differ: comments, trailing
+commas, indent width, and the absence of a final newline all survive. Per-CLI
+container keys and entry dialects are now data on `CLIInfo` instead of a branch
+per CLI in each of the four read/write/delete/enumerate functions.
+
+#### `mcp_swap.py use-local --pr` and safer writes
+
+`use-local --pr N` points every CLI at a pull request's head
+(`uvx --from git+<remote>@refs/pull/N/head <entry>`) instead of the working
+copy. Nothing is checked out, so `revert` needs no cleanup, and the ref lives
+on the base repo, so fork pull requests work unchanged. Before anything is
+written the spec is launched once for an MCP `initialize` round trip, so an
+unresolvable ref fails there rather than inside every agent; `--no-preflight`
+skips the probe. Writes are safer in four ways: a symlinked config is updated
+through the link with its permission bits intact instead of being replaced by a
+regular file, backups are created with `O_EXCL` so one can never clobber
+another, re-swapping a layer keeps the original pre-swap backup rather than
+recording the already-swapped config, and the recovery record is persisted
+before the config changes so a failed write stays revertible.
+
 ## agentgrep 0.1.0a50 (2026-08-09)
 
 agentgrep 0.1.0a50 makes the store catalogue describe an agent's whole
