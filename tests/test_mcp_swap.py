@@ -1,16 +1,21 @@
-"""Tests for the ``doctor`` subcommand and ``use-local --env`` in mcp_swap.py.
+"""Tests for scripts/mcp_swap.py.
 
 The swap script lives outside the ``src/`` package, so we load it via the
-module's file path and exercise the diagnostics/env-injection behavior against
-temporary config fixtures that mirror each CLI's real layout.
+module's file path and exercise its behavior against temporary config
+fixtures that mirror each CLI's real layout.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
+import os
 import pathlib
 import sys
+import threading
+import time
+import types
 import typing as t
 
 import pytest
@@ -44,36 +49,64 @@ def fake_home(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathli
                 binary="claude",
                 config_path=tmp_path / ".claude.json",
                 fmt="json",
+                container=("mcpServers",),
+                dialect="claude",
             ),
             "codex": mcp_swap.CLIInfo(
                 name="codex",
                 binary="codex",
                 config_path=tmp_path / ".codex" / "config.toml",
                 fmt="toml",
+                container=("mcp_servers",),
+                dialect="standard",
             ),
             "cursor": mcp_swap.CLIInfo(
                 name="cursor",
                 binary="cursor-agent",
                 config_path=tmp_path / ".cursor" / "mcp.json",
                 fmt="json",
+                container=("mcpServers",),
+                dialect="standard",
             ),
             "gemini": mcp_swap.CLIInfo(
                 name="gemini",
                 binary="gemini",
                 config_path=tmp_path / ".gemini" / "settings.json",
                 fmt="json",
+                container=("mcpServers",),
+                dialect="standard",
             ),
             "grok": mcp_swap.CLIInfo(
                 name="grok",
                 binary="grok",
                 config_path=tmp_path / ".grok" / "config.toml",
                 fmt="toml",
+                container=("mcp_servers",),
+                dialect="standard",
             ),
             "agy": mcp_swap.CLIInfo(
                 name="agy",
                 binary="agy",
                 config_path=tmp_path / ".gemini" / "config" / "mcp_config.json",
                 fmt="json",
+                container=("mcpServers",),
+                dialect="standard",
+            ),
+            "opencode": mcp_swap.CLIInfo(
+                name="opencode",
+                binary="opencode",
+                config_path=tmp_path / ".config" / "opencode" / "opencode.jsonc",
+                fmt="jsonc",
+                container=("mcp",),
+                dialect="opencode",
+            ),
+            "pi": mcp_swap.CLIInfo(
+                name="pi",
+                binary="pi",
+                config_path=tmp_path / ".pi" / "agent" / "mcp.json",
+                fmt="jsonc",
+                container=("mcpServers",),
+                dialect="standard",
             ),
         },
     )
@@ -108,6 +141,45 @@ def _local_entry(repo: pathlib.Path) -> dict[str, t.Any]:
         "command": "uv",
         "args": ["--directory", str(repo.resolve()), "run", "agentgrep-mcp"],
     }
+
+
+def _pinned_json_entry() -> dict[str, t.Any]:
+    return {"command": "uvx", "args": ["agentgrep-mcp==0.1.0a2"]}
+
+
+def _pinned_claude_entry() -> dict[str, t.Any]:
+    return {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["agentgrep-mcp==0.1.0a2"],
+        "env": {},
+    }
+
+
+# ---------------------------------------------------------------------------
+# resolve_repo_meta
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_repo_meta_strips_mcp_suffix(fake_repo: pathlib.Path) -> None:
+    """``agentgrep-mcp`` resolves to server ``agentgrep`` and entry ``agentgrep-mcp``."""
+    server, entry = mcp_swap.resolve_repo_meta(fake_repo)
+    assert server == "agentgrep"
+    assert entry == "agentgrep-mcp"
+
+
+def test_resolve_repo_meta_uses_name_when_no_suffix(tmp_path: pathlib.Path) -> None:
+    """Names without an ``-mcp`` suffix pass through unchanged.
+
+    This repo's own package is one of them, so the derived slug for a
+    checkout of it is ``agentgrep`` rather than a truncation of it.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "agentgrep"\n[project.scripts]\nagentgrep = "agentgrep:main"\n'
+    )
+    assert mcp_swap.resolve_repo_meta(repo) == ("agentgrep", "agentgrep")
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +256,73 @@ def test_env_pair_rejects_malformed() -> None:
         mcp_swap.build_parser().parse_args(["use-local", "--env", "NOEQUALS"])
 
 
+def test_use_local_env_written_on_already_local_entry(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """``--env`` still writes when the entry already points at this repo.
+
+    Regression: the already-local short-circuit ``continue``d before the env
+    merge, so ``--env`` was silently dropped whenever the config already
+    pointed local. The guard now only short-circuits when the requested env is
+    already satisfied.
+    """
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _local_entry(fake_repo)}})
+
+    args = mcp_swap.build_parser().parse_args(
+        [
+            "use-local",
+            "--repo",
+            str(fake_repo),
+            "--cli",
+            "cursor",
+            "--env",
+            "AGENTGREP_DATA_DIR=/scratch/index",
+        ]
+    )
+    assert mcp_swap.cmd_use_local(args) == 0
+
+    entry = json.loads(info.config_path.read_text())["mcpServers"]["agentgrep"]
+    assert entry.get("env") == {"AGENTGREP_DATA_DIR": "/scratch/index"}
+
+
+def test_use_local_already_local_still_noop_when_env_matches(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """The short-circuit still fires when the requested env is already present."""
+    info = mcp_swap.CLIS["cursor"]
+    spec = _local_entry(fake_repo)
+    spec["env"] = {"AGENTGREP_DATA_DIR": "/scratch/index"}
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": spec}})
+    before = info.config_path.read_bytes()
+
+    args = mcp_swap.build_parser().parse_args(
+        [
+            "use-local",
+            "--repo",
+            str(fake_repo),
+            "--cli",
+            "cursor",
+            "--env",
+            "AGENTGREP_DATA_DIR=/scratch/index",
+        ]
+    )
+    assert mcp_swap.cmd_use_local(args) == 0
+    assert info.config_path.read_bytes() == before
+
+
+def test_explicit_missing_config_returns_failure_without_creating_state(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """An explicitly requested absent config is an error, not a successful no-op."""
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "cursor"]
+    )
+
+    assert mcp_swap.cmd_use_local(args) == 1
+    assert not mcp_swap.STATE_FILE.exists()
+
+
 # ---------------------------------------------------------------------------
 # naming hint
 # ---------------------------------------------------------------------------
@@ -213,6 +352,17 @@ def test_naming_hint_none_when_derived_name_matches(
     _write_json(
         mcp_swap.CLIS["cursor"].config_path,
         {"mcpServers": {"agentgrep": _local_entry(fake_repo)}},
+    )
+    assert mcp_swap._naming_hint(fake_repo.resolve(), "agentgrep") is None
+
+
+def test_naming_hint_none_when_repo_also_registered_under_derived(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """No hint when the derived name points here, even if another name does too."""
+    _write_json(
+        mcp_swap.CLIS["cursor"].config_path,
+        {"mcpServers": {"agentgrep": _local_entry(fake_repo), "grep": _local_entry(fake_repo)}},
     )
     assert mcp_swap._naming_hint(fake_repo.resolve(), "agentgrep") is None
 
@@ -289,67 +439,1767 @@ def test_orphaned_backups_matches_swap_pattern(
     assert info.config_path not in found
 
 
-def test_use_local_env_written_on_already_local_entry(
-    fake_home: pathlib.Path, fake_repo: pathlib.Path
+def test_doctor_does_not_call_orphaned_backups_safe_to_delete(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``--env`` still writes when the entry already points at this repo.
+    """Orphan advice must not read as "safe to delete".
 
-    Regression: the already-local short-circuit ``continue``d before the env
-    merge, so ``--env`` was silently dropped whenever the config already
-    pointed local. The guard now only short-circuits when the requested env is
-    already satisfied.
+    An untracked backup can be the *only* pre-swap copy of a config — a
+    swap whose write failed leaves exactly that. Telling the user to bin
+    it turns a recoverable state into data loss.
     """
     info = mcp_swap.CLIS["cursor"]
     _write_json(info.config_path, {"mcpServers": {"agentgrep": _local_entry(fake_repo)}})
+    orphan = info.config_path.parent / (info.config_path.name + ".bak.mcp-swap-20190101000000")
+    orphan.write_text("pristine")
 
-    args = mcp_swap.build_parser().parse_args(
-        [
-            "use-local",
-            "--repo",
-            str(fake_repo),
-            "--cli",
-            "cursor",
-            "--env",
-            "AGENTGREP_DATA_DIR=/scratch/index",
-        ]
-    )
-    assert mcp_swap.cmd_use_local(args) == 0
-
-    entry = json.loads(info.config_path.read_text())["mcpServers"]["agentgrep"]
-    assert entry.get("env") == {"AGENTGREP_DATA_DIR": "/scratch/index"}
+    args = mcp_swap.build_parser().parse_args(["doctor", "--repo", str(fake_repo)])
+    assert mcp_swap.cmd_doctor(args) == 0
+    out = capsys.readouterr().out
+    assert "orphaned backups" in out
+    assert "safe to delete" not in out
+    assert "inspect before deleting" in out
 
 
-def test_use_local_already_local_still_noop_when_env_matches(
-    fake_home: pathlib.Path, fake_repo: pathlib.Path
+# ---------------------------------------------------------------------------
+# Repeat swaps must not destroy the pre-swap config.
+# ---------------------------------------------------------------------------
+
+
+def _freeze_timestamps(monkeypatch: pytest.MonkeyPatch, stamps: list[str]) -> None:
+    """Make the script's ``time.strftime`` yield ``stamps`` in order.
+
+    The backup filename embeds ``%Y%m%d%H%M%S``, so same-second vs
+    different-second is the difference between two swaps deriving the
+    same path or two distinct ones. Pinning the sequence makes both
+    cases deterministic instead of a race against the wall clock. Only
+    the script's own ``time`` reference is swapped, so pytest's log
+    formatting keeps the real clock.
+    """
+    remaining = list(stamps)
+
+    def fake_strftime(*_args: object) -> str:
+        return remaining.pop(0) if remaining else stamps[-1]
+
+    monkeypatch.setattr(mcp_swap, "time", types.SimpleNamespace(strftime=fake_strftime))
+
+
+@pytest.mark.parametrize(
+    ("case", "stamps"),
+    [
+        ("same_second", ["20260101000000", "20260101000000"]),
+        ("different_second", ["20260101000000", "20260101000001"]),
+    ],
+)
+def test_repeat_swap_then_revert_restores_pristine_config(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    stamps: list[str],
 ) -> None:
-    """The short-circuit still fires when the requested env is already present."""
+    """Swap -> swap -> revert must yield the byte-identical pre-swap config.
+
+    Regression for two ways the second swap used to destroy the only
+    pristine copy: with a same-second timestamp both swaps derived the
+    same backup path and the second write clobbered the first; with a
+    different-second timestamp the second swap wrote a fresh backup (of
+    the already-swapped config) and repointed state at it, orphaning the
+    pristine one. Either way ``revert`` restored a swapped config.
+    """
+    assert case
     info = mcp_swap.CLIS["cursor"]
-    spec = _local_entry(fake_repo)
-    spec["env"] = {"AGENTGREP_DATA_DIR": "/scratch/index"}
-    _write_json(info.config_path, {"mcpServers": {"agentgrep": spec}})
-    before = info.config_path.read_bytes()
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    original = info.config_path.read_bytes()
+    _freeze_timestamps(monkeypatch, stamps)
+    parser = mcp_swap.build_parser()
 
-    args = mcp_swap.build_parser().parse_args(
-        [
-            "use-local",
-            "--repo",
-            str(fake_repo),
-            "--cli",
-            "cursor",
-            "--env",
-            "AGENTGREP_DATA_DIR=/scratch/index",
-        ]
+    def swap(value: str) -> None:
+        # Distinct --env per swap so the second run is a real rewrite,
+        # not the "already local" no-op.
+        assert (
+            mcp_swap.cmd_use_local(
+                parser.parse_args(
+                    [
+                        "use-local",
+                        "--repo",
+                        str(fake_repo),
+                        "--cli",
+                        "cursor",
+                        "--env",
+                        f"AGENTGREP_DATA_DIR={value}",
+                    ]
+                )
+            )
+            == 0
+        )
+
+    swap("one")
+    first_backup = pathlib.Path(mcp_swap.load_state()[("cursor", "user")].backup_path)
+    assert first_backup.read_bytes() == original
+
+    swap("two")
+
+    # The second swap keeps the first backup: same path, same bytes, and
+    # no second backup file left behind.
+    entry = mcp_swap.load_state()[("cursor", "user")]
+    assert pathlib.Path(entry.backup_path) == first_backup
+    assert first_backup.read_bytes() == original
+    assert mcp_swap._orphaned_backups(info.config_path) == [first_backup]
+
+    assert mcp_swap.cmd_revert(parser.parse_args(["revert", "--cli", "cursor"])) == 0
+    assert info.config_path.read_bytes() == original
+
+
+def test_repeat_swap_keeps_claude_lifo_order_across_scopes(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-swapping one Claude scope must not reorder the LIFO unwind.
+
+    Both scopes back the same physical file, so a backup's position in
+    the stack is fixed by what it captured, not by when it was last
+    touched. Bumping ``seq_no`` on the re-swap would make ``revert``
+    peel the user layer off first and leave the project layer's backup
+    (which still contains the user swap) as the final state.
+    """
+    info = mcp_swap.CLIS["claude"]
+    _write_json(
+        info.config_path,
+        {
+            "mcpServers": {"agentgrep": _pinned_claude_entry()},
+            "projects": {
+                str(fake_repo.resolve()): {
+                    "mcpServers": {"agentgrep": _pinned_claude_entry()},
+                },
+            },
+        },
     )
-    assert mcp_swap.cmd_use_local(args) == 0
-    assert info.config_path.read_bytes() == before
+    original = info.config_path.read_bytes()
+    _freeze_timestamps(monkeypatch, ["20260101000000", "20260101000001", "20260101000002"])
+    parser = mcp_swap.build_parser()
+
+    def swap(scope: str, value: str) -> None:
+        assert (
+            mcp_swap.cmd_use_local(
+                parser.parse_args(
+                    [
+                        "use-local",
+                        "--repo",
+                        str(fake_repo),
+                        "--cli",
+                        "claude",
+                        "--scope",
+                        scope,
+                        "--env",
+                        f"AGENTGREP_DATA_DIR={value}",
+                    ]
+                )
+            )
+            == 0
+        )
+
+    swap("user", "one")
+    swap("project", "one")
+    # Re-swap the *older* layer; its backup still holds the pristine file.
+    swap("user", "two")
+
+    state = mcp_swap.load_state()
+    assert state[("claude", "user")].seq_no < state[("claude", "project")].seq_no
+
+    assert mcp_swap.cmd_revert(parser.parse_args(["revert", "--cli", "claude"])) == 0
+    assert info.config_path.read_bytes() == original
+    assert not mcp_swap.STATE_FILE.exists()
 
 
-def test_naming_hint_none_when_repo_also_registered_under_derived(
+def test_write_new_backup_never_overwrites(tmp_path: pathlib.Path) -> None:
+    """A taken backup path is left alone; the write lands on a suffixed sibling."""
+    base = tmp_path / "config.toml.bak.mcp-swap-20260101000000"
+    first = mcp_swap.write_new_backup(base, b"pristine\n")
+    assert first == base
+
+    second = mcp_swap.write_new_backup(base, b"later\n")
+    assert second == base.with_name(base.name + "-1")
+    assert base.read_bytes() == b"pristine\n"
+    assert second.read_bytes() == b"later\n"
+
+    third = mcp_swap.write_new_backup(base, b"later still\n")
+    assert third == base.with_name(base.name + "-2")
+
+
+def test_swap_after_backup_vanished_warns_and_writes_new_backup(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A re-swap whose recorded backup was deleted says so and re-registers.
+
+    Nothing can recover the pristine bytes at that point, so the new
+    backup is of the swapped config; the warning keeps that explicit
+    instead of implying ``revert`` will undo the original swap.
+    """
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    parser = mcp_swap.build_parser()
+
+    def swap(value: str) -> None:
+        assert (
+            mcp_swap.cmd_use_local(
+                parser.parse_args(
+                    [
+                        "use-local",
+                        "--repo",
+                        str(fake_repo),
+                        "--cli",
+                        "cursor",
+                        "--env",
+                        f"AGENTGREP_DATA_DIR={value}",
+                    ]
+                )
+            )
+            == 0
+        )
+
+    swap("one")
+    stale = pathlib.Path(mcp_swap.load_state()[("cursor", "user")].backup_path)
+    swapped_bytes = info.config_path.read_bytes()
+    stale.unlink()
+    capsys.readouterr()
+
+    swap("two")
+
+    assert "recorded backup is gone" in capsys.readouterr().err
+    fresh = pathlib.Path(mcp_swap.load_state()[("cursor", "user")].backup_path)
+    assert fresh.read_bytes() == swapped_bytes
+
+
+# ---------------------------------------------------------------------------
+# Pull-request targeting
+# ---------------------------------------------------------------------------
+
+
+class RemoteURLFixture(t.NamedTuple):
+    """One git remote spelling and the https URL it normalizes to.
+
+    Attributes
+    ----------
+    test_id : str
+        Identifier shown in the parametrized test name.
+    remote : str
+        A URL as ``git remote get-url`` may report it.
+    expected : str
+        The https form the pull-request ref is fetched from.
+    """
+
+    test_id: str
+    remote: str
+    expected: str
+
+
+REMOTE_URL_FIXTURES: list[RemoteURLFixture] = [
+    RemoteURLFixture(
+        "git_ssh_scheme", "git+ssh://git@github.com/o/n.git", "https://github.com/o/n"
+    ),
+    RemoteURLFixture("ssh_scheme", "ssh://git@github.com/o/n.git", "https://github.com/o/n"),
+    RemoteURLFixture("scp_shorthand", "git@github.com:o/n.git", "https://github.com/o/n"),
+    RemoteURLFixture("https_dotgit", "https://github.com/o/n.git", "https://github.com/o/n"),
+    RemoteURLFixture("https_plain", "https://github.com/o/n", "https://github.com/o/n"),
+    RemoteURLFixture(
+        "self_hosted",
+        "git@git.example.com:team/n.git",
+        "https://git.example.com/team/n",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    RemoteURLFixture._fields,
+    REMOTE_URL_FIXTURES,
+    ids=[f.test_id for f in REMOTE_URL_FIXTURES],
+)
+def test_normalize_remote_url(test_id: str, remote: str, expected: str) -> None:
+    """Every spelling git accepts resolves to the same https URL."""
+    assert test_id
+    assert mcp_swap._normalize_remote_url(remote) == expected
+
+
+def test_build_pr_spec_round_trips_through_pr_ref() -> None:
+    """A built pull-request spec is recognized by the reader that parses it."""
+    spec = mcp_swap.build_pr_spec("https://github.com/o/n", 114, "agentgrep-mcp")
+
+    assert spec.command == "uvx"
+    assert spec.args == [
+        "--from",
+        "git+https://github.com/o/n@refs/pull/114/head",
+        "agentgrep-mcp",
+    ]
+    assert spec.pr_ref() == ("https://github.com/o/n", 114)
+    assert spec.is_local_uv_directory() is False
+
+
+def test_pr_ref_ignores_non_pr_specs() -> None:
+    """A local checkout and a version pin are not pull-request specs."""
+    local = mcp_swap.McpServerSpec(command="uv", args=["--directory", "/tmp", "run", "x"])
+    pinned = mcp_swap.McpServerSpec(command="uvx", args=["agentgrep-mcp==0.1.0a2"])
+    branch = mcp_swap.McpServerSpec(
+        command="uvx", args=["--from", "git+https://github.com/o/n@main", "x"]
+    )
+
+    assert local.pr_ref() is None
+    assert pinned.pr_ref() is None
+    assert branch.pr_ref() is None
+
+
+def test_describe_spec_labels_a_pr_before_the_version_pin_branch(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A pull-request ref is described as a PR, not as a version pin.
+
+    The ref carries an ``@``, which the pin branch would otherwise report
+    as ``pypi pin: git+...@refs/pull/114/head``.
+    """
+    spec = mcp_swap.build_pr_spec("https://github.com/o/n", 114, "agentgrep-mcp")
+
+    assert mcp_swap._describe_spec(spec, tmp_path) == "PR #114: https://github.com/o/n"
+
+
+def test_points_at_distinguishes_pr_numbers(tmp_path: pathlib.Path) -> None:
+    """A swap to one pull request is not treated as already pointing at another."""
+    target = mcp_swap.build_pr_spec("https://github.com/o/n", 114, "x")
+    same = mcp_swap.build_pr_spec("https://github.com/o/n", 114, "x")
+    other = mcp_swap.build_pr_spec("https://github.com/o/n", 115, "x")
+    local = mcp_swap.build_local_spec(tmp_path, "x")
+
+    assert mcp_swap._points_at(same, target, tmp_path) is True
+    assert mcp_swap._points_at(other, target, tmp_path) is False
+    assert mcp_swap._points_at(local, target, tmp_path) is False
+    assert mcp_swap._points_at(local, local, tmp_path) is True
+
+
+def test_preflight_accepts_a_server_that_answers_initialize(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A stdio server that replies to ``initialize`` passes preflight."""
+    server = tmp_path / "server.py"
+    server.write_text(
+        "import json, sys\n"
+        "line = sys.stdin.readline()\n"
+        "req = json.loads(line)\n"
+        'print(json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": {}}))\n',
+        encoding="utf-8",
+    )
+    spec = mcp_swap.McpServerSpec(command=sys.executable, args=[str(server)])
+
+    assert mcp_swap.preflight_spec(spec, timeout=60) is None
+
+
+def test_preflight_reports_stderr_when_the_server_never_answers(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A server that dies is reported with the tail of its stderr."""
+    server = tmp_path / "server.py"
+    server.write_text(
+        'import sys\nsys.stderr.write("could not resolve ref\\n")\nsys.exit(1)\n',
+        encoding="utf-8",
+    )
+    spec = mcp_swap.McpServerSpec(command=sys.executable, args=[str(server)])
+
+    assert mcp_swap.preflight_spec(spec, timeout=60) == "could not resolve ref"
+
+
+def test_preflight_reports_a_command_that_cannot_launch() -> None:
+    """A missing binary is named rather than raising."""
+    spec = mcp_swap.McpServerSpec(command="mcp-swap-no-such-binary", args=[])
+
+    failure = mcp_swap.preflight_spec(spec, timeout=60)
+
+    assert failure is not None
+    assert "mcp-swap-no-such-binary" in failure
+
+
+def test_preflight_passes_spec_env_to_the_process(tmp_path: pathlib.Path) -> None:
+    """``spec.env`` reaches the launched server.
+
+    The cooldown bypass a prerelease branch needs travels this way, so a
+    preflight that dropped it would reject a spec that works in an agent.
+    """
+    server = tmp_path / "server.py"
+    server.write_text(
+        "import json, os, sys\n"
+        "req = json.loads(sys.stdin.readline())\n"
+        'if os.environ.get("MCP_SWAP_PROBE") != "1":\n'
+        "    sys.exit(2)\n"
+        'print(json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": {}}))\n',
+        encoding="utf-8",
+    )
+    spec = mcp_swap.McpServerSpec(
+        command=sys.executable, args=[str(server)], env={"MCP_SWAP_PROBE": "1"}
+    )
+
+    assert mcp_swap.preflight_spec(spec, timeout=60) is None
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "notanumber", "1.5", ""])
+def test_pr_number_rejects_what_is_not_a_pull_request(raw: str) -> None:
+    """``--pr`` takes a positive number; anything else stops at the parser.
+
+    Pull requests are numbered from one, so a non-positive value can only
+    be a typo. Catching it here keeps it out of the ref the swap builds.
+    """
+    with pytest.raises(argparse.ArgumentTypeError):
+        mcp_swap._pr_number(raw)
+
+
+def test_pr_number_accepts_a_pull_request_number() -> None:
+    """A positive number parses to an int."""
+    assert mcp_swap._pr_number("115") == 115
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "notanumber"])
+def test_parser_rejects_a_bad_pr_argument(raw: str) -> None:
+    """The parser exits rather than building a ref from a bad number."""
+    with pytest.raises(SystemExit):
+        mcp_swap.build_parser().parse_args(["use-local", "--pr", raw])
+
+
+# ---------------------------------------------------------------------------
+# JSON writer fidelity
+#
+# The swap edits one entry inside a file the user owns, so bytes it did
+# not set out to change must survive the rewrite. ``load_config`` ->
+# ``dump_config_bytes`` is the whole write path, so an unmodified config
+# has to come back byte-identical.
+#
+# Out of scope, and normalized rather than preserved: indent width, CRLF,
+# `\/` and `\uXXXX` escapes of characters that need none, duplicate keys,
+# and number spelling (`1e5` -> `100000.0`). None appear in what the JSON
+# CLIs write — they all emit `JSON.stringify(x, null, 2)` — and none
+# change what a CLI reads, only the bytes a dotfile diff shows.
+# ---------------------------------------------------------------------------
+
+
+class JSONFidelityCase(t.NamedTuple):
+    """A JSON config body whose exact bytes survive a no-op rewrite.
+
+    Attributes
+    ----------
+    test_id : str
+        Identifier shown in the parametrized test name.
+    body : str
+        The config file's text, written to disk verbatim.
+    """
+
+    test_id: str
+    body: str
+
+
+PRESERVED_JSON: list[JSONFidelityCase] = [
+    JSONFidelityCase(
+        "mcp_servers_block",
+        '{\n  "mcpServers": {\n    "agentgrep": {\n      "command": "uvx",\n'
+        '      "args": [\n        "agentgrep-mcp==0.1.0a2"\n      ]\n    }\n  }\n}\n',
+    ),
+    JSONFidelityCase(
+        "non_ascii_model_label",
+        '{\n  "model": "Fable 5 · Most capable…",\n  "mcpServers": {}\n}\n',
+    ),
+    JSONFidelityCase("emoji_and_cjk", '{\n  "history": [\n    "🙂 日本語 café"\n  ]\n}\n'),
+    JSONFidelityCase("escaped_lone_surrogate", '{\n  "truncated": "\\ud800"\n}\n'),
+    JSONFidelityCase("unsorted_keys", '{\n  "zeta": 1,\n  "alpha": 2\n}\n'),
+    JSONFidelityCase(
+        "claude_shape_without_trailing_newline",
+        '{\n  "model": "Fable 5 · Most capable…",\n  "projects": {\n'
+        '    "/home/someone/repo": {\n      "mcpServers": {}\n    }\n  }\n}',
+    ),
+]
+
+
+def _json_config(tmp_path: pathlib.Path, body: str) -> tuple[t.Any, bytes]:
+    """Write ``body`` verbatim and return its ``CLIInfo`` and exact bytes."""
+    path = tmp_path / "config.json"
+    raw = body.encode()
+    path.write_bytes(raw)
+    info = mcp_swap.CLIInfo(
+        name="cursor",
+        binary="cursor-agent",
+        config_path=path,
+        fmt="json",
+        container=("mcpServers",),
+        dialect="standard",
+    )
+    return info, raw
+
+
+@pytest.mark.parametrize(
+    JSONFidelityCase._fields,
+    PRESERVED_JSON,
+    ids=[c.test_id for c in PRESERVED_JSON],
+)
+def test_untouched_json_config_round_trips_byte_identical(
+    tmp_path: pathlib.Path, test_id: str, body: str
+) -> None:
+    """Parsing a config and writing it back unmodified changes nothing.
+
+    Every case is a shape the JavaScript agent CLIs actually emit:
+    two-space indent, literal non-ASCII, escapes only below ``0x20`` plus
+    lone surrogates, and no terminating newline.
+    """
+    assert test_id
+    info, raw = _json_config(tmp_path, body)
+
+    assert mcp_swap.dump_config_bytes(info, mcp_swap.load_config(info), original=raw) == raw
+
+
+def test_dump_config_bytes_ends_a_seeded_file_with_a_newline(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With no original to match, a JSON config gets the conventional newline."""
+    info, _ = _json_config(tmp_path, "")
+
+    assert (
+        mcp_swap.dump_config_bytes(info, {"mcpServers": {}}, original=b"")
+        == b'{\n  "mcpServers": {}\n}\n'
+    )
+
+
+def test_dump_config_bytes_escapes_a_config_it_cannot_encode(
+    tmp_path: pathlib.Path,
+) -> None:
+    r"""A lone surrogate has no UTF-8 form, so the document is escaped instead.
+
+    JavaScript writes a string sliced through a surrogate pair as
+    ``"\ud800"``, which parses to a Python string ``str.encode`` rejects.
+    Escaping the whole document is what keeps the file writable at all.
+    """
+    config = {"truncated": "\ud800", "label": "café"}
+
+    with pytest.raises(UnicodeEncodeError):
+        json.dumps(config, indent=2, ensure_ascii=False).encode()
+
+    info, _ = _json_config(tmp_path, "")
+    written = mcp_swap.dump_config_bytes(info, config, original=b"")
+
+    assert written == b'{\n  "truncated": "\\ud800",\n  "label": "caf\\u00e9"\n}\n'
+    assert json.loads(written.decode()) == config
+
+
+def test_swap_leaves_non_ascii_elsewhere_in_the_config_alone(
     fake_home: pathlib.Path, fake_repo: pathlib.Path
 ) -> None:
-    """No hint when the derived name points here, even if another name does too."""
+    """A real swap does not re-escape config text it never read.
+
+    Claude stores model labels and prompt history alongside the MCP
+    entries, so escaping on write turns a one-entry edit into a diff
+    spanning the file.
+    """
+    info = mcp_swap.CLIS["claude"]
+    label = "Fable 5 · Most capable…"
     _write_json(
-        mcp_swap.CLIS["cursor"].config_path,
-        {"mcpServers": {"agentgrep": _local_entry(fake_repo), "grep": _local_entry(fake_repo)}},
+        info.config_path,
+        {
+            "model": label,
+            "projects": {
+                str(fake_repo.resolve()): {
+                    "mcpServers": {"agentgrep": _pinned_claude_entry()},
+                    "history": ["café ☕"],
+                }
+            },
+        },
     )
-    assert mcp_swap._naming_hint(fake_repo.resolve(), "agentgrep") is None
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "claude"]
+    )
+
+    assert mcp_swap.cmd_use_local(args) == 0
+
+    after = info.config_path.read_text()
+    assert f'"model": "{label}"' in after
+    assert '"café ☕"' in after
+    assert "\\u" not in after
+
+
+def test_swap_does_not_append_a_newline_the_cli_never_wrote(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Claude's config has no trailing newline, and swapping must not add one."""
+    info = mcp_swap.CLIS["claude"]
+    body = json.dumps(
+        {
+            "projects": {
+                str(fake_repo.resolve()): {"mcpServers": {"agentgrep": _pinned_claude_entry()}}
+            }
+        },
+        indent=2,
+    )
+    info.config_path.parent.mkdir(parents=True, exist_ok=True)
+    info.config_path.write_text(body)
+
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "claude"]
+    )
+    assert mcp_swap.cmd_use_local(args) == 0
+
+    assert not info.config_path.read_bytes().endswith(b"\n")
+
+
+# ---------------------------------------------------------------------------
+# Unreadable configs and corrupt swap state
+# ---------------------------------------------------------------------------
+
+
+class UnreadableConfigCase(t.NamedTuple):
+    """A config body that cannot be parsed, and the error it provokes.
+
+    Attributes
+    ----------
+    test_id : str
+        Identifier shown in the parametrized test name.
+    body : bytes
+        Exact bytes written to the config file.
+    """
+
+    test_id: str
+    body: bytes
+
+
+UNREADABLE_CONFIGS: list[UnreadableConfigCase] = [
+    UnreadableConfigCase("malformed_json", b"{ this is not json"),
+    UnreadableConfigCase("truncated_json", b'{"mcpServers": {'),
+    UnreadableConfigCase("invalid_utf8", b'{"a": "\xff\xfe"}'),
+]
+
+
+@pytest.mark.parametrize(
+    UnreadableConfigCase._fields,
+    UNREADABLE_CONFIGS,
+    ids=[c.test_id for c in UNREADABLE_CONFIGS],
+)
+def test_unreadable_config_reports_instead_of_crashing(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    test_id: str,
+    body: bytes,
+) -> None:
+    """A config that will not parse is reported and skipped, not raised through.
+
+    ``load_config`` raises ``ValueError`` for every unparseable form —
+    JSON, TOML and UTF-8 decode errors all derive from it — which the
+    per-CLI handler has to catch for the run to survive one bad file.
+    """
+    assert test_id
+    info = mcp_swap.CLIS["cursor"]
+    info.config_path.parent.mkdir(parents=True, exist_ok=True)
+    info.config_path.write_bytes(body)
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "cursor"]
+    )
+
+    assert mcp_swap.cmd_use_local(args) == 1
+
+    assert "cursor" in capsys.readouterr().err
+    assert info.config_path.read_bytes() == body
+
+
+def test_unreadable_config_does_not_stop_the_other_clis(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+) -> None:
+    """One bad config does not prevent the remaining CLIs from swapping."""
+    bad = mcp_swap.CLIS["cursor"]
+    bad.config_path.parent.mkdir(parents=True, exist_ok=True)
+    bad.config_path.write_bytes(b"{ not json")
+    good = mcp_swap.CLIS["gemini"]
+    _write_json(good.config_path, {"mcpServers": {}})
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "cursor", "--cli", "gemini"]
+    )
+
+    assert mcp_swap.cmd_use_local(args) == 1
+
+    written = json.loads(good.config_path.read_text())
+    assert "agentgrep" in written["mcpServers"]
+
+
+class CorruptStateCase(t.NamedTuple):
+    """A swap-state file body that cannot yield entries.
+
+    Attributes
+    ----------
+    test_id : str
+        Identifier shown in the parametrized test name.
+    body : str
+        Exact text written to the state file.
+    """
+
+    test_id: str
+    body: str
+
+
+CORRUPT_STATE: list[CorruptStateCase] = [
+    CorruptStateCase("not_json", "{ not json at all"),
+    CorruptStateCase("empty_file", ""),
+    CorruptStateCase("json_but_a_list", "[1, 2, 3]"),
+    CorruptStateCase("entries_not_a_mapping", '{"entries": "nope"}'),
+]
+
+
+@pytest.mark.parametrize(
+    CorruptStateCase._fields,
+    CORRUPT_STATE,
+    ids=[c.test_id for c in CORRUPT_STATE],
+)
+def test_corrupt_swap_state_is_reported_not_raised(
+    fake_home: pathlib.Path,
+    test_id: str,
+    body: str,
+) -> None:
+    """A state file that yields no entries degrades to empty, never raises.
+
+    ``revert`` and ``doctor`` both read this file before doing anything,
+    so a hand-edited or truncated one would otherwise take down every
+    command that consults it.
+    """
+    assert test_id
+    mcp_swap.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    mcp_swap.STATE_FILE.write_text(body, encoding="utf-8")
+
+    assert mcp_swap.load_state() == {}
+
+
+def test_unparseable_swap_state_names_the_file(
+    fake_home: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unreadable state file says so, because backups are now orphaned.
+
+    Returning empty silently would let ``revert`` report nothing to do
+    while swapped configs and their backups sit on disk.
+    """
+    mcp_swap.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    mcp_swap.STATE_FILE.write_text("{ not json", encoding="utf-8")
+
+    mcp_swap.load_state()
+
+    assert str(mcp_swap.STATE_FILE) in capsys.readouterr().err
+
+
+def test_revert_survives_a_corrupt_state_file(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+) -> None:
+    """``revert`` reports nothing to unwind rather than crashing."""
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {}})
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "cursor"]
+    )
+    assert mcp_swap.cmd_use_local(args) == 0
+    mcp_swap.STATE_FILE.write_text("{ corrupted", encoding="utf-8")
+
+    revert_args = mcp_swap.build_parser().parse_args(["revert", "--cli", "cursor"])
+
+    assert mcp_swap.cmd_revert(revert_args) in (0, 1)
+
+
+def test_corrupt_state_blocks_a_new_swap_without_touching_the_config(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Unreadable recovery bookkeeping is never overwritten as empty state."""
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    original = info.config_path.read_bytes()
+    corrupt = b"{ not json"
+    mcp_swap.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    mcp_swap.STATE_FILE.write_bytes(corrupt)
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "cursor"]
+    )
+
+    assert mcp_swap.cmd_use_local(args) == 1
+    assert info.config_path.read_bytes() == original
+    assert mcp_swap.STATE_FILE.read_bytes() == corrupt
+
+
+def test_unwritable_directory_aborts_before_swapping(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A config whose backup cannot be written is left alone.
+
+    The backup is the only copy of the pre-swap config, so a swap that
+    could not take one would leave nothing to revert to. Aborting the
+    CLI is the safe half of that trade.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    info = mcp_swap.CLIS["grok"]
+    info.config_path.parent.mkdir(parents=True, exist_ok=True)
+    original = '[mcp_servers.other]\ncommand = "x"\n'
+    info.config_path.write_text(original, encoding="utf-8")
+    info.config_path.parent.chmod(0o500)
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "grok"]
+    )
+
+    try:
+        assert mcp_swap.cmd_use_local(args) == 1
+        assert "backup" in capsys.readouterr().err
+        assert info.config_path.read_text() == original
+    finally:
+        info.config_path.parent.chmod(0o700)
+
+
+def test_unwritable_directory_does_not_stop_the_other_clis(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+) -> None:
+    """One unwritable config directory does not abort the whole run."""
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    blocked = mcp_swap.CLIS["grok"]
+    blocked.config_path.parent.mkdir(parents=True, exist_ok=True)
+    blocked.config_path.write_text('[mcp_servers.o]\ncommand = "x"\n', encoding="utf-8")
+    blocked.config_path.parent.chmod(0o500)
+    reachable = mcp_swap.CLIS["cursor"]
+    _write_json(reachable.config_path, {"mcpServers": {}})
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "grok", "--cli", "cursor"]
+    )
+
+    try:
+        assert mcp_swap.cmd_use_local(args) == 1
+        written = json.loads(reachable.config_path.read_text())
+        assert "agentgrep" in written["mcpServers"]
+    finally:
+        blocked.config_path.parent.chmod(0o700)
+
+
+def test_state_write_failure_leaves_the_config_unchanged(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A swap is not applied until its recovery record is durable."""
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    original = info.config_path.read_bytes()
+    real_atomic_write = mcp_swap.atomic_write
+    write_error = PermissionError("state is read-only")
+
+    def fail_state_write(path: pathlib.Path, data: bytes) -> None:
+        if path == mcp_swap.STATE_FILE:
+            raise write_error
+        real_atomic_write(path, data)
+
+    monkeypatch.setattr(mcp_swap, "atomic_write", fail_state_write)
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "cursor"]
+    )
+
+    assert mcp_swap.cmd_use_local(args) == 1
+    assert info.config_path.read_bytes() == original
+    assert not mcp_swap.STATE_FILE.exists()
+
+
+def test_swap_write_failure_keeps_recovery_state_without_raising(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed config write remains recoverable even when rollback also fails."""
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    original = info.config_path.read_bytes()
+    target = info.config_path.resolve()
+    real_atomic_write = mcp_swap.atomic_write
+    write_error = PermissionError("config is read-only")
+
+    def fail_config_write(path: pathlib.Path, data: bytes) -> None:
+        if path == target:
+            raise write_error
+        real_atomic_write(path, data)
+
+    monkeypatch.setattr(mcp_swap, "atomic_write", fail_config_write)
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "cursor"]
+    )
+
+    assert mcp_swap.cmd_use_local(args) == 1
+    state = mcp_swap.load_state()
+    assert info.config_path.read_bytes() == original
+    assert pathlib.Path(state["cursor", "user"].backup_path).exists()
+
+
+def test_revert_returns_failure_when_the_recorded_backup_is_missing(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Automation receives a nonzero status when recovery cannot complete."""
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    parser = mcp_swap.build_parser()
+    assert (
+        mcp_swap.cmd_use_local(
+            parser.parse_args(["use-local", "--repo", str(fake_repo), "--cli", "cursor"])
+        )
+        == 0
+    )
+    backup = pathlib.Path(mcp_swap.load_state()["cursor", "user"].backup_path)
+    backup.unlink()
+
+    assert mcp_swap.cmd_revert(parser.parse_args(["revert", "--cli", "cursor"])) == 1
+    assert ("cursor", "user") in mcp_swap.load_state()
+
+
+def test_revert_write_failure_returns_failure_and_keeps_recovery_files(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unwritable destination does not crash or discard recovery material."""
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    parser = mcp_swap.build_parser()
+    assert (
+        mcp_swap.cmd_use_local(
+            parser.parse_args(["use-local", "--repo", str(fake_repo), "--cli", "cursor"])
+        )
+        == 0
+    )
+    state = mcp_swap.load_state()
+    backup = pathlib.Path(state["cursor", "user"].backup_path)
+    target = info.config_path.resolve()
+    real_atomic_write = mcp_swap.atomic_write
+    write_error = PermissionError("config is read-only")
+
+    def fail_config_write(path: pathlib.Path, data: bytes) -> None:
+        if path == target:
+            raise write_error
+        real_atomic_write(path, data)
+
+    monkeypatch.setattr(mcp_swap, "atomic_write", fail_config_write)
+
+    assert mcp_swap.cmd_revert(parser.parse_args(["revert", "--cli", "cursor"])) == 1
+    assert backup.exists()
+    assert ("cursor", "user") in mcp_swap.load_state()
+
+
+def test_revert_state_failure_keeps_recovery_files(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A restored config keeps its backup until state cleanup is durable."""
+    info = mcp_swap.CLIS["cursor"]
+    _write_json(info.config_path, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    original = info.config_path.read_bytes()
+    parser = mcp_swap.build_parser()
+    assert (
+        mcp_swap.cmd_use_local(
+            parser.parse_args(["use-local", "--repo", str(fake_repo), "--cli", "cursor"])
+        )
+        == 0
+    )
+    state_bytes = mcp_swap.STATE_FILE.read_bytes()
+    backup = pathlib.Path(mcp_swap.load_state()["cursor", "user"].backup_path)
+    state_error = PermissionError("state is read-only")
+
+    def fail_state_update(_entries: dict[t.Any, t.Any]) -> None:
+        raise state_error
+
+    monkeypatch.setattr(mcp_swap, "_save_or_clear_state", fail_state_update)
+
+    assert mcp_swap.cmd_revert(parser.parse_args(["revert", "--cli", "cursor"])) == 1
+    assert info.config_path.read_bytes() == original
+    assert mcp_swap.STATE_FILE.read_bytes() == state_bytes
+    assert backup.exists()
+
+
+def test_use_local_serializes_the_full_state_transaction(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent commands cannot lose one another's recovery records."""
+    for cli in ("cursor", "gemini"):
+        _write_json(
+            mcp_swap.CLIS[cli].config_path,
+            {"mcpServers": {"agentgrep": _pinned_json_entry()}},
+        )
+    parser = mcp_swap.build_parser()
+    real_save_state = mcp_swap.save_state
+    guard = threading.Lock()
+    gate = threading.Barrier(3)
+    active = 0
+    overlapped = False
+    results: list[int] = []
+
+    def slow_save_state(entries: dict[t.Any, t.Any]) -> None:
+        nonlocal active, overlapped
+        with guard:
+            active += 1
+            overlapped = overlapped or active > 1
+        try:
+            time.sleep(0.1)
+            real_save_state(entries)
+        finally:
+            with guard:
+                active -= 1
+
+    def swap(cli: str) -> None:
+        args = parser.parse_args(["use-local", "--repo", str(fake_repo), "--cli", cli])
+        gate.wait()
+        results.append(mcp_swap.cmd_use_local(args))
+
+    monkeypatch.setattr(mcp_swap, "save_state", slow_save_state)
+    threads = [threading.Thread(target=swap, args=(cli,)) for cli in ("cursor", "gemini")]
+    for thread in threads:
+        thread.start()
+    gate.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert results == [0, 0]
+    assert not overlapped
+    assert set(mcp_swap.load_state()) == {("cursor", "user"), ("gemini", "user")}
+    assert all(not thread.is_alive() for thread in threads)
+
+
+# ---------------------------------------------------------------------------
+# Atomic writes through symlinked configs
+# ---------------------------------------------------------------------------
+
+
+def _build_symlink_chain(
+    root: pathlib.Path, hops: int
+) -> tuple[pathlib.Path, pathlib.Path, list[pathlib.Path]]:
+    """Create ``hops`` links ending at an existing config file.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        Empty directory where the link and target trees are created.
+    hops : int
+        Number of links in the chain.
+
+    Returns
+    -------
+    tuple of pathlib.Path, pathlib.Path, list of pathlib.Path
+        Entry path, final target, and each link in the chain.
+    """
+    target = root / "dotfiles" / "mcp.json"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"original\n")
+    link_dir = root / "home"
+    link_dir.mkdir()
+    links: list[pathlib.Path] = []
+    entry = target
+    for hop in range(hops):
+        link = link_dir / f"hop-{hop}.json"
+        link.symlink_to(entry)
+        links.append(link)
+        entry = link
+    return entry, target, links
+
+
+@pytest.mark.parametrize("hops", [1, 3], ids=["single", "chain"])
+def test_atomic_write_updates_the_symlink_target(tmp_path: pathlib.Path, hops: int) -> None:
+    """The final target receives the bytes and every link survives."""
+    entry, target, links = _build_symlink_chain(tmp_path, hops)
+
+    mcp_swap.atomic_write(entry, b"swapped\n")
+
+    assert all(link.is_symlink() for link in links)
+    assert target.read_bytes() == b"swapped\n"
+    assert entry.read_bytes() == b"swapped\n"
+
+
+def test_atomic_write_stages_beside_the_symlink_target(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The temp file shares the final target's filesystem for atomic rename."""
+    entry, target, _links = _build_symlink_chain(tmp_path, 1)
+    real_mkstemp = mcp_swap.tempfile.mkstemp
+    staged_in: list[str | None] = []
+
+    def recording_mkstemp(*args: t.Any, **kwargs: t.Any) -> tuple[int, str]:
+        staged_in.append(kwargs.get("dir"))
+        return t.cast("tuple[int, str]", real_mkstemp(*args, **kwargs))
+
+    monkeypatch.setattr(mcp_swap.tempfile, "mkstemp", recording_mkstemp)
+
+    mcp_swap.atomic_write(entry, b"swapped\n")
+
+    assert staged_in == [str(target.parent)]
+
+
+def test_atomic_write_preserves_the_target_mode(tmp_path: pathlib.Path) -> None:
+    """Replacing a config does not silently narrow its permission bits."""
+    target = tmp_path / "mcp.json"
+    target.write_bytes(b"original\n")
+    target.chmod(0o640)
+
+    mcp_swap.atomic_write(target, b"swapped\n")
+
+    assert target.stat().st_mode & 0o777 == 0o640
+
+
+def test_symlinked_config_swap_and_revert_round_trip(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Swap and revert update the target without replacing the config link."""
+    info = mcp_swap.CLIS["cursor"]
+    target = fake_home / "dotfiles" / "cursor" / "mcp.json"
+    _write_json(target, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    original = target.read_bytes()
+    info.config_path.parent.mkdir(parents=True)
+    info.config_path.symlink_to(target)
+    parser = mcp_swap.build_parser()
+
+    assert (
+        mcp_swap.cmd_use_local(
+            parser.parse_args(["use-local", "--repo", str(fake_repo), "--cli", "cursor"])
+        )
+        == 0
+    )
+    state = mcp_swap.load_state()["cursor", "user"]
+    backup = pathlib.Path(state.backup_path)
+    assert info.config_path.is_symlink()
+    assert backup.parent == info.config_path.parent
+    assert json.loads(target.read_text())["mcpServers"]["agentgrep"]["command"] == "uv"
+
+    assert mcp_swap.cmd_revert(parser.parse_args(["revert", "--cli", "cursor"])) == 0
+    assert info.config_path.is_symlink()
+    assert target.read_bytes() == original
+    assert not backup.exists()
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "file"])
+def test_revert_uses_the_original_target_when_a_config_link_is_replaced(
+    fake_home: pathlib.Path,
+    fake_repo: pathlib.Path,
+    replacement_kind: str,
+) -> None:
+    """Repointing or replacing a link cannot redirect recovery into a new file."""
+    info = mcp_swap.CLIS["cursor"]
+    original_target = fake_home / "dotfiles" / "original.json"
+    new_target = fake_home / "dotfiles" / "replacement.json"
+    _write_json(original_target, {"mcpServers": {"agentgrep": _pinned_json_entry()}})
+    _write_json(new_target, {"sentinel": "leave me alone"})
+    original = original_target.read_bytes()
+    replacement = new_target.read_bytes()
+    info.config_path.parent.mkdir(parents=True)
+    info.config_path.symlink_to(original_target)
+    parser = mcp_swap.build_parser()
+
+    assert (
+        mcp_swap.cmd_use_local(
+            parser.parse_args(["use-local", "--repo", str(fake_repo), "--cli", "cursor"])
+        )
+        == 0
+    )
+    info.config_path.unlink()
+    if replacement_kind == "symlink":
+        info.config_path.symlink_to(new_target)
+        replacement_path = new_target
+    else:
+        info.config_path.write_bytes(replacement)
+        replacement_path = info.config_path
+
+    assert mcp_swap.cmd_revert(parser.parse_args(["revert", "--cli", "cursor"])) == 0
+    assert original_target.read_bytes() == original
+    assert replacement_path.read_bytes() == replacement
+
+
+# ---------------------------------------------------------------------------
+# opencode and pi
+#
+# These two exercise axes the first six never did. opencode is the first
+# JSONC config, the first container key that is not ``mcpServers`` or
+# ``mcp_servers``, and the first entry dialect that packs argv into one
+# array; pi is the first CLI whose config is read by an extension rather
+# than by the agent itself. The comment-fidelity cases are the point of
+# the JSONC codec, so they are asserted on bytes, not on parsed values.
+# ---------------------------------------------------------------------------
+
+
+def test_fake_home_covers_every_registered_cli(fake_home: pathlib.Path) -> None:
+    """``fake_home`` replaces ``CLIS`` wholesale, so it must list every CLI.
+
+    Regression guard rather than a behavior test. ``_config_present_clis``
+    iterates ``ALL_CLIS`` while indexing ``CLIS``, so a CLI added to the
+    registry but not to this fixture raises ``KeyError`` from half a dozen
+    unrelated doctor and naming-hint tests. Naming the invariant here turns
+    that into one obvious failure.
+    """
+    assert set(mcp_swap.CLIS) == set(mcp_swap.ALL_CLIS)
+
+
+@pytest.mark.parametrize("raw", ["relcfg", "", "  ", "./cfg"])
+def test_relative_xdg_config_home_is_ignored(raw: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: a relative XDG_CONFIG_HOME resolved against the cwd.
+
+    The spec requires these to be absolute and to be ignored otherwise.
+    Honouring a relative one made opencode's config -- and the backup path
+    recorded for it -- depend on where the swap was run from, so revert
+    from any other directory reported the backup missing for good.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", raw)
+    assert mcp_swap._xdg_config_home() == pathlib.Path.home() / ".config"
+
+
+def test_absolute_xdg_config_home_is_honoured(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opencode resolves XDG the way its own loader does."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert mcp_swap._xdg_config_home() == tmp_path
+
+
+def test_opencode_and_pi_registered() -> None:
+    """Both new CLIs are first-class ``--cli`` choices with their own shapes."""
+    assert "opencode" in mcp_swap.ALL_CLIS
+    assert "pi" in mcp_swap.ALL_CLIS
+    opencode = mcp_swap.CLIS["opencode"]
+    assert opencode.fmt == "jsonc"
+    assert opencode.config_path.name == "opencode.jsonc"
+    assert opencode.container == ("mcp",)
+    assert opencode.dialect == "opencode"
+    pi = mcp_swap.CLIS["pi"]
+    assert pi.fmt == "jsonc"
+    assert pi.config_path.name == "mcp.json"
+    assert pi.container == ("mcpServers",)
+    assert pi.dialect == "standard"
+    parser = mcp_swap.build_parser()
+    assert parser.parse_args(["status", "--cli", "opencode"]).cli == ["opencode"]
+    assert parser.parse_args(["status", "--cli", "pi"]).cli == ["pi"]
+
+
+@pytest.mark.parametrize("cli", ["opencode", "pi"])
+def test_new_cli_set_get_delete_roundtrip(cli: str, fake_repo: pathlib.Path) -> None:
+    """Each new CLI's four container branches agree with one another.
+
+    Proves the name was threaded through ``get_server``, ``set_server``,
+    ``delete_server`` and ``_all_server_specs`` rather than falling through
+    to another CLI's container key.
+    """
+    config: dict[str, t.Any] = {}
+    spec = mcp_swap.McpServerSpec(
+        command="uv", args=["--directory", str(fake_repo), "run", "agentgrep-mcp"]
+    )
+    assert mcp_swap.set_server(cli, config, "agentgrep", spec, fake_repo) == "added"
+    assert mcp_swap.CLIS[cli].container[0] in config
+    got = mcp_swap.get_server(cli, config, "agentgrep", fake_repo)
+    assert got is not None
+    assert got.is_local_uv_directory()
+    assert got.local_repo_path() == fake_repo
+    assert mcp_swap.set_server(cli, config, "agentgrep", spec, fake_repo) == "replaced"
+    assert mcp_swap._all_server_specs(cli, config, fake_repo).keys() == {"agentgrep"}
+    assert mcp_swap.delete_server(cli, config, "agentgrep", fake_repo)
+    assert mcp_swap.get_server(cli, config, "agentgrep", fake_repo) is None
+
+
+def test_opencode_entry_packs_argv_into_one_command_array(
+    fake_repo: pathlib.Path,
+) -> None:
+    """The opencode dialect uses one argv array and the key ``environment``.
+
+    A scalar ``command`` is a decode error that stops opencode starting at
+    all, and an ``env`` key is dropped without a warning, so both spellings
+    are pinned here rather than left to the round-trip tests.
+    """
+    spec = mcp_swap.McpServerSpec(
+        command="uv", args=["--directory", "/repo", "run"], env={"A": "b"}
+    )
+    entry = spec.to_entry_dict("opencode")
+    assert entry["type"] == "local"
+    assert entry["command"] == ["uv", "--directory", "/repo", "run"]
+    assert entry["environment"] == {"A": "b"}
+    assert "args" not in entry
+    assert "env" not in entry
+
+
+def test_opencode_array_entry_reads_back_as_command_plus_args() -> None:
+    """An array ``command`` normalizes to the portable scalar-plus-args spec.
+
+    Regression: without the split, ``command`` becomes the ``str()`` of a
+    Python list, ``is_local_uv_directory`` is False for a correct entry, and
+    the "already local — no change" short-circuit never fires, so every run
+    rewrites a config that needed no change.
+    """
+    info = mcp_swap.CLIS["opencode"]
+    spec = mcp_swap._spec_from_entry(
+        {
+            "type": "local",
+            "command": ["uv", "--directory", "/repo", "run", "agentgrep-mcp"],
+            "environment": {"A": "b"},
+        },
+        info=info,
+    )
+    assert spec.command == "uv"
+    assert spec.args == ["--directory", "/repo", "run", "agentgrep-mcp"]
+    assert spec.env == {"A": "b"}
+    assert spec.is_local_uv_directory()
+    assert spec.local_repo_path() == pathlib.Path("/repo")
+
+
+def test_opencode_array_entry_round_trips_a_pr_spec() -> None:
+    """``pr_ref`` still recognises a pull-request spec in the array shape."""
+    info = mcp_swap.CLIS["opencode"]
+    spec = mcp_swap.build_pr_spec("https://github.com/tony/agentgrep", 115, "agentgrep-mcp")
+    decoded = mcp_swap._spec_from_entry(spec.to_entry_dict("opencode"), info=info)
+    assert decoded.pr_ref() == ("https://github.com/tony/agentgrep", 115)
+
+
+def _opencode_config(fake_home: pathlib.Path, body: str) -> t.Any:
+    """Write ``body`` to the fake opencode config and return its ``CLIInfo``."""
+    info = mcp_swap.CLIS["opencode"]
+    info.config_path.parent.mkdir(parents=True, exist_ok=True)
+    info.config_path.write_text(body)
+    return info
+
+
+def _swap_opencode(fake_repo: pathlib.Path) -> int:
+    """Run ``use-local`` against opencode only."""
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "opencode"]
+    )
+    return int(mcp_swap.cmd_use_local(args))
+
+
+def test_opencode_swap_preserves_jsonc_comments(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Line comments, block comments and sibling servers survive a swap."""
+    info = _opencode_config(
+        fake_home,
+        "{\n"
+        "  // header comment\n"
+        '  "$schema": "https://opencode.ai/config.json",\n'
+        "  /* a block comment\n"
+        "     spanning lines */\n"
+        '  "model": "openrouter/x",\n'
+        '  "mcp": {\n'
+        '    "other": { "type": "local", "command": ["echo", "keep"] }\n'
+        "  }\n"
+        "}\n",
+    )
+    assert _swap_opencode(fake_repo) == 0
+    text = info.config_path.read_text()
+    assert "// header comment" in text
+    assert "/* a block comment" in text
+    assert "spanning lines */" in text
+    doc = mcp_swap._jsonc_loads(text)
+    assert doc["model"] == "openrouter/x"
+    assert doc["mcp"]["other"]["command"] == ["echo", "keep"]
+    assert doc["mcp"]["agentgrep"]["command"][0] == "uv"
+
+
+def test_opencode_comment_inside_the_replaced_entry_survives(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """A comment attached to the entry being rewritten is not collateral.
+
+    The case a whole-entry rewrite loses and a field-level splice keeps.
+    Real opencode configs carry the rationale for a pinned ``command``
+    directly above it, which is exactly the text a swap would destroy.
+    """
+    info = _opencode_config(
+        fake_home,
+        "{\n"
+        '  "mcp": {\n'
+        '    "agentgrep": {\n'
+        '      "type": "local",\n'
+        "      // Pinned deliberately; this rationale must outlive the swap.\n"
+        '      "command": ["uvx", "agentgrep-mcp==0.1.0a2"],\n'
+        '      "environment": { "KEEP": "me" }\n'
+        "    }\n"
+        "  }\n"
+        "}\n",
+    )
+    assert _swap_opencode(fake_repo) == 0
+    text = info.config_path.read_text()
+    assert "// Pinned deliberately; this rationale must outlive the swap." in text
+    entry = mcp_swap._jsonc_loads(text)["mcp"]["agentgrep"]
+    assert entry["command"][0] == "uv"
+    assert entry["environment"] == {"KEEP": "me"}
+
+
+def test_opencode_swap_and_revert_round_trip_is_byte_identical(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Revert restores a commented JSONC config byte for byte."""
+    body = (
+        "{\n"
+        "  // keep me\n"
+        '  "model": "m",\n'
+        '  "mcp": {\n'
+        '    "agentgrep": {\n'
+        '      "type": "local",\n'
+        '      "command": ["uvx", "agentgrep-mcp==0.1.0a2"]\n'
+        "    }\n"
+        "  }\n"
+        "}\n"
+    )
+    info = _opencode_config(fake_home, body)
+    original = info.config_path.read_bytes()
+    assert _swap_opencode(fake_repo) == 0
+    assert info.config_path.read_bytes() != original
+    revert = mcp_swap.build_parser().parse_args(["revert", "--cli", "opencode"])
+    assert mcp_swap.cmd_revert(revert) == 0
+    assert info.config_path.read_bytes() == original
+
+
+def test_opencode_second_swap_reports_no_change(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """The idempotence check fires for the array command shape.
+
+    Depends on ``_spec_from_entry`` splitting the array; without it the
+    config is rewritten on every invocation.
+    """
+    info = _opencode_config(fake_home, '{\n  "mcp": {}\n}\n')
+    assert _swap_opencode(fake_repo) == 0
+    after_first = info.config_path.read_bytes()
+    assert _swap_opencode(fake_repo) == 0
+    assert info.config_path.read_bytes() == after_first
+
+
+def test_opencode_seeds_schema_into_an_empty_config(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Seeding an empty file writes ``$schema`` alongside the server entry."""
+    info = _opencode_config(fake_home, "")
+    assert _swap_opencode(fake_repo) == 0
+    doc = mcp_swap._jsonc_loads(info.config_path.read_text())
+    assert doc["$schema"] == mcp_swap.OPENCODE_SCHEMA_URL
+    assert doc["mcp"]["agentgrep"]["type"] == "local"
+
+
+def test_opencode_symlinked_config_swap_updates_target_not_link(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """A JSONC config symlinked into a dotfiles tree keeps its link."""
+    info = mcp_swap.CLIS["opencode"]
+    target = fake_home / "dotfiles" / "opencode.jsonc"
+    target.parent.mkdir(parents=True)
+    target.write_text('{\n  // linked\n  "mcp": {}\n}\n')
+    info.config_path.parent.mkdir(parents=True)
+    info.config_path.symlink_to(target)
+
+    assert _swap_opencode(fake_repo) == 0
+    assert info.config_path.is_symlink()
+    assert info.config_path.readlink() == target
+    text = target.read_text()
+    assert "// linked" in text
+    assert mcp_swap._jsonc_loads(text)["mcp"]["agentgrep"]["command"][0] == "uv"
+
+
+def test_pi_config_with_comments_is_readable(
+    fake_home: pathlib.Path, fake_repo: pathlib.Path
+) -> None:
+    """Regression: pi's adapter accepts JSONC, so strict JSON rejected it.
+
+    ``pi-mcp-adapter`` reads the file through ``strip-json-comments`` with
+    trailing commas allowed. Parsing it as strict JSON made ``status`` and
+    ``use-local`` report a config the adapter reads fine as unreadable.
+    """
+    info = mcp_swap.CLIS["pi"]
+    info.config_path.parent.mkdir(parents=True)
+    info.config_path.write_text(
+        '{\n  // the adapter allows comments\n  "mcpServers": {\n'
+        '    "keep": { "command": "echo", "args": ["hi"] },\n  }\n}\n'
+    )
+    args = mcp_swap.build_parser().parse_args(
+        ["use-local", "--repo", str(fake_repo), "--cli", "pi"]
+    )
+    assert mcp_swap.cmd_use_local(args) == 0
+    text = info.config_path.read_text()
+    assert "// the adapter allows comments" in text
+    servers = mcp_swap._jsonc_loads(text)["mcpServers"]
+    assert servers["keep"]["command"] == "echo"
+    assert servers["agentgrep"]["command"] == "uv"
+
+
+def test_detect_reports_the_pi_adapter_prerequisite(
+    fake_home: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``detect`` says why a pi swap will not take effect on its own.
+
+    pi ships no MCP client, so the file this script writes is read only by
+    the ``pi-mcp-adapter`` extension. Reporting pi as swappable without
+    that caveat would be the one thing this script must never do: claim an
+    agent will run something it will not.
+    """
+    monkeypatch.setattr(mcp_swap, "PI_ADAPTER_DIR", fake_home / "absent")
+    monkeypatch.setattr(mcp_swap.shutil, "which", lambda _binary: "/usr/bin/stub")
+    info = mcp_swap.CLIS["pi"]
+    info.config_path.parent.mkdir(parents=True)
+    info.config_path.write_text('{"mcpServers": {}}\n')
+
+    assert mcp_swap.cmd_detect(mcp_swap.build_parser().parse_args(["detect"])) == 0
+    out = capsys.readouterr().out
+    assert mcp_swap.PI_ADAPTER_HINT in out
+
+    monkeypatch.setattr(mcp_swap, "PI_ADAPTER_DIR", fake_home)
+    assert mcp_swap.cmd_detect(mcp_swap.build_parser().parse_args(["detect"])) == 0
+    assert mcp_swap.PI_ADAPTER_HINT not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# JSONC writer fidelity
+#
+# The JSON writer reserializes the whole document, so it can only promise
+# to preserve values. The JSONC writer splices text and therefore promises
+# bytes: anything it did not deliberately change must come back identical,
+# including the comments, the trailing comma, the indent width and the
+# absence of a final newline. The string cases exist because a
+# comment-stripper that is not string-aware corrupts a URL or a Windows
+# path silently, which is the worst failure this codec could have.
+# ---------------------------------------------------------------------------
+
+
+PRESERVED_JSONC: list[JSONFidelityCase] = [
+    JSONFidelityCase("line_comment", '{\n  // note\n  "mcp": {}\n}\n'),
+    JSONFidelityCase("block_comment", '{\n  /* note\n     more */\n  "mcp": {}\n}\n'),
+    JSONFidelityCase("comment_after_last_member", '{\n  "mcp": {}\n  // tail\n}\n'),
+    JSONFidelityCase("trailing_comma", '{\n  "mcp": {},\n}\n'),
+    JSONFidelityCase("no_trailing_newline", '{\n  "mcp": {}\n}'),
+    JSONFidelityCase("four_space_indent", '{\n    "mcp": {}\n}\n'),
+    JSONFidelityCase("url_containing_double_slash", '{\n  "a": "https://x/y//z"\n}\n'),
+    JSONFidelityCase("block_marker_inside_string", '{\n  "a": "/* not one */"\n}\n'),
+    JSONFidelityCase("windows_path", '{\n  "a": "C:\\\\tmp\\\\x"\n}\n'),
+    JSONFidelityCase("literal_backslash_u", '{\n  "a": "C:\\\\u0041"\n}\n'),
+    JSONFidelityCase("emoji_and_cjk", '{\n  "a": "🙂 日本語 café"\n}\n'),
+    JSONFidelityCase("empty_object", "{}\n"),
+    JSONFidelityCase("comment_only_object", '{\n  "mcp": {\n    // none yet\n  }\n}\n'),
+    JSONFidelityCase("comment_before_the_delimiter", '{\n  "a": 1 /* x */,\n  "b": 2\n}\n'),
+]
+
+
+def _jsonc_config(tmp_path: pathlib.Path, body: str) -> tuple[t.Any, bytes]:
+    """Write ``body`` verbatim and return its ``CLIInfo`` and exact bytes."""
+    path = tmp_path / "opencode.jsonc"
+    path.write_text(body)
+    info = mcp_swap.CLIInfo(
+        name="opencode",
+        binary="opencode",
+        config_path=path,
+        fmt="jsonc",
+        container=("mcp",),
+        dialect="opencode",
+    )
+    return info, path.read_bytes()
+
+
+@pytest.mark.parametrize(
+    JSONFidelityCase._fields,
+    PRESERVED_JSONC,
+    ids=[c.test_id for c in PRESERVED_JSONC],
+)
+def test_untouched_jsonc_config_round_trips_byte_identical(
+    test_id: str, body: str, tmp_path: pathlib.Path
+) -> None:
+    """Loading and rewriting an unmodified JSONC config changes no byte."""
+    assert test_id
+    info, raw = _jsonc_config(tmp_path, body)
+    config = mcp_swap.load_config(info)
+    assert mcp_swap.dump_config_bytes(info, config, original=raw) == raw
+
+
+@pytest.mark.parametrize(
+    JSONFidelityCase._fields,
+    PRESERVED_JSONC,
+    ids=[c.test_id for c in PRESERVED_JSONC],
+)
+def test_jsonc_values_match_stdlib_json(test_id: str, body: str, tmp_path: pathlib.Path) -> None:
+    r"""JSONC parsing agrees with stdlib json wherever stdlib can parse.
+
+    Escape handling is the standard library's, not a reimplementation's.
+    The rejected ``json-five`` dependency failed exactly here: it raised on
+    ``"C:\\x"`` and decoded a literal ``\\u0041`` to ``"A"``.
+    """
+    assert test_id
+    assert tmp_path
+    try:
+        expected = json.loads(body)
+    except json.JSONDecodeError:
+        pytest.skip("comment or trailing comma — stdlib cannot parse it")
+    assert mcp_swap._jsonc_loads(body) == expected
+
+
+def test_jsonc_config_is_not_written_through_the_toml_writer(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A jsonc config comes back as JSON text, not TOML.
+
+    Regression: ``dump_config_bytes`` branched on ``fmt != "json"``, so any
+    third format reached ``tomlkit.dumps`` and put TOML bytes in a JSON
+    file. The dispatch is on the exact format now.
+    """
+    info, raw = _jsonc_config(tmp_path, '{\n  "mcp": {}\n}\n')
+    out = mcp_swap.dump_config_bytes(info, {"mcp": {"x": {"type": "local"}}}, original=raw)
+    text = out.decode()
+    assert text.lstrip().startswith("{")
+    assert mcp_swap._jsonc_loads(text)["mcp"]["x"]["type"] == "local"
+
+
+class JsoncDeletionCase(t.NamedTuple):
+    """A member removal whose exact resulting text is pinned.
+
+    Attributes
+    ----------
+    test_id : str
+        Identifier shown in the parametrized test name.
+    body : str
+        The config text before the merge.
+    data : dict[str, t.Any]
+        The reconciled data the merge is driven with.
+    expected : str
+        The exact text the merge must produce.
+    """
+
+    test_id: str
+    body: str
+    data: dict[str, t.Any]
+    expected: str
+
+
+JSONC_DELETIONS: list[JsoncDeletionCase] = [
+    JsoncDeletionCase(
+        "first_member",
+        '{\n  "a": 1,\n  "b": 2\n}\n',
+        {"b": 2},
+        '{\n  "b": 2\n}\n',
+    ),
+    JsoncDeletionCase(
+        "middle_member",
+        '{\n  "a": 1,\n  "b": 2,\n  "c": 3\n}\n',
+        {"a": 1, "c": 3},
+        '{\n  "a": 1,\n  "c": 3\n}\n',
+    ),
+    JsoncDeletionCase(
+        "last_member",
+        '{\n  "a": 1,\n  "b": 2\n}\n',
+        {"a": 1},
+        '{\n  "a": 1\n}\n',
+    ),
+    JsoncDeletionCase(
+        "comma_hidden_behind_a_comment",
+        '{\n  "a": 1 /* x, y */,\n  "b": 2\n}\n',
+        {"b": 2},
+        '{\n  "b": 2\n}\n',
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    JsoncDeletionCase._fields,
+    JSONC_DELETIONS,
+    ids=[c.test_id for c in JSONC_DELETIONS],
+)
+def test_jsonc_merge_removing_a_member_takes_exactly_one_comma(
+    test_id: str, body: str, data: dict[str, t.Any], expected: str
+) -> None:
+    """Regression: a removal took the comma on both sides of the member.
+
+    Deleting a member between two others left its neighbours undelimited,
+    so the next merge pass raised ``JSONDecodeError`` and the swap reported
+    the config unreadable. ``comma_hidden_behind_a_comment`` covers the
+    partner defect: the delimiter scan read the raw text, where a comma
+    inside a comment passes for the separator.
+    """
+    assert test_id
+    assert mcp_swap._jsonc_merge(body, data, ensure_ascii=False) == expected
+
+
+@pytest.mark.parametrize(
+    "name", ["back\\slash", 'quo"te', "new\nline", "tab\tbed", "unicode\u00e9"]
+)
+def test_jsonc_merge_escapes_an_inserted_key(name: str) -> None:
+    """Regression: an inserted key was written raw, so a swap could not converge.
+
+    ``--server`` takes an arbitrary string. Written unescaped, a backslash or
+    quote in it emitted text that would not parse back, so the member was
+    never found again and the merge re-inserted it until the pass ceiling --
+    spinning while holding the swap lock and then failing.
+    """
+    src = '{\n  "mcp": {}\n}\n'
+    data = mcp_swap._jsonc_loads(src)
+    data["mcp"][name] = {"type": "local"}
+    out = mcp_swap._jsonc_merge(src, data, ensure_ascii=False)
+    assert mcp_swap._jsonc_loads(out)["mcp"][name] == {"type": "local"}
+
+
+def test_jsonc_merge_removing_a_middle_member_stays_parseable() -> None:
+    """The shape that surfaced it: an opencode entry losing optional fields."""
+    src = (
+        '{\n  "mcp": {\n    "agentgrep": {\n      "type": "local",\n'
+        '      "enabled": true,\n      "timeout": 5000,\n'
+        '      "command": ["uvx", "old"]\n    }\n  }\n}\n'
+    )
+    data = mcp_swap._jsonc_loads(src)
+    data["mcp"]["agentgrep"] = {"type": "local", "command": ["uv", "run", "x"]}
+    out = mcp_swap._jsonc_merge(src, data, ensure_ascii=False)
+    assert mcp_swap._jsonc_loads(out) == data
+
+
+def test_jsonc_merge_inserting_into_a_comment_only_object_keeps_the_comment() -> None:
+    """Regression: blanking made a documented object look empty.
+
+    The emptiness guard reads the comment-blanked text, where a comment is
+    indistinguishable from whitespace, so insertion used to splice over the
+    whole interior and take the comment with it.
+    """
+    src = '{\n  "mcp": {\n    // why there are no servers yet\n  }\n}\n'
+    data = mcp_swap._jsonc_loads(src)
+    data["mcp"]["agentgrep"] = {"type": "local", "command": ["uv"]}
+    out = mcp_swap._jsonc_merge(src, data, ensure_ascii=False)
+    assert out == (
+        '{\n  "mcp": {\n    // why there are no servers yet\n'
+        '    "agentgrep": {\n      "type": "local",\n      "command": [\n'
+        '        "uv"\n      ]\n    }\n  }\n}\n'
+    )
+
+
+def test_jsonc_merge_inserting_into_a_comment_only_document_keeps_the_comment() -> None:
+    """The same splice at the root, where there is no enclosing member."""
+    src = "{\n  // root rationale\n}\n"
+    data = mcp_swap._jsonc_loads(src)
+    data["mcp"] = {}
+    out = mcp_swap._jsonc_merge(src, data, ensure_ascii=False)
+    assert out == '{\n  // root rationale\n  "mcp": {}\n}\n'
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["{}\n", "{ }\n", '{\n  "mcp": {}\n}\n', '{\n  "mcp": {\n  }\n}\n'],
+)
+def test_jsonc_merge_inserting_into_an_empty_object_is_unchanged(body: str) -> None:
+    """A genuinely empty interior still collapses to the old splice point."""
+    data = mcp_swap._jsonc_loads(body)
+    data.setdefault("mcp", {})["agentgrep"] = {"type": "local"}
+    out = mcp_swap._jsonc_merge(body, data, ensure_ascii=False)
+    assert mcp_swap._jsonc_loads(out)["mcp"]["agentgrep"] == {"type": "local"}
+    assert out.rstrip().endswith("}")
+
+
+def test_jsonc_comment_blanking_preserves_offsets() -> None:
+    """Blanking a comment must not move the bytes around it.
+
+    Offsets are what let a span found in the blanked text address the same
+    bytes in the original; if blanking changed the length, every splice
+    would land in the wrong place.
+    """
+    src = '{\n  // note\n  "a": 1, /* x */\n  "b": "//not a comment"\n}\n'
+    blanked = mcp_swap._jsonc_blank_comments(src)
+    assert len(blanked) == len(src)
+    assert "//not a comment" in blanked
+    assert "note" not in blanked
+    assert blanked.count("\n") == src.count("\n")
