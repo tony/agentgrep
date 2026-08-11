@@ -163,6 +163,7 @@ def _compile_request_query(
     instead of reaching this point).
     """
     from agentgrep.query import (
+        FieldEqNode,
         QueryCompileError,
         QueryParseError,
         compile_query,
@@ -183,13 +184,16 @@ def _compile_request_query(
     # (the pre-origin path joined and re-split them), unlike CLI argv
     # elements, which stay whole to match the bare fast path.
     terms = tuple(word for term in request.terms for word in term.split())
-    if not terms:
+    synthetic_nodes = (
+        (FieldEqNode(field="human", value=request.human),) if request.human is not None else ()
+    )
+    if not terms and not synthetic_nodes:
         if origin_filter is None:
             return base_query, ()
         return dataclasses.replace(base_query, terms=(), origin_filter=origin_filter), ()
     registry = default_registry()
     try:
-        ast, user_ast = compose_query_ast(terms, (), registry)
+        ast, user_ast = compose_query_ast(terms, synthetic_nodes, registry)
         compiled = compile_query(ast, registry, case_sensitive=base_query.case_sensitive)
     except (QueryParseError, QueryCompileError) as exc:
         message = f"invalid query: {exc}"
@@ -443,6 +447,16 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
                 description="Only return records whose recorded git branch matches this name.",
             ),
         ] = None,
+        human: t.Annotated[
+            t.Literal["true", "false"] | None,
+            Field(
+                default=None,
+                description=(
+                    "Filter by who authored the turn: 'true' keeps user-typed prompts, "
+                    "'false' keeps tool/assistant output. Omit to keep both."
+                ),
+            ),
+        ] = None,
     ) -> SearchToolResponse:
         argument_names = await mcp_context.get_state(TOOL_ARGUMENT_NAMES_STATE_KEY)
         request = SearchRequestModel(
@@ -456,6 +470,7 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
             cwd=cwd,
             repo=repo,
             branch=branch,
+            human=human,
             scope_provenance=(
                 "explicit"
                 if isinstance(argument_names, frozenset) and "scope" in argument_names

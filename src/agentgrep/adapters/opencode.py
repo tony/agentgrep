@@ -114,6 +114,13 @@ def parse_opencode_db(
             )
             session_id = as_optional_str(session_id_raw)
             directory = as_optional_str(directory_raw)
+            metadata: dict[str, object] = {}
+            if directory:
+                metadata["directory"] = directory
+            # ``kind == "history"`` means a non-user role (assistant/tool output),
+            # so tag it the same way build_search_record tags non-human turns.
+            if kind == "history":
+                metadata["human_typed"] = False
             yield SearchRecord(
                 kind=kind,
                 agent=source.agent,
@@ -128,7 +135,7 @@ def parse_opencode_db(
                 session_id=session_id,
                 conversation_id=session_id,
                 origin=_record_origin(cwd=directory),
-                metadata={"directory": directory} if directory else {},
+                metadata=metadata,
             )
     except sqlite3.DatabaseError:
         return

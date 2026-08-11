@@ -243,5 +243,11 @@ def default_registry() -> FieldRegistry:
             enum_values=("prompt", "targeted", "deep", "exhaustive"),
             aliases=("effort",),
         ),
+        FieldSpec(
+            name="human",
+            kind="enum",
+            layer="record",
+            enum_values=("true", "false"),
+        ),
     )
     return FieldRegistry(specs=specs)
