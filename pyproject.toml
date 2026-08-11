@@ -27,7 +27,11 @@ readme = "README.md"
 dependencies = [
   "pydantic>=2.11.3",
   "textual>=3.2.0",
-  "fastmcp>=3.4.0",
+  # Capped below 4.0: the response-limiting middleware specializes FastMCP's
+  # private `_truncate_to_result`, and 4.0 is a breaking major that renames
+  # camelCase result fields behind a deprecation bridge. Lift the cap only
+  # once both are verified against a 4.x release.
+  "fastmcp>=3.4.0,<4",
   "rapidfuzz>=3.10.0",
 ]
 
@@ -332,6 +336,17 @@ addopts = [
 doctest_optionflags = [
   "ELLIPSIS",
   "NORMALIZE_WHITESPACE",
+]
+# Python silences DeprecationWarning outside `__main__` by default, which is
+# how an upstream deprecation reaches end users before it reaches the suite.
+# Escalating makes the deprecation the suite's problem on the release that
+# introduces it, not on the release that removes the feature. The suite is
+# clean under this setting; when an upstream deprecation does fire, add a
+# narrow `ignore::DeprecationWarning:<module>` entry with the migration
+# tracked, rather than relaxing the blanket rule.
+filterwarnings = [
+  "error::DeprecationWarning",
+  "error::PendingDeprecationWarning",
 ]
 markers = [
   "documentation: documentation contracts and executable examples",
