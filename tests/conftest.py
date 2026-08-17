@@ -116,3 +116,18 @@ def codex_transcript_home(tmp_path: pathlib.Path) -> pathlib.Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_agentgrep_db(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Point the DB cache at a per-test path.
+
+    The cache-aware search path consults ``default_db_path()`` when no
+    explicit db path is given, so without this guard the suite would
+    read — and schema rebuilds would erase — the developer's real cache
+    under ``$XDG_CACHE_HOME``.
+    """
+    monkeypatch.setenv("AGENTGREP_DB", str(tmp_path / "agentgrep-test.sqlite"))

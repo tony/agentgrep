@@ -18,6 +18,15 @@ CLI argument types, serialization helpers, and command entry points.
 .. autoclass:: agentgrep.FindArgs
    :members:
    :no-undoc-members:
+
+.. autoclass:: agentgrep.UIArgs
+   :no-index:
+   :members:
+   :no-undoc-members:
+
+.. autoclass:: agentgrep.DbArgs
+   :members:
+   :no-undoc-members:
 ```
 
 ## Serialization
@@ -32,7 +41,10 @@ CLI argument types, serialization helpers, and command entry points.
 ## Entry points
 
 ```{eval-rst}
+.. autofunction:: agentgrep.run_grep_command
+.. autofunction:: agentgrep.run_search_command
 .. autofunction:: agentgrep.run_find_command
 .. autofunction:: agentgrep.run_ui_command
+.. autofunction:: agentgrep.run_db_command
 .. autofunction:: agentgrep.main
 ```
