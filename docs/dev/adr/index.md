@@ -22,6 +22,8 @@ multiple adapters or public payloads.
 0012-reusable-tui-widget-architecture
 0013-pluggable-tui-layouts-and-workflows
 0014-result-order-limit-and-streaming-merge
+0015-opentelemetry-local-observability
+0016-agentic-structured-logging
 0020-progressive-deep-search
 0021-prompt-guided-conversation-routing
 ```

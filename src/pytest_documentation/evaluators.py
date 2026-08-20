@@ -21,7 +21,7 @@ from .core import (
     ExampleEvaluator,
     redact_text,
 )
-from .sandbox import SandboxBackend, TempHomeSandbox
+from .sandbox import SandboxBackend, TempHomeSandbox, documentation_subprocess_span
 
 
 class PythonCodeEvaluator:
@@ -314,22 +314,27 @@ class SphinxDoctestEvaluator:
         try:
             with tempfile.TemporaryDirectory(prefix="pytest-documentation-doctest-") as temp_dir:
                 builddir = pathlib.Path(temp_dir) / "build"
-                completed = subprocess.run(
-                    (
-                        "just",
-                        "-f",
-                        str(example.location.path),
-                        "--set",
-                        "builddir",
-                        str(builddir),
-                        recipe,
-                    ),
-                    cwd=docs_root,
-                    text=True,
-                    capture_output=True,
-                    timeout=self.timeout,
-                    check=False,
-                )
+                with documentation_subprocess_span(
+                    "documentation_just_doctest",
+                    agentgrep_documentation_kind=example.kind,
+                    agentgrep_documentation_language=example.language,
+                ):
+                    completed = subprocess.run(
+                        (
+                            "just",
+                            "-f",
+                            str(example.location.path),
+                            "--set",
+                            "builddir",
+                            str(builddir),
+                            recipe,
+                        ),
+                        cwd=docs_root,
+                        text=True,
+                        capture_output=True,
+                        timeout=self.timeout,
+                        check=False,
+                    )
         except subprocess.TimeoutExpired as exc:
             return EvaluationResult.failed_result(
                 example,
