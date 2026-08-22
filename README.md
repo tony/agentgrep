@@ -4,10 +4,12 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/agentgrep.svg)](https://pypi.org/project/agentgrep/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Read-only search for local AI agent prompts and opt-in conversations
-across Codex, Claude Code, Cursor, Gemini, Antigravity, Grok, Pi, OpenCode, and VS Code.
+Read-only search for local AI agent prompts and opt-in conversations across
+Codex, Claude Code, Cursor, Gemini, Antigravity, Grok, Pi, OpenCode, and
+VS Code.
 
-`agentgrep` provides a CLI and an MCP server over the same discovery + parsing layer:
+`agentgrep` provides a CLI and an MCP server over the same discovery +
+parsing layer:
 
 - **A terminal CLI** (`agentgrep`) with a Textual TUI for interactive
   browsing of normalized records.
@@ -15,7 +17,13 @@ across Codex, Claude Code, Cursor, Gemini, Antigravity, Grok, Pi, OpenCode, and 
   catalog, and validation tools to any client that speaks Model
   Context Protocol.
 
-> **Pre-alpha.** APIs may change.
+Requires Python 3.14+. Runs on Linux and macOS; native Windows is not
+supported, but Windows Subsystem for Linux (WSL) is.
+
+> [!WARNING]
+> **Alpha.** Releases carry an `-alpha` prerelease tag. The API is not settled,
+> and any release may change or remove exported identifiers without a
+> deprecation period. Pin an exact version. Not recommended for production.
 
 ## Install
 
@@ -80,6 +88,12 @@ search-shaped subcommand takes `--ui` to hand the same query to the
 explorer (e.g. `agentgrep grep "deploy" --ui`). Agents that don't
 speak MCP can drive the CLI directly; see
 <https://agentgrep.org/cli/> for the per-subcommand reference.
+
+Results and JSON/NDJSON payloads write to stdout; progress and diagnostics
+write to stderr, so a piped command never sees the spinner. `search` exits
+`0` for at least one result and `1` for none; `grep` follows `rg`'s
+convention and adds `2` for a search error such as invalid regex. See
+<https://agentgrep.org/cli/> for the exit codes of each command.
 
 ## MCP server: quickest setup
 
