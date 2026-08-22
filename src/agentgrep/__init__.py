@@ -68,7 +68,7 @@ try:
 except ImportError:
     # Keep _orjson typed as the module so _loads resolves .loads /
     # .JSONDecodeError; the runtime None check guards the absent case.
-    _orjson = None  # ty: ignore[invalid-assignment]
+    _orjson = None
 
 # Release version and git provenance live in agentgrep._version. Importing it
 # does no work; ``__version__`` is resolved lazily by the ``__getattr__`` below,

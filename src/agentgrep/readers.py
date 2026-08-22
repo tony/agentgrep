@@ -27,7 +27,7 @@ from agentgrep.records import BackendSelection
 try:
     import orjson as _orjson
 except ImportError:
-    _orjson = None  # ty: ignore[invalid-assignment]
+    _orjson = None
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
