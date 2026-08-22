@@ -1,6 +1,7 @@
 # Test Suite Rules
 
-These rules apply to every file under `tests/`.
+These rules apply to every file under `tests/`, in addition to the general
+testing workflow in [CONTRIBUTING.md](../.github/CONTRIBUTING.md#tests).
 
 ## Purpose
 
@@ -70,19 +71,14 @@ merging.
 
 ## Synchronize on the signal, never the clock
 
-Block until something *happens*; never wait for time to *pass*. A non-zero
-`time.sleep` decides the outcome by wall-clock timing — a defect, not a tuning
-knob. Block on a published signal, with a generous asserted timeout as a
-deadlock failsafe:
+[CONTRIBUTING.md](../.github/CONTRIBUTING.md#coding-standards) has the
+general rule. In a test, that means asserting on a published signal with a
+generous timeout as a deadlock failsafe, not a `time.sleep`:
 
 ```python
 assert ready.wait(timeout=5.0), "worker never published the second record"
 ```
 
-Not sleeps: `time.sleep(0)` and `await asyncio.sleep(0)` yield the scheduler. A
-`wait(timeout=...)` expected to be satisfied is a failsafe; one counted on to
-expire is a sleep in disguise.
-
-No signal? Publish one, or assert the decision directly — the worker count a
-driver requests, not which of two racing workers wins. If the claim is only
-observable by racing, delete the test.
+No signal to wait on? Publish one, or assert the decision directly — the
+worker count a driver requests, not which of two racing workers wins. If the
+claim is only observable by racing, delete the test.

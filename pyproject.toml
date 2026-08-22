@@ -110,6 +110,13 @@ build-backend = "hatchling.build"
 # environments (a pytest11 entry point once shipped without the package and
 # broke every consumer pytest run at startup).
 packages = ["src/agentgrep"]
+# AGENTS.md (+ its CLAUDE.md symlink) is contributor guidance, not a package
+# resource; hatchling packages every file under the package directory, so it
+# would otherwise ship inside every install.
+exclude = [
+  "src/agentgrep/**/AGENTS.md",
+  "src/agentgrep/**/CLAUDE.md",
+]
 
 [tool.uv]
 # Resolve the interpreter from PATH (mise/system), not uv's managed downloads.
