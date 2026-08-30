@@ -113,6 +113,19 @@ conf["fastmcp_model_classes"] = (
     "InspectResultRequest",
     "InspectResultResponse",
 )
+# The vocabulary this project tags its MCP tools with.
+# sphinx-autodoc-fastmcp ships no default, so a tool matching none of
+# these renders with no toolset badge. Order is precedence, and every
+# tool also carries topic tags that are deliberately left undeclared so
+# they cannot outrank the tier.
+conf["fastmcp_toolsets"] = (
+    {
+        "tag": "readonly",
+        "tooltip": "Read-only \N{EM DASH} does not modify external state",
+        "icon": "\N{LEFT-POINTING MAGNIFYING GLASS}",
+        "tone": "green",
+    },
+)
 conf["fastmcp_section_badge_map"] = {
     "Search": "readonly",
     "Discovery": "readonly",
