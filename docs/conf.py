@@ -113,34 +113,38 @@ conf["fastmcp_model_classes"] = (
     "InspectResultRequest",
     "InspectResultResponse",
 )
-# The vocabulary this project tags its MCP tools with. Every tool here
-# is read-only, so risk is not the useful axis; capability is. Declaration
-# order is precedence: `inspect_result` carries both search and discovery,
-# and reads back a prior search, so search wins.
-conf["fastmcp_toolsets"] = (
+# Every tool here is read-only, so risk is not the useful axis; capability
+# is. Order is precedence: `inspect_result` carries both search and
+# discovery, and reads back a prior search, so search wins.
+conf["fastmcp_axes"] = (
     {
-        "tag": "search",
-        "tooltip": "Search \N{EM DASH} queries prompts and conversations",
-        "icon": "\N{LEFT-POINTING MAGNIFYING GLASS}",
-        "tone": "green",
-    },
-    {
-        "tag": "discovery",
-        "tooltip": "Discovery \N{EM DASH} finds sources and summarises what exists",
-        "icon": "\N{COMPASS}",
-        "tone": "blue",
-    },
-    {
-        "tag": "catalog",
-        "tooltip": "Catalog \N{EM DASH} lists stores and describes their records",
-        "icon": "\N{CARD INDEX DIVIDERS}",
-        "tone": "slate",
-    },
-    {
-        "tag": "diagnostic",
-        "tooltip": "Diagnostic \N{EM DASH} checks a query without running it",
-        "icon": "\N{STETHOSCOPE}",
-        "tone": "amber",
+        "name": "capability",
+        "terms": (
+            {
+                "term": "search",
+                "tooltip": "Search \N{EM DASH} queries prompts and conversations",
+                "icon": "\N{LEFT-POINTING MAGNIFYING GLASS}",
+                "tone": "green",
+            },
+            {
+                "term": "discovery",
+                "tooltip": "Discovery \N{EM DASH} finds sources and summarises what exists",
+                "icon": "\N{COMPASS}",
+                "tone": "blue",
+            },
+            {
+                "term": "catalog",
+                "tooltip": "Catalog \N{EM DASH} lists stores and describes their records",
+                "icon": "\N{CARD INDEX DIVIDERS}",
+                "tone": "slate",
+            },
+            {
+                "term": "diagnostic",
+                "tooltip": "Diagnostic \N{EM DASH} checks a query without running it",
+                "icon": "\N{STETHOSCOPE}",
+                "tone": "amber",
+            },
+        ),
     },
 )
 conf["fastmcp_section_badge_map"] = {
