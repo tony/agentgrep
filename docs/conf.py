@@ -113,11 +113,45 @@ conf["fastmcp_model_classes"] = (
     "InspectResultRequest",
     "InspectResultResponse",
 )
+# Every tool here is read-only, so risk is not the useful axis; capability
+# is. Order is precedence: `inspect_result` carries both search and
+# discovery, and reads back a prior search, so search wins.
+conf["fastmcp_axes"] = (
+    {
+        "name": "capability",
+        "terms": (
+            {
+                "term": "search",
+                "tooltip": "Search \N{EM DASH} queries prompts and conversations",
+                "icon": "\N{LEFT-POINTING MAGNIFYING GLASS}",
+                "tone": "green",
+            },
+            {
+                "term": "discovery",
+                "tooltip": "Discovery \N{EM DASH} finds sources and summarises what exists",
+                "icon": "\N{COMPASS}",
+                "tone": "blue",
+            },
+            {
+                "term": "catalog",
+                "tooltip": "Catalog \N{EM DASH} lists stores and describes their records",
+                "icon": "\N{CARD INDEX DIVIDERS}",
+                "tone": "slate",
+            },
+            {
+                "term": "diagnostic",
+                "tooltip": "Diagnostic \N{EM DASH} checks a query without running it",
+                "icon": "\N{STETHOSCOPE}",
+                "tone": "amber",
+            },
+        ),
+    },
+)
 conf["fastmcp_section_badge_map"] = {
-    "Search": "readonly",
-    "Discovery": "readonly",
-    "Catalog": "readonly",
-    "Diagnostic": "readonly",
+    "Search": "search",
+    "Discovery": "discovery",
+    "Catalog": "catalog",
+    "Diagnostic": "diagnostic",
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
 conf["doctest_global_setup"] = (

@@ -42,6 +42,16 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Documentation
+
+#### Tool badges name the capability, not the risk
+
+gp-sphinx 0.1.0a38 replaces the docs toolchain's single tool
+classification with axes this project declares. Every agentgrep tool is
+read-only, so risk had one value and painted all 58 badges the same
+colour; they now name what a tool does — `search`, `discovery`,
+`catalog`, `diagnostic` — each with its own tone.
+
 ### Development
 
 #### `mcp_swap.py` swaps opencode and pi
