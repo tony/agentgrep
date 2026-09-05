@@ -44,7 +44,7 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 ### Breaking changes
 
-#### `agentgrep://sources/{agent}` rejects an unknown agent
+#### `agentgrep://sources/{agent}` rejects an unknown agent (#164)
 
 The `agent` placeholder was typed `str` and cast to the selector, so a name
 outside the known set returned `[]` — indistinguishable from a real agent with
@@ -59,7 +59,7 @@ or the `search` tool's schema for that. And the rejection surfaces as `-32603`
 "Internal error" carrying pydantic's raw text, because FastMCP's error
 middleware matches not-found types by exact class.
 
-#### Invalid search arguments are protocol errors, not error results
+#### Invalid search arguments are protocol errors, not error results (#164)
 
 `search` rejects malformed arguments with a JSON-RPC error (`-32602`,
 `Invalid params: ...`) instead of a successful call carrying `isError: true`.
@@ -67,7 +67,7 @@ agentgrep always raised `McpError` for these; FastMCP 3 folded it back into a
 tool result, and FastMCP 4 sends it as the protocol error it was. The message
 text is unchanged, and genuine tool failures are still `isError` results.
 
-#### Tools no longer advertise an output schema on `tools/list`
+#### Tools no longer advertise an output schema on `tools/list` (#164)
 
 Every agentgrep tool passes through the response limiter, whose job is to bound
 an oversized result — and a bounded result is plain text, not the declared
@@ -75,7 +75,7 @@ shape. FastMCP 4 therefore omits `outputSchema` for any tool the limiter
 covers, rather than advertising a schema a truncated response would violate.
 The schemas themselves are unchanged; only the advertisement is withheld.
 
-#### Resources drop their `readOnlyHint` / `idempotentHint` annotations
+#### Resources drop their `readOnlyHint` / `idempotentHint` annotations (#164)
 
 MCP resource annotations only ever carried `audience`, `priority`, and
 `lastModified`. SDK v1 tolerated the extra keys and passed them through; SDK v2
@@ -86,7 +86,7 @@ than left to be silently discarded. Tool annotations are unaffected —
 
 ### Dependencies
 
-#### FastMCP releases are adopted without waiting out the cooldown
+#### FastMCP releases are adopted without waiting out the cooldown (#164)
 
 The dependency cooldown held every FastMCP release back, so a refreshed lock
 resolved to a patch behind the one being tested against. `fastmcp` and its
@@ -94,7 +94,7 @@ resolved to a patch behind the one being tested against. `fastmcp` and its
 `[tool.uv.exclude-newer-package]`. The metapackage pins its companion to an
 exact version, so exempting one without the other leaves the pair unresolvable.
 
-#### FastMCP 4
+#### FastMCP 4 (#164)
 
 Minimum `fastmcp>=4.0.2` (was `>=3.4.0`), and the requirement gains the upper
 bound it never had. FastMCP 4 builds on MCP Python SDK v2, which brings
@@ -104,7 +104,7 @@ match.
 
 ### What's new
 
-#### `agentgrep://sources` reads are cached
+#### `agentgrep://sources` reads are cached (#164)
 
 `agentgrep://sources` walks the filesystem to discover stores and nothing
 cached it, so repeat orientation reads inside one session paid the full walk
@@ -117,7 +117,7 @@ staleness story and a minute bounds it. The per-entry ceiling is raised well
 above the stock default, which sits below the listing this exists for — an
 oversized entry is dropped silently, with no error and no log.
 
-#### `agentgrep://sources/{agent}` answers argument completion
+#### `agentgrep://sources/{agent}` answers argument completion (#164)
 
 The `agent` placeholder is a closed set, but `resources/templates/list` carries
 no parameter schema, so a client had no wire path to the valid names. They now
@@ -140,7 +140,7 @@ colour; they now name what a tool does — `search`, `discovery`,
 
 ### Development
 
-#### The hand-written FastMCP docs shim is gone
+#### The hand-written FastMCP docs shim is gone (#164)
 
 `docs/_ext/agentgrep_fastmcp.py` fabricated a `__fastmcp__` spec for every tool
 by hand, duplicating metadata the real server already holds, with no test
