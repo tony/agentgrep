@@ -355,3 +355,33 @@ async def test_client_accepts_semantically_truncated_search(
     assert response.status.reason == "response_truncated"
     assert response.effort.completed is None
     assert response.outcome == "undetermined"
+
+
+@pytest.mark.slow
+async def test_response_cache_covers_resources_and_never_tools() -> None:
+    """Only resource reads are cached; tool results must not be.
+
+    A tool result cached on a timer would undercut ``SourceScanCache``,
+    which invalidates exactly on file fingerprints. The cache has no
+    invalidation hook of its own, so its TTL is the whole staleness story
+    and it must not reach anything that already caches correctly.
+    """
+    from fastmcp.server.middleware.caching import ResponseCachingMiddleware
+
+    from agentgrep.mcp.server import build_mcp_server
+
+    server = build_mcp_server()
+    cache = next(m for m in server.middleware if isinstance(m, ResponseCachingMiddleware))
+
+    async with Client(server) as client:
+        await client.read_resource("agentgrep://sources")
+        await client.read_resource("agentgrep://sources")
+        await client.call_tool("list_stores", {}, raise_on_error=False)
+        await client.call_tool("list_stores", {}, raise_on_error=False)
+        await client.list_tools()
+
+    stats = cache.statistics()
+    assert stats.read_resource is not None, "resource reads should be cached"
+    assert stats.read_resource.get.hit >= 1, "the repeat read should hit the cache"
+    assert stats.call_tool is None, "tool results must never be cached"
+    assert stats.list_tools is None, "listings must never be cached"

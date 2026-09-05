@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware.caching import ResponseCachingMiddleware
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
@@ -24,6 +25,18 @@ from agentgrep.mcp.tools import register_tools
 #: prompt/history records (a typical record is ~1 KB; 512 KB allows a few
 #: hundred records before truncation fires).
 DEFAULT_RESPONSE_LIMIT_BYTES = 512 * 1024
+
+#: How long a cached ``resources/read`` stays fresh. The cache has no
+#: invalidation hook, so this window IS the worst-case staleness. A minute
+#: absorbs the repeat orientation reads inside one session while bounding how
+#: wrong a long conversation can get; the walk itself dominates a miss, so a
+#: short TTL costs nothing measurable.
+RESOURCE_CACHE_TTL_SECONDS = 60
+
+#: Ceiling on a single cached entry. The stock 1 MiB is below the source
+#: listing this cache exists for, and an oversized entry is dropped silently —
+#: no error, no log, a permanent no-op. Sized well clear of it.
+RESOURCE_CACHE_MAX_ITEM_BYTES = 32 * 1024 * 1024
 
 
 def build_mcp_server() -> FastMCP:
@@ -54,6 +67,18 @@ def build_mcp_server() -> FastMCP:
             AgentgrepArgumentPresenceMiddleware(),
             AgentgrepAuditMiddleware(),
             AgentgrepResponseLimitingMiddleware(max_size=DEFAULT_RESPONSE_LIMIT_BYTES),
+            # Resource reads only. Tool results are deliberately excluded:
+            # SourceScanCache already keys them on file fingerprints, which
+            # invalidates exactly, where this cache expires only on time.
+            ResponseCachingMiddleware(
+                read_resource_settings={"ttl": RESOURCE_CACHE_TTL_SECONDS},
+                list_tools_settings={"enabled": False},
+                list_resources_settings={"enabled": False},
+                list_prompts_settings={"enabled": False},
+                get_prompt_settings={"enabled": False},
+                call_tool_settings={"enabled": False},
+                max_item_size=RESOURCE_CACHE_MAX_ITEM_BYTES,
+            ),
         ],
         on_duplicate="error",
     )
