@@ -151,7 +151,7 @@ conf["fastmcp_axes"] = (
     },
 )
 conf["fastmcp_section_badge_map"] = {
-    "Search": "search",
+    "Search Tool": "search",
     "Discovery": "discovery",
     "Catalog": "catalog",
     "Diagnostic": "diagnostic",
