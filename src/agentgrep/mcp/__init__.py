@@ -20,7 +20,6 @@ from __future__ import annotations
 from agentgrep.mcp._library import (
     KNOWN_ADAPTERS,
     READONLY_TAGS,
-    RESOURCE_ANNOTATIONS,
     SERVER_VERSION,
     TOOL_ANNOTATIONS,
     AgentGrepModule,
@@ -84,7 +83,6 @@ from agentgrep.mcp.server import build_mcp_server, main
 __all__ = (
     "KNOWN_ADAPTERS",
     "READONLY_TAGS",
-    "RESOURCE_ANNOTATIONS",
     "SERVER_VERSION",
     "TOOL_ANNOTATIONS",
     "AgentGrepModel",

@@ -302,12 +302,14 @@ async def test_client_accepts_truncated_structured_tool_as_error(
             probe_tool = next(
                 tool for tool in tools.tools if tool.name == "oversized_response_probe"
             )
-            assert probe_tool.outputSchema is not None
+            # The limiter may truncate this tool's result to plain text, so
+            # FastMCP hides the schema it could not then honour.
+            assert probe_tool.output_schema is None
             result = await client.call_tool_mcp("oversized_response_probe", {})
 
     records = _audit_records(caplog)
-    assert result.isError is True
-    assert result.structuredContent is None
+    assert result.is_error is True
+    assert result.structured_content is None
     assert len(records) == 1
     assert records[0].agentgrep_tool == "oversized_response_probe"
     assert records[0].agentgrep_outcome == "error"
@@ -345,11 +347,41 @@ async def test_client_accepts_semantically_truncated_search(
             {"terms": ["large-needle"], "agent": "codex"},
         )
 
-    response = SearchToolResponse.model_validate(result.structuredContent)
-    assert result.isError is False
+    response = SearchToolResponse.model_validate(result.structured_content)
+    assert result.is_error is False
     assert response.results == []
     assert response.page.count == response.stats.emitted == 0
     assert response.status.state == "truncated"
     assert response.status.reason == "response_truncated"
     assert response.effort.completed is None
     assert response.outcome == "undetermined"
+
+
+@pytest.mark.slow
+async def test_response_cache_covers_resources_and_never_tools() -> None:
+    """Only resource reads are cached; tool results must not be.
+
+    A tool result cached on a timer would undercut ``SourceScanCache``,
+    which invalidates exactly on file fingerprints. The cache has no
+    invalidation hook of its own, so its TTL is the whole staleness story
+    and it must not reach anything that already caches correctly.
+    """
+    from fastmcp.server.middleware.caching import ResponseCachingMiddleware
+
+    from agentgrep.mcp.server import build_mcp_server
+
+    server = build_mcp_server()
+    cache = next(m for m in server.middleware if isinstance(m, ResponseCachingMiddleware))
+
+    async with Client(server) as client:
+        await client.read_resource("agentgrep://sources")
+        await client.read_resource("agentgrep://sources")
+        await client.call_tool("list_stores", {}, raise_on_error=False)
+        await client.call_tool("list_stores", {}, raise_on_error=False)
+        await client.list_tools()
+
+    stats = cache.statistics()
+    assert stats.read_resource is not None, "resource reads should be cached"
+    assert stats.read_resource.get.hit >= 1, "the repeat read should hit the cache"
+    assert stats.call_tool is None, "tool results must never be cached"
+    assert stats.list_tools is None, "listings must never be cached"

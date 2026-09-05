@@ -9,8 +9,7 @@ import typing as t
 import mcp.types as mt
 import pytest
 from fastmcp import Client
-from fastmcp.exceptions import ToolError
-from mcp import McpError
+from fastmcp.exceptions import McpError, ToolError
 
 from agentgrep.events import SearchFinished, SearchStarted
 from agentgrep.mcp import refs
@@ -365,38 +364,41 @@ async def test_mcp_rejects_malformed_engine_terminal_streams(
 @pytest.mark.slow
 async def test_registered_search_uses_cursorless_effort_contract() -> None:
     """Expose one effort enum and no retired cursor/deep arguments."""
-    async with Client(build_mcp_server()) as client:
+    server = build_mcp_server()
+    scope_conflict = "Invalid params: targeted effort requires conversation or all scope"
+    async with Client(server) as client:
         tools = await client.list_tools_mcp()
         search = next(tool for tool in tools.tools if tool.name == "search")
-        result = await client.call_tool_mcp(
-            "search",
-            {"terms": ["needle"], "cursor": "retired-search-cursor"},
-        )
-        inline_scope_result = await client.call_tool_mcp(
-            "search",
-            {
-                "terms": ["needle scope:prompts"],
-                "effort": "targeted",
-            },
-        )
-        explicit_scope_result = await client.call_tool_mcp(
-            "search",
-            {
-                "terms": ["needle"],
-                "scope": "prompts",
-                "effort": "targeted",
-            },
-        )
 
-    properties = search.inputSchema["properties"]
+        with pytest.raises(McpError) as retired_cursor:
+            await client.call_tool_mcp(
+                "search",
+                {"terms": ["needle"], "cursor": "retired-search-cursor"},
+            )
+        for arguments in (
+            {"terms": ["needle scope:prompts"], "effort": "targeted"},
+            {"terms": ["needle"], "scope": "prompts", "effort": "targeted"},
+        ):
+            with pytest.raises(McpError) as scoped:
+                await client.call_tool_mcp("search", arguments)
+            assert scoped.value.error.code == mt.INVALID_PARAMS
+            assert scoped.value.error.message == scope_conflict
+
+    properties = search.input_schema["properties"]
     assert "cursor" not in properties
     assert "deep" not in properties
     assert "effort" in properties
     assert "conversation_limit" in properties
-    assert search.outputSchema is not None
-    action_effort_schema = search.outputSchema["properties"]["next_actions"]["items"]["properties"][
-        "patch"
-    ]["properties"]["effort"]
+    assert retired_cursor.value.error.code == mt.INVALID_PARAMS
+
+    # The response limiter may truncate search to plain text, so FastMCP hides
+    # the output schema on the wire. The contract itself still stands.
+    assert search.output_schema is None
+    registered = await server.get_tool("search")
+    assert registered is not None
+    declared = registered.output_schema
+    assert declared is not None
+    action_effort_schema = declared["$defs"]["SearchRequestPatchModel"]["properties"]["effort"]
     assert action_effort_schema == {
         "anyOf": [
             {
@@ -406,38 +408,26 @@ async def test_registered_search_uses_cursorless_effort_contract() -> None:
             {"type": "null"},
         ],
     }
-    assert result.isError is True
-    assert result.structuredContent is None
-    assert inline_scope_result.isError is True
-    assert inline_scope_result.structuredContent is None
-    assert explicit_scope_result.isError is True
-    assert explicit_scope_result.structuredContent is None
-    for invalid_result in (inline_scope_result, explicit_scope_result):
-        assert [
-            content.text
-            for content in invalid_result.content
-            if isinstance(content, mt.TextContent)
-        ] == ["Invalid params: targeted effort requires conversation or all scope"]
 
 
 @pytest.mark.slow
 async def test_registered_search_reports_invalid_params_concisely() -> None:
     """Return actionable validation without Pydantic internals or input values."""
     async with Client(build_mcp_server()) as client:
-        result = await client.call_tool_mcp(
-            "search",
-            {
-                "terms": ["needle"],
-                "effort": "targeted",
-                "conversation_limit": 0,
-            },
-        )
+        with pytest.raises(McpError) as raised:
+            await client.call_tool_mcp(
+                "search",
+                {
+                    "terms": ["needle"],
+                    "effort": "targeted",
+                    "conversation_limit": 0,
+                },
+            )
 
-    assert result.isError is True
-    assert result.structuredContent is None
-    assert [content.text for content in result.content if isinstance(content, mt.TextContent)] == [
-        ("Invalid params: conversation_limit: Input should be greater than or equal to 1"),
-    ]
+    assert raised.value.error.code == mt.INVALID_PARAMS
+    assert raised.value.error.message == (
+        "Invalid params: conversation_limit: Input should be greater than or equal to 1"
+    )
 
 
 @pytest.mark.slow
@@ -448,21 +438,15 @@ async def test_registered_invalid_args_do_not_reach_server_logs(
     terms_sentinel = "private-invalid-terms-sentinel"
     cursor_sentinel = "private-retired-cursor-sentinel"
     async with Client(build_mcp_server()) as client:
-        terms_result = await client.call_tool_mcp(
-            "search",
+        for arguments in (
             {"terms": terms_sentinel},
-        )
-        cursor_result = await client.call_tool_mcp(
-            "search",
-            {
-                "terms": ["needle"],
-                "cursor": cursor_sentinel,
-            },
-        )
+            {"terms": ["needle"], "cursor": cursor_sentinel},
+        ):
+            with pytest.raises(McpError) as raised:
+                await client.call_tool_mcp("search", arguments)
+            assert raised.value.error.code == mt.INVALID_PARAMS
 
     captured = capfd.readouterr()
-    assert terms_result.isError is True
-    assert cursor_result.isError is True
     assert terms_sentinel not in captured.err
     assert cursor_sentinel not in captured.err
     assert "[validation details redacted]" in captured.err
