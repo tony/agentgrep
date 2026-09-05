@@ -71,7 +71,7 @@ conf = merge_sphinx_config(
     ],
 )
 
-conf["fastmcp_tool_modules"] = ["agentgrep_fastmcp"]
+conf["fastmcp_tool_modules"] = []
 conf["fastmcp_collector_mode"] = "introspect"
 conf["fastmcp_area_map"] = {
     "agentgrep_fastmcp": "mcp/tools",
