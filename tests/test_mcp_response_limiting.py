@@ -302,12 +302,14 @@ async def test_client_accepts_truncated_structured_tool_as_error(
             probe_tool = next(
                 tool for tool in tools.tools if tool.name == "oversized_response_probe"
             )
-            assert probe_tool.outputSchema is not None
+            # The limiter may truncate this tool's result to plain text, so
+            # FastMCP hides the schema it could not then honour.
+            assert probe_tool.output_schema is None
             result = await client.call_tool_mcp("oversized_response_probe", {})
 
     records = _audit_records(caplog)
-    assert result.isError is True
-    assert result.structuredContent is None
+    assert result.is_error is True
+    assert result.structured_content is None
     assert len(records) == 1
     assert records[0].agentgrep_tool == "oversized_response_probe"
     assert records[0].agentgrep_outcome == "error"
@@ -345,8 +347,8 @@ async def test_client_accepts_semantically_truncated_search(
             {"terms": ["large-needle"], "agent": "codex"},
         )
 
-    response = SearchToolResponse.model_validate(result.structuredContent)
-    assert result.isError is False
+    response = SearchToolResponse.model_validate(result.structured_content)
+    assert result.is_error is False
     assert response.results == []
     assert response.page.count == response.stats.emitted == 0
     assert response.status.state == "truncated"
