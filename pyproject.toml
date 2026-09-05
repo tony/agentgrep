@@ -25,9 +25,9 @@ keywords = ["ai", "codex", "claude", "cursor", "gemini", "antigravity", "grok", 
 readme = "README.md"
 
 dependencies = [
-  "pydantic>=2.11.3",
+  "pydantic>=2.12",
   "textual>=3.2.0",
-  "fastmcp>=3.4.0",
+  "fastmcp>=4.0.2,<5.0.0",
   "rapidfuzz>=3.10.0",
 ]
 
