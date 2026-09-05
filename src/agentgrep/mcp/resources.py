@@ -143,9 +143,8 @@ def register_resources(mcp: FastMCP) -> None:
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
     )
-    def sources_by_agent_resource(agent: str) -> str:
-        selected_agent = t.cast("AgentSelector", agent)
-        return SourceListAdapter.dump_json(list_source_models(selected_agent)).decode("utf-8")
+    def sources_by_agent_resource(agent: AgentSelector) -> str:
+        return SourceListAdapter.dump_json(list_source_models(agent)).decode("utf-8")
 
     _ = sources_by_agent_resource
 

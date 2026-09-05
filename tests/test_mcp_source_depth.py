@@ -154,3 +154,20 @@ async def test_search_prompts_discloses_search_coverage() -> None:
     assert "effort='prompt'" in text
     assert "effort='targeted'" in text
     assert "not corpus-wide" in text
+
+
+async def test_unknown_agent_is_rejected_not_answered_empty() -> None:
+    """An agent name outside the enum must fail, not read as "no sources".
+
+    The parameter was a bare ``str`` cast to the selector, so a typo
+    returned ``[]`` — indistinguishable from a real agent with nothing
+    indexed, and silently wrong.
+    """
+    from agentgrep.mcp.server import build_mcp_server
+
+    async with Client(build_mcp_server()) as client:
+        known = await client.read_resource("agentgrep://sources/codex")
+        assert known[0].text is not None
+
+        with pytest.raises(Exception, match="validation error"):
+            await client.read_resource("agentgrep://sources/definitely-not-an-agent")
