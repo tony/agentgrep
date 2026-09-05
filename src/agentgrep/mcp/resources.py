@@ -6,6 +6,8 @@ import json
 import pathlib
 import typing as t
 
+from mcp.types import ResourceTemplateReference
+
 from agentgrep.mcp._library import (
     KNOWN_ADAPTERS,
     READONLY_TAGS,
@@ -107,6 +109,32 @@ def build_capabilities() -> CapabilitiesModel:
             json_tool=_backend_name(backends.json_tool),
         ),
     )
+
+
+def register_completions(mcp: FastMCP) -> None:
+    """Answer argument completion for ``agentgrep://sources/{agent}``.
+
+    The parameter is a closed set, but MCP publishes a template's URI and
+    never its parameter domain -- ``resources/templates/list`` carries no
+    schema at all -- so completion is the only wire path by which a client
+    can learn the valid agent names.
+
+    Serves human-facing hosts; no agent CLI sends the request.
+    """
+
+    @mcp.completion
+    def complete_agent(
+        ref: t.Any,
+        argument: t.Any,
+        context: t.Any,
+    ) -> list[str] | None:
+        """Return the agent names matching what has been typed."""
+        if not isinstance(ref, ResourceTemplateReference):
+            return None
+        if argument.name != "agent":
+            return None
+        prefix = argument.value or ""
+        return [name for name in t.get_args(AgentSelector) if name.startswith(prefix)]
 
 
 def register_resources(mcp: FastMCP) -> None:

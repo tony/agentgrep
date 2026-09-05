@@ -18,7 +18,7 @@ from agentgrep.mcp.middleware import (
     _install_fastmcp_validation_log_redaction,
 )
 from agentgrep.mcp.prompts import register_prompts
-from agentgrep.mcp.resources import register_resources
+from agentgrep.mcp.resources import register_completions, register_resources
 from agentgrep.mcp.tools import register_tools
 
 #: Byte ceiling for response truncation. Sized to fit a generous slice of
@@ -85,6 +85,7 @@ def build_mcp_server() -> FastMCP:
     runtime = SearchRuntime.with_source_scan_cache()
     register_tools(mcp, runtime=runtime)
     register_resources(mcp)
+    register_completions(mcp)
     register_prompts(mcp)
     return mcp
 

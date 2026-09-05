@@ -171,3 +171,25 @@ async def test_unknown_agent_is_rejected_not_answered_empty() -> None:
 
         with pytest.raises(Exception, match="validation error"):
             await client.read_resource("agentgrep://sources/definitely-not-an-agent")
+
+
+async def test_agent_completion_offers_the_valid_names() -> None:
+    """The `agent` placeholder completes to the selector's own values.
+
+    The enum reaches the server's parameter schema but not the wire —
+    ``resources/templates/list`` carries no schema — so completion is the
+    only way a client can learn which agent names are accepted.
+    """
+    from agentgrep.mcp._library import AgentSelector
+    from agentgrep.mcp.server import build_mcp_server
+
+    ref = mt.ResourceTemplateReference(type="ref/resource", uri="agentgrep://sources/{agent}")
+    async with Client(build_mcp_server()) as client:
+        every = await client.complete(ref, {"name": "agent", "value": ""})
+        prefixed = await client.complete(ref, {"name": "agent", "value": "cur"})
+        other = await client.complete(ref, {"name": "not_a_param", "value": ""})
+
+    assert set(every.values) == set(t.get_args(AgentSelector))
+    assert all(name.startswith("cur") for name in prefixed.values)
+    assert prefixed.values
+    assert list(other.values) == []
