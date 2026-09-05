@@ -9,7 +9,6 @@ import typing as t
 from agentgrep.mcp._library import (
     KNOWN_ADAPTERS,
     READONLY_TAGS,
-    RESOURCE_ANNOTATIONS,
     AgentSelector,
     agentgrep,
     normalize_agent_selection,
@@ -119,7 +118,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="Read-only capability summary for the agentgrep MCP server.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"capabilities"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def capabilities_resource() -> str:
         return build_capabilities().model_dump_json(indent=2)
@@ -132,7 +130,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="All discovered read-only agent stores known to agentgrep.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def sources_resource() -> str:
         return SourceListAdapter.dump_json(list_source_models()).decode("utf-8")
@@ -145,7 +142,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="Discovered sources filtered to one agent.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def sources_by_agent_resource(agent: str) -> str:
         selected_agent = t.cast("AgentSelector", agent)
@@ -159,7 +155,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="Full StoreCatalog: every known store with role, format, and notes.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"catalog"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def catalog_resource() -> str:
         return CATALOG.model_dump_json(indent=2)
@@ -172,7 +167,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="Query-language field and operator catalog for search terms.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"query"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def query_language_resource() -> str:
         from agentgrep.query.help import (
@@ -214,7 +208,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="StoreRole enum members with one-line descriptions.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"catalog"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def store_roles_resource() -> str:
         rows = [
@@ -231,7 +224,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="StoreFormat enum members with one-line descriptions.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"catalog"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def store_formats_resource() -> str:
         rows = [
