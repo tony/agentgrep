@@ -41,7 +41,7 @@ doctest:
 [group: 'misc']
 [confirm]
 clean:
-    rm -rf {{ builddir }}/*
+    rm -rf {{ builddir }}
 
 [group: 'dev']
 watch:
