@@ -102,7 +102,7 @@ jobs:
       - name: Build documentation
         if: env.BUILD_DOCS == 'true'
         working-directory: docs
-        run: just html
+        run: just sphinxopts="-W --keep-going" html
 
       - name: Configure AWS Credentials
         if: env.BUILD_DOCS == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.AGENTGREP_DOCS_DEPLOY == 'true'
