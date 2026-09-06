@@ -36,11 +36,23 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a51 (Yet to be released)
+## agentgrep 0.1.0a52 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a51 (2026-09-06)
+
+agentgrep 0.1.0a51 moves the MCP server onto FastMCP 4 and the second major
+version of the MCP Python SDK. Four wire-level behaviours change with it:
+invalid `search` arguments arrive as protocol errors rather than error
+results, tools no longer advertise an output schema the response limiter
+could violate, resources drop the hint keys the SDK discards, and reading
+sources for an unknown agent fails instead of answering with an empty list.
+Source discovery is now cached between resource reads, and the per-agent
+sources resource answers argument completion, so a client can learn the
+agent names the server will accept.
 
 ### Breaking changes
 
