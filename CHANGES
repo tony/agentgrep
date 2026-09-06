@@ -42,6 +42,82 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Breaking changes
+
+#### Invalid search arguments are protocol errors (#164)
+
+MCP {tooliconl}`search` rejects malformed arguments with a JSON-RPC error
+instead of a successful call carrying `isError: true`. agentgrep always raised
+for these; FastMCP 3 folded the failure back into a tool result, and FastMCP 4
+sends it as the protocol error it was. The message text is unchanged, and
+genuine tool failures are still `isError` results. A client that inspected
+`isError` to detect a bad request must catch the error response instead.
+
+#### Tools no longer advertise an output schema (#164)
+
+Every agentgrep tool passes through the response limiter, whose job is to bound
+an oversized result — and a bounded result is plain text, not the declared
+shape. FastMCP 4 therefore omits `outputSchema` on `tools/list` for any tool the
+limiter covers, rather than advertising a schema a truncated response would
+violate. The schemas themselves are unchanged; only the advertisement is
+withheld, so a client that validated responses against `outputSchema` should
+read the documented response shape instead.
+
+#### Resources drop their read-only hints (#164)
+
+MCP resource annotations only ever carried `audience`, `priority`, and
+`lastModified`. The MCP Python SDK used to tolerate the extra `readOnlyHint` and
+`idempotentHint` keys and pass them through; it now discards them, so they were
+reaching the wire empty. They are removed rather than left to be silently
+dropped. Tool annotations are unaffected — those are real fields and still ride
+`tools/list`, which is what lets a host auto-approve a call.
+
+#### An unknown agent fails the per-agent sources resource (#164)
+
+Reading `agentgrep://sources/` for a name outside the known set now fails
+instead of returning an empty list. The placeholder was typed as a string and
+cast, so a typo read as "this agent has no sources" and was indistinguishable
+from a real agent with nothing indexed. Read `agentgrep://sources` for the
+names that exist.
+
+### Dependencies
+
+#### FastMCP 4 (#164)
+
+Minimum `fastmcp>=4.0.2,<5.0.0` (was `>=3.4.0`) and `pydantic>=2.12` (was
+`>=2.11.3`). FastMCP 4 builds on the second major version of the MCP Python
+SDK, which arrives transitively and sets the pydantic floor. The `fastmcp`
+requirement also gains the upper bound it never had.
+
+#### FastMCP is exempt from the release cooldown (#164)
+
+`fastmcp` and `fastmcp-slim` no longer wait out the repository's dependency
+cooldown. FastMCP patches often enough that the cooldown holds a release back
+past the point where a lock refresh quietly resolves to an older patch than the
+one being tested against. The metapackage pins the slim distribution to its
+exact version, so exempting one without the other leaves the pair unresolvable.
+
+### What's new
+
+#### Source discovery is cached between reads (#164)
+
+`agentgrep://sources` walks the filesystem to find agent stores, and nothing
+cached the result, so repeat orientation reads inside one session paid the full
+walk every time. Resource reads are now served from a cache for 60 seconds.
+
+The cache covers resource reads alone. Tool results stay uncached because
+discovery already caches those against file fingerprints, which invalidates
+exactly when a store changes; this cache expires only on time, and 60 seconds
+bounds how stale a listing can be.
+
+#### The per-agent sources resource answers argument completion (#164)
+
+The agent placeholder is a closed set, but a resource-template listing carries
+no parameter schema, so a client had no wire path to the valid names. They now
+come back from an MCP completion request, filtered by what has been typed. This
+pairs with the rejection above: the server refuses a bad value, and completion
+is how a client learns the good ones.
+
 ### Documentation
 
 #### Tool badges name the capability, not the risk
@@ -51,6 +127,18 @@ classification with axes this project declares. Every agentgrep tool is
 read-only, so risk had one value and painted all 58 badges the same
 colour; they now name what a tool does — `search`, `discovery`,
 `catalog`, `diagnostic` — each with its own tone.
+
+#### Tool cross-references land on the tools page (#164)
+
+Every MCP tool reference resolved to a directory that does not exist, because
+the docs configuration still mapped tools through the hand-written extension
+that used to supply them. The mapping now names the modules the tools actually
+come from, so a tool reference lands on its card.
+
+#### The Search Tool heading carries its capability badge (#164)
+
+The badge map keyed on a heading title that does not appear in the page, so the
+search section rendered without the badge its siblings had.
 
 ### Development
 
@@ -81,6 +169,26 @@ regular file, backups are created with `O_EXCL` so one can never clobber
 another, re-swapping a layer keeps the original pre-swap backup rather than
 recording the already-swapped config, and the recovery record is persisted
 before the config changes so a failed write stays revertible.
+
+#### The hand-written FastMCP docs shim is gone (#164)
+
+The docs extension used to describe every MCP tool by hand, duplicating
+metadata the running server already holds, with no test coverage and nothing
+keeping the two in step. The docs toolchain reads the tools off a live server
+instead, so the shim has no job.
+
+#### The documentation build fails on Sphinx warnings (#164)
+
+CI builds the documentation with warnings promoted to errors, so a broken
+cross-reference or a missing document fails the run instead of scrolling past.
+A local `just html` is unchanged.
+
+#### `just clean` clears the doctree cache (#164)
+
+The recipe removed the build directory's contents with a glob, which skips
+dotfiles, so the doctree cache survived and the next build was still
+incremental — quietly skipping unchanged documents and the warnings they would
+have re-emitted. It removes the directory itself now.
 
 ## agentgrep 0.1.0a50 (2026-08-09)
 
