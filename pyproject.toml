@@ -48,12 +48,12 @@ agentgrep-mcp = "agentgrep.mcp:main"
 [dependency-groups]
 dev = [
   # Docs
-  "gp-sphinx==0.1.0a38",
-  "sphinx-autodoc-api-style==0.1.0a38",
-  "sphinx-autodoc-argparse==0.1.0a38",
-  "sphinx-autodoc-fastmcp==0.1.0a38",
-  "sphinx-gp-highlighting==0.1.0a38",
-  "sphinx-gp-mermaid==0.1.0a38",
+  "gp-sphinx==0.1.0a39",
+  "sphinx-autodoc-api-style==0.1.0a39",
+  "sphinx-autodoc-argparse==0.1.0a39",
+  "sphinx-autodoc-fastmcp==0.1.0a39",
+  "sphinx-gp-highlighting==0.1.0a39",
+  "sphinx-gp-mermaid==0.1.0a39",
   "sphinx-autobuild",
   # Testing
   "pytest",
@@ -87,12 +87,12 @@ dev = [
   "typer>=0.12",
 ]
 docs = [
-  "gp-sphinx==0.1.0a38",
-  "sphinx-autodoc-api-style==0.1.0a38",
-  "sphinx-autodoc-argparse==0.1.0a38",
-  "sphinx-autodoc-fastmcp==0.1.0a38",
-  "sphinx-gp-highlighting==0.1.0a38",
-  "sphinx-gp-mermaid==0.1.0a38",
+  "gp-sphinx==0.1.0a39",
+  "sphinx-autodoc-api-style==0.1.0a39",
+  "sphinx-autodoc-argparse==0.1.0a39",
+  "sphinx-autodoc-fastmcp==0.1.0a39",
+  "sphinx-gp-highlighting==0.1.0a39",
+  "sphinx-gp-mermaid==0.1.0a39",
   "sphinx-autobuild",
   # docs/_ext/lexers.py registers agentgrep.query.pygments_lexer, which imports
   # pygments directly (also transitive via Sphinx).
