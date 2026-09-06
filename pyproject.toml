@@ -58,6 +58,7 @@ dev = [
   # Testing
   "pytest",
   "pytest-asyncio",
+  "pytest-cov",
   "pytest-rerunfailures>=16.2",
   "pytest-watcher",
   # pytest-xdist powers the opt-in parallel `just test-fast` path. The docs
