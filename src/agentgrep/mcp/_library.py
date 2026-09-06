@@ -157,10 +157,6 @@ TOOL_ANNOTATIONS = {
     "openWorldHint": False,
 }
 
-#: MCP behavior hints attached to every resource. Resource annotations carry no
-#: ``openWorldHint``, so this is the tool set minus that key.
-RESOURCE_ANNOTATIONS = {"readOnlyHint": True, "idempotentHint": True}
-
 
 class SearchRecordLike(t.Protocol):
     """Structural type for shared ``agentgrep`` search records."""

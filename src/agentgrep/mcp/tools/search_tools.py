@@ -12,8 +12,7 @@ import typing as t
 
 import mcp.types as mt
 from fastmcp import Context
-from fastmcp.exceptions import ToolError
-from mcp import McpError
+from fastmcp.exceptions import McpError, ToolError
 from pydantic import Field
 
 from agentgrep import events as ag_events
@@ -77,10 +76,8 @@ def _invalid_params_error(message: str) -> McpError:
         Error that FastMCP preserves as ``INVALID_PARAMS``.
     """
     return McpError(
-        mt.ErrorData(
-            code=mt.INVALID_PARAMS,
-            message=f"Invalid params: {message}",
-        ),
+        code=mt.INVALID_PARAMS,
+        message=f"Invalid params: {message}",
     )
 
 

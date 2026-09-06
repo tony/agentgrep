@@ -21,8 +21,7 @@ import pathlib
 import mcp.types as mt
 import pytest
 from fastmcp import Client
-from fastmcp.exceptions import ToolError
-from mcp import McpError
+from fastmcp.exceptions import McpError, ToolError
 
 from agentgrep.mcp.models import SearchRequestModel
 from agentgrep.mcp.server import build_mcp_server
@@ -317,9 +316,9 @@ async def test_registered_search_tool_accepts_inline_depth_term() -> None:
             {"terms": ["depth:targeted scope:all", "needle"]},
         )
 
-    assert result.isError is False
-    assert result.structuredContent is not None
-    payload = result.structuredContent
+    assert result.is_error is False
+    assert result.structured_content is not None
+    payload = result.structured_content
     assert payload["request"]["effort"] == "targeted"
     assert payload["request"]["scope"] == "all"
 
@@ -342,9 +341,9 @@ async def test_registered_search_tool_reports_inferred_provenance_after_auto_wid
             {"terms": ["depth:targeted", "needle"]},
         )
 
-    assert result.isError is False
-    assert result.structuredContent is not None
-    payload = result.structuredContent
+    assert result.is_error is False
+    assert result.structured_content is not None
+    payload = result.structured_content
     assert payload["request"]["effort"] == "targeted"
     assert payload["request"]["scope"] == "all"
     assert payload["request"]["scope_provenance"] == "inferred"

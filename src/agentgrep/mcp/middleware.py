@@ -16,13 +16,13 @@ import mcp.types as mt
 import pydantic
 import pydantic_core
 from fastmcp.exceptions import (
+    McpError,
     ToolError,
     ValidationError as FastMCPValidationError,
 )
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.tools.base import ToolResult
-from mcp import McpError
 
 if t.TYPE_CHECKING:
     from agentgrep.mcp.models import SearchToolResponse
@@ -127,10 +127,8 @@ class AgentgrepValidationErrorMiddleware(Middleware):
         except FastMCPValidationError as error:
             detail = _validation_error_detail(error)
             raise McpError(
-                mt.ErrorData(
-                    code=mt.INVALID_PARAMS,
-                    message=f"Invalid params: {detail}",
-                ),
+                code=mt.INVALID_PARAMS,
+                message=f"Invalid params: {detail}",
             ) from error
         except ToolError as error:
             cause = error.__cause__

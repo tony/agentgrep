@@ -6,10 +6,11 @@ import json
 import pathlib
 import typing as t
 
+from mcp.types import ResourceTemplateReference
+
 from agentgrep.mcp._library import (
     KNOWN_ADAPTERS,
     READONLY_TAGS,
-    RESOURCE_ANNOTATIONS,
     AgentSelector,
     agentgrep,
     normalize_agent_selection,
@@ -110,6 +111,32 @@ def build_capabilities() -> CapabilitiesModel:
     )
 
 
+def register_completions(mcp: FastMCP) -> None:
+    """Answer argument completion for ``agentgrep://sources/{agent}``.
+
+    The parameter is a closed set, but MCP publishes a template's URI and
+    never its parameter domain -- ``resources/templates/list`` carries no
+    schema at all -- so completion is the only wire path by which a client
+    can learn the valid agent names.
+
+    Serves human-facing hosts; no agent CLI sends the request.
+    """
+
+    @mcp.completion
+    def complete_agent(
+        ref: t.Any,
+        argument: t.Any,
+        context: t.Any,
+    ) -> list[str] | None:
+        """Return the agent names matching what has been typed."""
+        if not isinstance(ref, ResourceTemplateReference):
+            return None
+        if argument.name != "agent":
+            return None
+        prefix = argument.value or ""
+        return [name for name in t.get_args(AgentSelector) if name.startswith(prefix)]
+
+
 def register_resources(mcp: FastMCP) -> None:
     """Register every ``agentgrep`` resource on ``mcp``."""
 
@@ -119,7 +146,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="Read-only capability summary for the agentgrep MCP server.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"capabilities"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def capabilities_resource() -> str:
         return build_capabilities().model_dump_json(indent=2)
@@ -132,7 +158,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="All discovered read-only agent stores known to agentgrep.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def sources_resource() -> str:
         return SourceListAdapter.dump_json(list_source_models()).decode("utf-8")
@@ -145,11 +170,9 @@ def register_resources(mcp: FastMCP) -> None:
         description="Discovered sources filtered to one agent.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
-    def sources_by_agent_resource(agent: str) -> str:
-        selected_agent = t.cast("AgentSelector", agent)
-        return SourceListAdapter.dump_json(list_source_models(selected_agent)).decode("utf-8")
+    def sources_by_agent_resource(agent: AgentSelector) -> str:
+        return SourceListAdapter.dump_json(list_source_models(agent)).decode("utf-8")
 
     _ = sources_by_agent_resource
 
@@ -159,7 +182,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="Full StoreCatalog: every known store with role, format, and notes.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"catalog"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def catalog_resource() -> str:
         return CATALOG.model_dump_json(indent=2)
@@ -172,7 +194,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="Query-language field and operator catalog for search terms.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"query"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def query_language_resource() -> str:
         from agentgrep.query.help import (
@@ -214,7 +235,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="StoreRole enum members with one-line descriptions.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"catalog"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def store_roles_resource() -> str:
         rows = [
@@ -231,7 +251,6 @@ def register_resources(mcp: FastMCP) -> None:
         description="StoreFormat enum members with one-line descriptions.",
         mime_type="application/json",
         tags=READONLY_TAGS | {"catalog"},
-        annotations=RESOURCE_ANNOTATIONS,
     )
     def store_formats_resource() -> str:
         rows = [
