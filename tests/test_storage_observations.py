@@ -1,7 +1,10 @@
-"""Contracts for the storage docs' observation-manifest reader."""
+"""Contracts for the storage observation manifests: the docs reader and the observer."""
 
 from __future__ import annotations
 
+import importlib.util
+import pathlib
+import sys
 import typing as t
 
 import pytest
@@ -15,7 +18,7 @@ from docs._ext.storages._observations import (
 )
 
 if t.TYPE_CHECKING:
-    import pathlib
+    import types
 
 _MANIFEST = """\
 manifest_version = {version}
@@ -44,6 +47,16 @@ def _write(root: pathlib.Path, name: str, **fields: object) -> pathlib.Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_MANIFEST.format(**payload), encoding="utf-8")
     return path
+
+
+def _load_observer() -> types.ModuleType:
+    """Import ``scripts/observe_stores.py``, a standalone script outside the package."""
+    spec = importlib.util.spec_from_file_location("_observe", "scripts/observe_stores.py")
+    assert spec is not None and spec.loader is not None
+    script = importlib.util.module_from_spec(spec)
+    sys.modules["_observe"] = script
+    spec.loader.exec_module(script)
+    return script
 
 
 def test_missing_root_is_silence(tmp_path: pathlib.Path) -> None:
@@ -111,14 +124,7 @@ def test_script_and_extension_pick_the_same_manifest(
     Two implementations of one selection rule drifted once already: the script
     globbed unsorted, so a same-day tie fell to filesystem order.
     """
-    import importlib.util
-    import sys
-
-    spec = importlib.util.spec_from_file_location("_observe", "scripts/observe_stores.py")
-    assert spec is not None and spec.loader is not None
-    script = importlib.util.module_from_spec(spec)
-    sys.modules["_observe"] = script
-    spec.loader.exec_module(script)
+    script = _load_observer()
     monkeypatch.setattr(script, "OBSERVATIONS_ROOT", tmp_path)
 
     for name, version in (
@@ -132,3 +138,42 @@ def test_script_and_extension_pick_the_same_manifest(
     assert picked is not None
     observed = load_observation_index(tmp_path).agents["grok"]
     assert picked.stem == observed.app_version
+
+
+class UnclaimedCase(t.NamedTuple):
+    """One path under a synthetic agent home and whether the observer lists it."""
+
+    test_id: str
+    path: str
+    listed: bool
+
+
+UNCLAIMED_CASES: tuple[UnclaimedCase, ...] = (
+    UnclaimedCase("unclaimed-directory", ".agent/plugins", listed=True),
+    UnclaimedCase("inside-unclaimed-directory", ".agent/plugins/someone-1a2b3c4d", listed=False),
+    UnclaimedCase("inside-claimed-directory", ".agent/sessions/new.log", listed=True),
+)
+
+
+@pytest.mark.parametrize(
+    list(UnclaimedCase._fields),
+    UNCLAIMED_CASES,
+    ids=[case.test_id for case in UNCLAIMED_CASES],
+)
+def test_unclaimed_listing_stops_at_an_unclaimed_directory(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    test_id: str,
+    path: str,
+    listed: bool,
+) -> None:
+    """Names inside an unclaimed directory identify instances, not coverage gaps."""
+    (tmp_path / ".agent" / "plugins" / "someone-1a2b3c4d").mkdir(parents=True)
+    (tmp_path / ".agent" / "sessions").mkdir()
+    (tmp_path / ".agent" / "sessions" / "new.log").touch()
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    script = _load_observer()
+    probe = script.AgentProbe("agent", homes=(".agent",))
+    entries = script._unclaimed_entries(probe, ["${HOME}/.agent/sessions.json"])
+    reported = {entry["path_pattern"] for entry in entries}
+    assert (f"${{HOME}}/{path}" in reported) is listed
