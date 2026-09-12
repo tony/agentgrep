@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "spawnDepth": 1,
+  "toolUseId": "toolu_00000000000000000000000000",
+  "description": "Map the example module",
+  "name": "example-mapper",
+  "parentAgentId": "00000000-0000-0000-0000-000000000000"
+}

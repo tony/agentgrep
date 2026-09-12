@@ -64,10 +64,12 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "Sidecar beside each subagent transcript, carrying `spawnDepth`, "
             "`agentType`, and — when the dispatch came from the Task tool — "
             "`toolUseId`, `description`, `model`, and `parentAgentId`. "
-            "`description` is the dispatch text and `model` is the model that "
-            "subagent ran under; neither is recoverable from the `.jsonl` "
-            "transcript beside it, so this is the only record of why a subagent "
-            "was spawned. Worktree-scoped runs also carry `worktreePath` and "
+            "`description` is the dispatch text, the only record of why a "
+            "subagent was spawned; agentgrep reads it, else `name`, as the "
+            "title of every record in the transcript beside it. `model` is only "
+            "the requested alias (`sonnet`, `inherit`); the transcript's "
+            "assistant turns carry the resolved model, which is what records "
+            "report. Worktree-scoped runs also carry `worktreePath` and "
             "`spawnedWithWorktree`."
         ),
         distinguishes_from=("claude.projects.subagent",),

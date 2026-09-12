@@ -81,7 +81,10 @@ text.
 Sub-agent dispatches nest under `<session_uuid>/subagents/` and use
 the same record parser. agentgrep reports them as the distinct runtime store
 `claude.projects_subagents` so main session files and nested sub-agent files do
-not collapse into one source.
+not collapse into one source. Each sub-agent transcript titles its records
+from the {storage:storeref}`claude.projects.subagent_meta` sidecar beside it:
+the dispatch `description`, else its `name`. A title is searchable text, so a
+term in it matches every record of that transcript.
 
 ### Store database
 

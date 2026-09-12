@@ -49,9 +49,17 @@ def parse_claude_project_file(
     raw_skip_line: RawJsonlSkipLine | None = None,
     reverse: bool = False,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse Claude Code project JSONL files using lightweight heuristics."""
+    """Parse Claude Code project JSONL files using lightweight heuristics.
+
+    A record with no title of its own inherits the transcript's, from
+    :func:`_claude_transcript_title`. That lookup runs once, when the first
+    record is about to be yielded, so a file the prefilter rules out costs
+    nothing extra.
+    """
     conversation_id = source.path.stem
     seen: set[tuple[str | None, str, str | None, str | None]] = set()
+    transcript_title: str | None = None
+    title_loaded = False
     events = (
         _iter_jsonl(
             source.path,
@@ -79,7 +87,29 @@ def parse_claude_project_file(
             if key in seen:
                 continue
             seen.add(key)
+            if not title_loaded:
+                transcript_title = _claude_transcript_title(source.path)
+                title_loaded = True
+            if candidate.title is None:
+                candidate.title = transcript_title
             yield build_search_record(source, candidate)
+
+
+def _claude_transcript_title(path: pathlib.Path) -> str | None:
+    """Return the title every record of one Claude transcript inherits.
+
+    A subagent transcript ``agent-<id>.jsonl`` sits beside an
+    ``agent-<id>.meta.json`` sidecar whose ``description`` (the Task-tool
+    dispatch text) or ``name`` names the run. A missing sidecar is normal —
+    workflow ``journal.jsonl`` files have none — and yields no title.
+    """
+    if "subagents" not in path.parts:
+        return None
+    payload = read_json_file(path.with_suffix(".meta.json"))
+    if not isinstance(payload, dict):
+        return None
+    sidecar = t.cast("dict[str, object]", payload)
+    return as_optional_str(sidecar.get("description")) or as_optional_str(sidecar.get("name"))
 
 
 def _json_string_list(value: object) -> list[str]:
