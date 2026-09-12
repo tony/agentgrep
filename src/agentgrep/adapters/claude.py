@@ -27,6 +27,7 @@ from agentgrep.adapters._generic import (
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec, StreamParserSpec
 from agentgrep.readers import (
     _iter_jsonl,
+    _iter_jsonl_reverse,
     as_optional_str,
     decode_sqlite_value,
     isoformat_from_mtime_ns,
@@ -98,18 +99,63 @@ def parse_claude_project_file(
 def _claude_transcript_title(path: pathlib.Path) -> str | None:
     """Return the title every record of one Claude transcript inherits.
 
-    A subagent transcript ``agent-<id>.jsonl`` sits beside an
+    A session transcript names itself: see :func:`_claude_session_title`. A
+    subagent transcript ``agent-<id>.jsonl`` sits beside an
     ``agent-<id>.meta.json`` sidecar whose ``description`` (the Task-tool
     dispatch text) or ``name`` names the run. A missing sidecar is normal —
     workflow ``journal.jsonl`` files have none — and yields no title.
     """
     if "subagents" not in path.parts:
-        return None
+        return _claude_session_title(path)
     payload = read_json_file(path.with_suffix(".meta.json"))
     if not isinstance(payload, dict):
         return None
     sidecar = t.cast("dict[str, object]", payload)
     return as_optional_str(sidecar.get("description")) or as_optional_str(sidecar.get("name"))
+
+
+_CLAUDE_TITLE_TAIL_BYTES = 64 * 1024
+"""How far from the end of a session transcript its title lines are sought.
+
+Claude Code re-appends its title records as a session goes on, so the last
+one sits near the end; every titled local session had it within this span.
+"""
+
+_CLAUDE_TITLE_MARKERS = ('"type":"custom-title"', '"type":"ai-title"')
+
+
+def _claude_title_skip_line(raw_line: str) -> bool:
+    """Skip every transcript line that is not a title record, before decoding."""
+    head = raw_line[:256].replace(" ", "")
+    return not any(marker in head for marker in _CLAUDE_TITLE_MARKERS)
+
+
+def _claude_session_title(path: pathlib.Path) -> str | None:
+    """Return a session transcript's name from its own title records.
+
+    ``custom-title`` records (``customTitle``) hold the name given with
+    ``/rename``; ``ai-title`` records (``aiTitle``) hold the one Claude Code
+    generated. The last custom title wins, else the last AI title. Only the
+    final :data:`_CLAUDE_TITLE_TAIL_BYTES` are read, so a session renamed once
+    and never re-titled after a long stretch keeps no title.
+    """
+    ai_title: str | None = None
+    for value in _iter_jsonl_reverse(
+        path,
+        skip_line=_claude_title_skip_line,
+        max_bytes=_CLAUDE_TITLE_TAIL_BYTES,
+    ):
+        if not isinstance(value, dict):
+            continue
+        mapping = t.cast("dict[str, object]", value)
+        record_type = mapping.get("type")
+        if record_type == "custom-title":
+            custom_title = as_optional_str(mapping.get("customTitle"))
+            if custom_title:
+                return custom_title
+        elif record_type == "ai-title" and ai_title is None:
+            ai_title = as_optional_str(mapping.get("aiTitle"))
+    return ai_title
 
 
 def _json_string_list(value: object) -> list[str]:

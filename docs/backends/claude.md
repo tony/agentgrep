@@ -78,6 +78,14 @@ text.
  "message": {"role": "user", "content": [{"type": "text", "text": "..."}]}}
 ```
 
+A session's records take their title from the transcript's own title
+records: the last `custom-title` (the name given with `/rename`), else the
+last `ai-title` Claude Code generated. agentgrep looks for them only in the
+file's final 64 KiB, where Claude Code keeps re-appending them; a session
+renamed once and never re-titled after a long stretch would carry no title.
+A title is searchable text, so a term in it matches every record of the
+session.
+
 Sub-agent dispatches nest under `<session_uuid>/subagents/` and use
 the same record parser. agentgrep reports them as the distinct runtime store
 `claude.projects_subagents` so main session files and nested sub-agent files do
@@ -150,7 +158,8 @@ Seen in 2.1.268 (2026-09-11); absent in 2.1.226 (2026-08-08).
 - Session transcripts add three record types: `custom-title` holds the name
   you give a session with `/rename`, `cost-state` holds cost, duration, and
   line-count totals, and `atis-latch` holds an `atis` object. None carries
-  message text, so search skips all three.
+  message text, so none becomes a result; `custom-title` titles the
+  session's records instead (see Project transcripts).
 - Assistant records add `advisorModel`, `perTurnEffort`, and `apiBlockIndex`;
   user records add `turnCompanion` and `queueSkipAttachments`. Search reads
   none of them.

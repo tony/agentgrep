@@ -164,7 +164,10 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "`queue-operation` (queued prompt text in `content`, no `role`), "
             "`mode`, `permission-mode`, `ai-title`, `last-prompt`, `agent-name`, "
             "`pr-link`, `attachment`, `file-history-snapshot`, `system` — only "
-            "role-bearing message records are indexed."
+            "role-bearing message records are indexed. `custom-title` (set by "
+            "`/rename`) and `ai-title` name the session: agentgrep reads the last "
+            "of each from the file's final 64 KiB and titles every record with "
+            "the custom name, else the AI one."
         ),
         sample_record='{"type":"user","uuid":"...","timestamp":"2026-05-17T...","message":{"role":"user","content":[{"type":"text","text":"<redacted>"}]}}',
         search_by_default=True,

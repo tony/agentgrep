@@ -215,3 +215,80 @@ def test_cursor_composer_turns_take_session_title_and_workspace(
     if expected_cwd is not None:
         assert record.origin is not None
         assert record.origin.cwd_hash == origin_cwd_hash("0123456789abcdef0123456789abcdef")
+
+
+_SESSION_ID = "00000000-0000-0000-0000-000000000000"
+_CUSTOM_TITLE_LINE = (
+    f'{{"type":"custom-title","customTitle":"Named session","sessionId":"{_SESSION_ID}"}}\n'
+)
+_AI_TITLE_LINE = f'{{"type":"ai-title","aiTitle":"Generated title","sessionId":"{_SESSION_ID}"}}\n'
+_FILLER_LINE = (
+    f'{{"type":"permission-mode","permissionMode":"default","sessionId":"{_SESSION_ID}"}}\n'
+)
+
+
+class ClaudeSessionTitleCase(t.NamedTuple):
+    """Title lines around a Claude session transcript and the title they give."""
+
+    test_id: str
+    before: str
+    after: str
+    expected_title: str | None
+
+
+CLAUDE_SESSION_TITLE_CASES = (
+    ClaudeSessionTitleCase("untitled", "", "", None),
+    ClaudeSessionTitleCase("ai-title-only", "", _AI_TITLE_LINE, "Generated title"),
+    ClaudeSessionTitleCase(
+        "custom-title-beats-ai-title",
+        _AI_TITLE_LINE,
+        _CUSTOM_TITLE_LINE + _AI_TITLE_LINE,
+        "Named session",
+    ),
+    ClaudeSessionTitleCase(
+        "custom-title-read-before-the-turns",
+        _CUSTOM_TITLE_LINE,
+        "",
+        "Named session",
+    ),
+    ClaudeSessionTitleCase(
+        "title-outside-the-tail",
+        "",
+        _CUSTOM_TITLE_LINE + _FILLER_LINE * 800,
+        None,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    list(ClaudeSessionTitleCase._fields),
+    CLAUDE_SESSION_TITLE_CASES,
+    ids=[case.test_id for case in CLAUDE_SESSION_TITLE_CASES],
+)
+def test_claude_session_records_take_the_transcript_title(
+    tmp_path: pathlib.Path,
+    test_id: str,
+    before: str,
+    after: str,
+    expected_title: str | None,
+) -> None:
+    """Every record of a session carries its last custom, else AI, title."""
+    transcript = (
+        tmp_path / "projects" / "-work-example" / "00000000-0000-0000-0000-000000000000.jsonl"
+    )
+    transcript.parent.mkdir(parents=True)
+    body = fixture_path("claude.projects.session", "example.jsonl").read_text(encoding="utf-8")
+    transcript.write_text(before + body + after, encoding="utf-8")
+    source = SourceHandle(
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path=transcript,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=0,
+    )
+    records = list(parse_claude_project_file(source))
+    assert records
+    assert {record.title for record in records} == {expected_title}
