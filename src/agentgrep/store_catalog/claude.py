@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
-
 from agentgrep.store_catalog._common import _CLAUDE_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
@@ -1134,7 +1132,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
         observed_version=_CLAUDE_OBSERVED_VERSION,
-        observed_at=datetime.date(2026, 7, 3),
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Cloned plugin-marketplace repos under "
             "`plugins/marketplaces/<repo>/` holding agent/command/skill "

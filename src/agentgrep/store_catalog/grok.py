@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
-
 from agentgrep.store_catalog._common import _GROK_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
@@ -420,11 +418,12 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern="${GROK_HOME or ${HOME}/.grok}/skills/<name>/SKILL.md",
         env_overrides=("GROK_HOME",),
         observed_version=_GROK_OBSERVED_VERSION,
-        observed_at=datetime.date(2026, 7, 3),
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
-            "`skills/<name>/SKILL.md` skill-instruction files (currently the "
-            "bundled set mirrored under `bundled/skills/`; users can author "
-            "their own). Parity with claude.skills and cursor-cli.skills."
+            "`skills/<name>/SKILL.md` skill-instruction files a user authors. "
+            "The directory is present but empty at grok 1.0.25: the bundled "
+            "set lives under `bundled/skills/` and is no longer mirrored here. "
+            "Parity with claude.skills and cursor-cli.skills."
         ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
