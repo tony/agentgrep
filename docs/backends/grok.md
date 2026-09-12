@@ -74,19 +74,22 @@ the record's model, so `model:grok-*` reaches Grok transcripts.
 ### Subagent delegations
 
 {storage:storeref}`grok.subagents` is one JSON dispatch object per delegated subagent
-under `sessions/<project>/<session>/subagents/<subagent>/meta.json`. The
-subagent's own turns are not persisted separately, so the delegated `prompt` is
-the only searchable record of the delegation.
+under `sessions/<project>/<session>/subagents/<subagent>/meta.json`. The child
+session also keeps its own transcript, which {storage:storeref}`grok.sessions`
+reads; this file is the delegation itself.
 
 ```json
 {"subagent_id": "019e6626-...", "parent_session_id": "019e660d-...",
  "subagent_type": "code-explorer", "description": "Map the auth module",
- "prompt": "Explore the auth module and summarize ...", "tool_calls": []}
+ "prompt": "Explore the auth module and summarize ...", "tool_calls": 3,
+ "effective_model_id": "grok-code", "child_cwd": "/home/you/work/project"}
 ```
 
 agentgrep emits the `prompt` as one supplementary-chat record titled
 with `description`; `subagent_type` and `parent_session_id` are
-attached as metadata.
+attached as metadata. `effective_model_id` becomes the record's model and
+`child_cwd` its `cwd`; a file without `child_cwd` falls back to the decoded
+project directory.
 
 ### Session search index
 
@@ -121,13 +124,14 @@ A sibling `meta` table holds `session_search_schema_version` (4) and
 | {storage:storeref}`grok.sessions` | assistant record's `model_id` | `sessions/<project>/`, URL-decoded | — |
 | {storage:storeref}`grok.prompt_history` | — | `sessions/<project>/`, URL-decoded | — |
 | {storage:storeref}`grok.session_search` | — | `session_docs.cwd` | — |
+| {storage:storeref}`grok.subagents` | `effective_model_id` | `child_cwd`, else `sessions/<project>/` URL-decoded | — |
 
 `%2F` is a lossless escape, so the project directory key inverts exactly
 — the {ref}`lossless tier <backend-cwd-tiers>`. agentgrep decodes it back
 into the working directory and reports it on every prompt-history and
 transcript record, which is the same absolute path
 {storage:storeref}`grok.session_search` already stored literally in
-`session_docs.cwd`. All three stores therefore answer `--cwd` and `cwd:`
+`session_docs.cwd`. All four stores therefore answer `--cwd` and `cwd:`
 with one working directory per session.
 
 That encoding has one exception, and it is the reason a deeply nested
@@ -156,7 +160,8 @@ Seen in 1.0.25 (2026-09-11); absent in 1.0.0 (2026-08-08).
 
 - Subagent dispatch files appear under `subagents/<subagent>/meta.json`, and
   {storage:storeref}`grok.subagents` reads them. Each also records
-  `effective_model_id` and `child_cwd`, which agentgrep does not read.
+  `effective_model_id` and `child_cwd`, which agentgrep reads as the
+  record's model and `cwd`.
 - `grove/`, holding a `pin_gc_orphans.json` with an `orphans` list, and
   `campaigns_state.json`, holding `dismissed_ids`, appear. No store row covers
   them, and neither holds conversation text.

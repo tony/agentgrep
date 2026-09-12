@@ -149,20 +149,22 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "Per-subagent dispatch record. One JSON object per delegated "
             "subagent: `prompt` (the delegated instruction), `description`, "
             "`subagent_type`, `tool_calls`, `turns`, and parent/child session "
-            "linkage. The subagent's own turns are not persisted separately, so "
-            "this `prompt` is the only searchable record of the delegation."
+            "linkage. `effective_model_id` and `child_cwd` name the model and "
+            "working directory the child ran under. The child session keeps its "
+            "own `chat_history.jsonl`, read as `grok.sessions`; this record is "
+            "the delegation itself. `tool_calls` is a count, not a list."
         ),
         sample_record=(
             '{"subagent_id":"...","parent_session_id":"...",'
             '"subagent_type":"...","description":"<redacted>",'
-            '"prompt":"<redacted>","tool_calls":[]}'
+            '"prompt":"<redacted>","tool_calls":0}'
         ),
         distinguishes_from=("grok.sessions",),
         search_by_default=True,
         search_notes=(
-            "Subagent dispatch prompts are conversation content with no sibling "
-            "transcript; parity with claude.projects.subagent and "
-            "cursor-cli.subagent_transcripts."
+            "Subagent dispatch prompts are conversation content; the child's own "
+            "turns are in its session transcript. Parity with "
+            "claude.projects.subagent and cursor-cli.subagent_transcripts."
         ),
         discovery=(
             DiscoverySpec(
