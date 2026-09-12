@@ -170,6 +170,8 @@ class BenchCommand(pydantic.BaseModel):
     ``{repo}`` placeholders. ``skip_if_missing``, if set, names a subcommand
     to probe via ``<venv>/bin/<binary> <skip_if_missing> --help`` before
     the bench runs; a non-zero exit marks the row ``command_missing``.
+    ``timeout_seconds``, if set, replaces ``[settings].timeout_seconds``
+    for this bench alone, for a bench whose runs outlast the global limit.
     """
 
     model_config = pydantic.ConfigDict(extra="forbid")
@@ -178,6 +180,7 @@ class BenchCommand(pydantic.BaseModel):
     command: str
     default_query: str = ""
     skip_if_missing: str | None = None
+    timeout_seconds: int | None = pydantic.Field(default=None, ge=1)
 
 
 class Settings(pydantic.BaseModel):
@@ -204,6 +207,13 @@ class Config(pydantic.BaseModel):
 
     bench: dict[str, BenchCommand] = pydantic.Field(default_factory=dict)
     settings: Settings = pydantic.Field(default_factory=Settings)
+
+
+def _bench_timeout_seconds(bench: BenchCommand, settings: Settings) -> int:
+    """Return the seconds one bench may run: its own limit, else the global one."""
+    if bench.timeout_seconds is not None:
+        return bench.timeout_seconds
+    return settings.timeout_seconds
 
 
 class Measurement(pydantic.BaseModel):
@@ -1601,7 +1611,7 @@ def _run_one_commit(
                 cmd_str,
                 warmup=warmup,
                 runs=runs,
-                timeout_seconds=config.settings.timeout_seconds,
+                timeout_seconds=_bench_timeout_seconds(bench, config.settings),
                 prefer_hyperfine=prefer_hyperfine,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
@@ -1624,7 +1634,7 @@ def _run_one_commit(
         if _is_profile_engine_command(cmd_str):
             profile_payload, profile_capture_error = _capture_profile_payload(
                 cmd_str,
-                timeout_seconds=config.settings.timeout_seconds,
+                timeout_seconds=_bench_timeout_seconds(bench, config.settings),
             )
         results.append(
             Measurement(
@@ -2084,6 +2094,8 @@ def cmd_list_commands(config_path: pathlib.Path | None = _OPT_CONFIG) -> None:
             typer.echo(f"  query:       {bench.default_query}")
         if bench.skip_if_missing:
             typer.echo(f"  skip-probe:  {bench.skip_if_missing}")
+        if bench.timeout_seconds is not None:
+            typer.echo(f"  timeout:     {bench.timeout_seconds}s")
     groups = _available_command_groups(config)
     if groups:
         typer.echo("command groups:")

@@ -194,6 +194,12 @@ Deep-merge semantics: only the keys you set in a higher layer are
 replaced. So adding `[bench.fuzzy]` in `benchmark.local.toml` extends
 the bench set without disturbing the existing entries.
 
+A bench can set its own `timeout_seconds`, which replaces
+`[settings].timeout_seconds` (default 300) for that bench alone. The
+committed all-agent conversation benches set 1200: each run reads every
+agent's conversation stores, so on a large corpus a warmup plus three runs
+outlasts the default, and a bench that times out records no samples.
+
 ## Benchmark names
 
 Treat committed `[bench.X]` keys and descriptions as the human audit
