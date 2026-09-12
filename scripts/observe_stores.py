@@ -158,7 +158,11 @@ AGENT_PROBES: tuple[AgentProbe, ...] = (
     AgentProbe("cursor-cli", ("cursor-agent", "--version"), (".cursor", ".config/cursor")),
     AgentProbe("cursor-ide", (), (".cursor-server",)),
     AgentProbe("gemini", ("gemini", "--version"), (".gemini",)),
-    AgentProbe("antigravity-cli", ("agy", "--version"), (".gemini/antigravity-cli",)),
+    AgentProbe(
+        "antigravity-cli",
+        ("agy", "--version"),
+        (".gemini/antigravity-cli", ".gemini/config"),
+    ),
     AgentProbe("antigravity-ide", (), (".gemini/antigravity",)),
     AgentProbe(
         "grok",

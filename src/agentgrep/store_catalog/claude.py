@@ -1149,4 +1149,75 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.telemetry",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/telemetry/"
+            "1p_failed_events.<session_uuid>.<event_uuid>.json"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "First-party analytics events Claude Code failed to send, kept for a "
+            "later retry. Usage telemetry, not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.daemon_status",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/daemon.status.json",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "State of the background daemon: `supervisorPid`, "
+            "`supervisorProcStart`, `workers`, and `writtenAt`. Runtime state, not "
+            "conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.mcp_auth_cache",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/mcp-needs-auth-cache.json",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "MCP servers waiting for authentication, each server name mapped to "
+            "`{id, timestamp}`. Names and times only; no tokens."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.daemon",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/daemon/",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Working directory of the background daemon whose state "
+            "`claude.daemon_status` records: `attach-journal/`, `dispatch/`, a "
+            "`roster.json`, and a `control.key`. The key makes it private: "
+            "documented, never enumerated."
+        ),
+        distinguishes_from=("claude.daemon_status",),
+        coverage=StoreCoverage.PRIVATE,
+        search_by_default=False,
+    ),
 )

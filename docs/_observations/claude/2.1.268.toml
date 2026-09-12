@@ -1,16 +1,12 @@
 manifest_version = 1
 unclaimed = [
     { path_pattern = "${HOME}/.claude/.gitignore", kind = "file" },
-    { path_pattern = "${HOME}/.claude/daemon", kind = "dir" },
     { path_pattern = "${HOME}/.claude/daemon.log", kind = "file" },
-    { path_pattern = "${HOME}/.claude/daemon.status.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/gh-pr-status-cache.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/mcp-needs-auth-cache.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/policy-limits.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/remote", kind = "dir" },
     { path_pattern = "${HOME}/.claude/remote-settings.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/skills.pre-symlink.20260820045622", kind = "dir" },
-    { path_pattern = "${HOME}/.claude/telemetry", kind = "dir" },
     { path_pattern = "${HOME}/.claude/plugins/.last_inuse_sweep", kind = "file" },
     { path_pattern = "${HOME}/.claude/plugins/blocklist.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/plugins/installed_plugins.json", kind = "file" },
@@ -26,7 +22,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-09-11
 platform = "linux"
-catalog_version = 37
+catalog_version = 39
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -79,12 +75,12 @@ path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_projec
 role = "primary_chat"
 format = "jsonl"
 has_discovery = true
-source_count = 3458
+source_count = 3470
 discovers_as = [
     "claude.projects",
 ]
 discriminator = "type"
-records_sampled = 5336
+records_sampled = 5017
 
 [store.record_keys]
 agent-name = [
@@ -235,7 +231,6 @@ system = [
     "preventedContinuation",
     "sessionId",
     "session_id",
-    "slug",
     "stopReason",
     "subtype",
     "timestamp",
@@ -280,12 +275,12 @@ path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_projec
 role = "supplementary_chat"
 format = "jsonl"
 has_discovery = true
-source_count = 1290
+source_count = 1301
 discovers_as = [
     "claude.projects_subagents",
 ]
 discriminator = "type"
-records_sampled = 6556
+records_sampled = 6793
 
 [store.record_keys]
 assistant = [
@@ -716,5 +711,37 @@ id = "claude.plugins_marketplaces"
 path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/marketplaces/<repo>/<plugin>/{agents,commands,skills}/<name>.md"
 role = "instruction"
 format = "md_frontmatter"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.telemetry"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/telemetry/1p_failed_events.<session_uuid>.<event_uuid>.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.daemon_status"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/daemon.status.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.mcp_auth_cache"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/mcp-needs-auth-cache.json"
+role = "cache"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.daemon"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/daemon/"
+role = "app_state"
+format = "opaque"
 has_discovery = false
 source_count = 0

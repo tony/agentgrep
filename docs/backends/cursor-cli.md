@@ -124,5 +124,5 @@ the last one that did not; see {ref}`storage-observations`.
 Seen in 2026.09.10-fd3934a (2026-09-11); absent in 2026.08.04-aaa8809
 (2026-08-08).
 
-- `~/.cursor/sandbox-policies/` appears, empty when observed. No store row
-  covers it.
+- `~/.cursor/sandbox-policies/` appears, empty when observed, catalogued as
+  {storage:storeref}`cursor-cli.sandbox_policies`.

@@ -241,4 +241,34 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         ),
         search_by_default=False,
     ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.mcp_config",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/mcp.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version=_PI_OBSERVED_VERSION,
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "An `mcpServers` map, `command` and `args` per server, read by the "
+            "third-party `pi-mcp-adapter` extension rather than by pi. Server "
+            "entries can carry `env` values."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.mcp_cache",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/mcp-cache.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version=_PI_OBSERVED_VERSION,
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=("The `pi-mcp-adapter` extension's cache: `servers` and a `version`."),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
 )

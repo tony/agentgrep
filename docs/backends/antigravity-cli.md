@@ -61,10 +61,25 @@ it as an inspectable store.
 
 ### Skills
 
-{storage:storeref}`antigravity-cli.skills` covers `skills/<skill>/SKILL.md`
-definitions under the agy home. The skill observed there was placed by
-`gh skill install`, and agy's own notes name `~/.gemini/config/skills/` as its
-skills directory, so agentgrep documents this path without reading it.
+{storage:storeref}`antigravity-cli.skills` covers
+`~/.gemini/config/skills/<name>/SKILL.md`, the directory agy's binary names
+as where it loads skills from; it did not exist when observed. Installed
+plugins bring their own skills under `~/.gemini/config/plugins/<plugin>/`,
+catalogued as {storage:storeref}`antigravity-cli.plugins`. The
+`skills/<skill>/SKILL.md` definitions seen under the agy home were placed by
+`gh skill install` and are catalogued apart as
+{storage:storeref}`antigravity-cli.gh_skills`, since agy never names that
+directory. None of them is searched: skills are instructions, not history.
+
+### Configuration directory
+
+agy keeps its configuration in `~/.gemini/config/`: `config.json`, the
+`import_manifest.json` imports list, and `mcp_config.json` with its MCP
+servers, catalogued as {storage:storeref}`antigravity-cli.config`,
+{storage:storeref}`antigravity-cli.import_manifest`, and
+{storage:storeref}`antigravity-cli.mcp_config`. Under the agy home, `mcp/<server>/`
+caches each MCP server's tool definitions, catalogued as
+{storage:storeref}`antigravity-cli.mcp_tools`. None is searched.
 
 ### Implicit artifacts (encrypted, unsupported)
 
@@ -104,7 +119,8 @@ the last one that did not; see {ref}`storage-observations`.
 Seen in 1.2.1 (2026-09-11); absent in 1.1.11 (2026-08-08).
 
 - `skills/<skill>/SKILL.md` appears, catalogued as
-  {storage:storeref}`antigravity-cli.skills`.
+  {storage:storeref}`antigravity-cli.gh_skills`.
 - `~/.gemini/config/import_manifest.json`, an `imports` list, appears in the
   shared `~/.gemini/config/` directory. agy's binary names the file and Gemini
-  CLI's does not. No store row covers it.
+  CLI's does not. It is catalogued as
+  {storage:storeref}`antigravity-cli.import_manifest`.

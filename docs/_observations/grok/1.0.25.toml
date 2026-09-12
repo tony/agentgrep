@@ -9,11 +9,9 @@ unclaimed = [
     { path_pattern = "${HOME}/.grok/auth.json", kind = "file" },
     { path_pattern = "${HOME}/.grok/bin", kind = "dir" },
     { path_pattern = "${HOME}/.grok/bundled", kind = "dir" },
-    { path_pattern = "${HOME}/.grok/campaigns_state.json", kind = "file" },
     { path_pattern = "${HOME}/.grok/completions", kind = "dir" },
     { path_pattern = "${HOME}/.grok/docs", kind = "dir" },
     { path_pattern = "${HOME}/.grok/downloads", kind = "dir" },
-    { path_pattern = "${HOME}/.grok/grove", kind = "dir" },
     { path_pattern = "${HOME}/.grok/installed-plugins", kind = "dir" },
     { path_pattern = "${HOME}/.grok/last-copy.txt", kind = "file" },
     { path_pattern = "${HOME}/.grok/marketplace-cache", kind = "dir" },
@@ -37,7 +35,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-09-11
 platform = "linux"
-catalog_version = 37
+catalog_version = 39
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -297,5 +295,21 @@ id = "grok.skills"
 path_pattern = "${GROK_HOME or ${HOME}/.grok}/skills/<name>/SKILL.md"
 role = "instruction"
 format = "md_frontmatter"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.grove"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/grove/pin_gc_orphans.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.campaigns_state"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/campaigns_state.json"
+role = "app_state"
+format = "json_object"
 has_discovery = false
 source_count = 0

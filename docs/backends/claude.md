@@ -163,7 +163,9 @@ Seen in 2.1.268 (2026-09-11); absent in 2.1.226 (2026-08-08).
 - Assistant records add `advisorModel`, `perTurnEffort`, and `apiBlockIndex`;
   user records add `turnCompanion` and `queueSkipAttachments`. Search reads
   none of them.
-- Three paths appear that no store row covers: `telemetry/` holds
+- Three paths appear, catalogued since as {storage:storeref}`claude.telemetry`,
+  {storage:storeref}`claude.daemon_status`, and
+  {storage:storeref}`claude.mcp_auth_cache`: `telemetry/` holds
   `1p_failed_events.*.json` analytics payloads, `daemon.status.json` records
   the background daemon's supervisor and workers, and
   `mcp-needs-auth-cache.json` names MCP servers waiting for authentication.

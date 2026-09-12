@@ -4,8 +4,6 @@ unclaimed = [
     { path_pattern = "${HOME}/.pi/agent/AGENTS.md", kind = "file" },
     { path_pattern = "${HOME}/.pi/agent/extensions", kind = "dir" },
     { path_pattern = "${HOME}/.pi/agent/keybindings.json", kind = "file" },
-    { path_pattern = "${HOME}/.pi/agent/mcp-cache.json", kind = "file" },
-    { path_pattern = "${HOME}/.pi/agent/mcp.json", kind = "file" },
     { path_pattern = "${HOME}/.pi/agent/models-store.json", kind = "file" },
     { path_pattern = "${HOME}/.pi/agent/run-history.jsonl", kind = "file" },
     { path_pattern = "${HOME}/.pi/agent/skills", kind = "dir" },
@@ -20,7 +18,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-09-11
 platform = "linux"
-catalog_version = 37
+catalog_version = 39
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -163,5 +161,21 @@ id = "pi.extensions_npm"
 path_pattern = "${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/npm/"
 role = "app_state"
 format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "pi.mcp_config"
+path_pattern = "${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/mcp.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "pi.mcp_cache"
+path_pattern = "${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/mcp-cache.json"
+role = "cache"
+format = "json_object"
 has_discovery = false
 source_count = 0

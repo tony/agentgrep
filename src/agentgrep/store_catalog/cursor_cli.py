@@ -363,4 +363,16 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.sandbox_policies",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${HOME}/.cursor/sandbox-policies/",
+        observed_version=_CURSOR_CLI_OBSERVED_VERSION,
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=("Directory present but empty when observed, so no file layout is recorded."),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
 )

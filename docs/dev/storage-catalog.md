@@ -125,8 +125,8 @@ bare repositories under `snapshots/`. There is no snapshot role, so the
 few rows that do cover this land under `source_tree` or `cache`.
 
 **Telemetry.** Usage counters and analytics payloads — `statsig/`
-directories, Grok's `memtrace/`, Claude Code's `telemetry/`, per-agent
-analytics JSON. No row names any of them.
+directories, Grok's `memtrace/`, per-agent analytics JSON. No row names
+them, except `claude.telemetry` for Claude Code's `telemetry/`.
 
 ## Version detection strategies
 

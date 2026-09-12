@@ -4,7 +4,6 @@ unclaimed = [
     { path_pattern = "${HOME}/.codex/AGENTS.md", kind = "file" },
     { path_pattern = "${HOME}/.codex/mcp-oauth-locks", kind = "dir" },
     { path_pattern = "${HOME}/.codex/thread-writer-locks", kind = "dir" },
-    { path_pattern = "${HOME}/.codex/tui-thread-reference-capabilities", kind = "dir" },
 ]
 
 [agent]
@@ -15,7 +14,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-09-11
 platform = "linux"
-catalog_version = 38
+catalog_version = 39
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -475,3 +474,11 @@ source_count = 0
 discovers_as = [
     "codex.shell_snapshots",
 ]
+
+[[store]]
+id = "codex.tui_thread_capabilities"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/tui-thread-reference-capabilities/<thread_id>"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0

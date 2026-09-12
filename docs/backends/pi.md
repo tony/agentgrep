@@ -128,4 +128,5 @@ Seen in 0.85.1 (2026-09-11); absent in 0.84.1 (2026-08-08).
 
 - `mcp.json`, an `mcpServers` map read by the third-party `pi-mcp-adapter`
   extension rather than by pi, and `mcp-cache.json`, holding `servers` and
-  `version`, appear in the agent directory. No store row covers them.
+  `version`, appear in the agent directory, catalogued as
+  {storage:storeref}`pi.mcp_config` and {storage:storeref}`pi.mcp_cache`.

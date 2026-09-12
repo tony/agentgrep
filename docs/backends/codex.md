@@ -202,4 +202,4 @@ Seen in 0.154.0 (2026-09-11); absent in 0.147.0 (2026-08-08).
 - `editor/` appears, holding the external-editor drafts catalogued as
   {storage:storeref}`codex.editor_drafts`.
 - `tui-thread-reference-capabilities/` appears, holding one empty marker file
-  per thread. No store row covers it.
+  per thread, catalogued as {storage:storeref}`codex.tui_thread_capabilities`.

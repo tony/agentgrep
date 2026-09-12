@@ -1139,4 +1139,21 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             ),
         ),
     ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.tui_thread_capabilities",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern=(
+            "${CODEX_HOME or ${HOME}/.codex}/tui-thread-reference-capabilities/<thread_id>"
+        ),
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Empty marker files, one per thread and named by its id. The name is the only content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
 )

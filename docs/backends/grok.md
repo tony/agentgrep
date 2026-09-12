@@ -163,6 +163,7 @@ Seen in 1.0.25 (2026-09-11); absent in 1.0.0 (2026-08-08).
   `effective_model_id` and `child_cwd`, which agentgrep reads as the
   record's model and `cwd`.
 - `grove/`, holding a `pin_gc_orphans.json` with an `orphans` list, and
-  `campaigns_state.json`, holding `dismissed_ids`, appear. No store row covers
-  them, and neither holds conversation text.
+  `campaigns_state.json`, holding `dismissed_ids`, appear, catalogued as
+  {storage:storeref}`grok.grove` and {storage:storeref}`grok.campaigns_state`.
+  Neither holds conversation text.
 - `models_cache.json`, present in the 1.0.0 observation, is gone.
