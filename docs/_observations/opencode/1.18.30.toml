@@ -8,6 +8,9 @@ unclaimed = [
     { path_pattern = "${HOME}/.config/opencode/node_modules", kind = "dir" },
     { path_pattern = "${HOME}/.config/opencode/package-lock.json", kind = "file" },
     { path_pattern = "${HOME}/.config/opencode/package.json", kind = "file" },
+    { path_pattern = "${HOME}/.local/state/opencode/kv.json", kind = "file" },
+    { path_pattern = "${HOME}/.local/state/opencode/locks", kind = "dir" },
+    { path_pattern = "${HOME}/.local/state/opencode/model.json", kind = "file" },
 ]
 
 [agent]
@@ -18,7 +21,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-09-11
 platform = "linux"
-catalog_version = 37
+catalog_version = 40
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -236,8 +239,19 @@ id = "opencode.prompt_history"
 path_pattern = "${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl"
 role = "prompt_history"
 format = "jsonl"
-has_discovery = false
-source_count = 0
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "opencode.prompt_history",
+]
+records_sampled = 15
+
+[store.record_keys]
+"*" = [
+    "input",
+    "mode",
+    "parts",
+]
 
 [[store]]
 id = "opencode.config"

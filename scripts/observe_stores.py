@@ -172,7 +172,9 @@ AGENT_PROBES: tuple[AgentProbe, ...] = (
     ),
     AgentProbe("pi", ("pi", "--version"), (".pi",)),
     AgentProbe(
-        "opencode", ("opencode", "--version"), (".local/share/opencode", ".config/opencode")
+        "opencode",
+        ("opencode", "--version"),
+        (".local/share/opencode", ".config/opencode", ".local/state/opencode"),
     ),
     AgentProbe("vscode", ("code", "--version"), (".config/Code",)),
     AgentProbe("windsurf", (), (".codeium/windsurf",)),

@@ -1,0 +1,4 @@
+{"input":"Summarize the parser module","parts":[],"mode":"normal"}
+{"input":"Review [Pasted ~2 lines] before merging","parts":[{"type":"text","text":"def parse(text):\n    return tokens(text)","source":{"text":{"start":7,"end":24,"value":"[Pasted ~2 lines]"}}}],"mode":"normal"}
+not json
+{"input":"","parts":[],"mode":"normal"}

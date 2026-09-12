@@ -22,8 +22,8 @@ conversations are encrypted); see {doc}`/backends/unsupported/index`.
 
 Search and grep open only dedicated prompt-history stores by default.
 This is the fast path. Agents without a dedicated prompt-history store,
-including Cursor IDE, OpenCode, and Pi, contribute records only to a
-full exhaustive search:
+including Cursor IDE and Pi, contribute records only to a full exhaustive
+search:
 
 ```console
 $ uv run agentgrep grep "docs deploy" --exhaustive

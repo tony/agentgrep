@@ -450,6 +450,12 @@ unlike the JSONL-transcript backends:
   `subtask` (the `prompt`); the session `title`, `directory`, and the
   message `model`/timestamp are attached. Message times are
   unix-milliseconds, normalized to ISO-8601.
+- `opencode.prompt_history_jsonl.v1` parses
+  `${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl`,
+  one prompt record per `{input, parts, mode}` line, with each pasted
+  `parts` text spliced over its placeholder in `input`. The log carries no
+  timestamp and no session id, so its records are undated and belong to no
+  session.
 
 Discovery resolves the data root via `XDG_DATA_HOME` (default
 `~/.local/share`) plus the `opencode` segment and finds `opencode.db` by
@@ -467,11 +473,11 @@ canonical transcript stays in `session`/`message`/`part` and the event
 tables are left unsearched to avoid duplicate hits. The secret-bearing
 `account`/`credential` tables are present but never enumerated.
 
-OpenCode also writes a prompt-history log outside its data root, at
-`${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl`.
-Each line is `{input, parts, mode}` with no timestamp and no session
-id. It is not a duplicate of the database: prompts recalled there can
-be absent from `opencode.db` entirely.
+The prompt-history log lives outside the data root, so discovery resolves
+a second root from `XDG_STATE_HOME` (default `~/.local/state`), and does so
+even when `OPENCODE_DB` relocates the database. It is not a duplicate of
+the database: prompts recalled there can be absent from `opencode.db`
+entirely.
 
 Documentary-only entries cover the legacy per-file JSON layout, config,
 auth (private credentials), snapshots, the repo cache, logs, and tool

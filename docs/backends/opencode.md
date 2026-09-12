@@ -3,16 +3,14 @@
 # OpenCode
 
 OpenCode is a SQLite-backed conversation backend. agentgrep reconstructs turns
-from the relational session/message/part tables. No searched store carries a
-fast prompt log, so `--exhaustive` is required for user text; assistant and
-reasoning parts additionally require conversation scope. Targeted effort
-cannot route this backend.
+from the relational session/message/part tables, and reads OpenCode's
+prompt-history log for the fast prompt path, so plain `agentgrep search`
+reaches OpenCode prompts without `--exhaustive`. Assistant and reasoning parts
+require conversation scope. Targeted effort cannot route this backend.
 
-OpenCode does write a prompt-history log, but outside its data root — at
-`${XDG_STATE_HOME:-~/.local/state}/opencode/prompt-history.jsonl` — and no
-store row covers that path yet, so it does not shorten the search today.
-
-Base path: `~/.local/share/opencode` (env overrides: `XDG_DATA_HOME`, `OPENCODE_DB`).
+Base path: `~/.local/share/opencode` (env overrides: `XDG_DATA_HOME`,
+`OPENCODE_DB`); prompt history under `~/.local/state/opencode` (env override:
+`XDG_STATE_HOME`).
 
 `observed_version`: `opencode v1.18.30` (observed 2026-09-11).
 
@@ -84,6 +82,33 @@ but never enumerated — the adapter reads only text-bearing `part` rows.
 The legacy pre-migration layout (one JSON file per session, message, and
 part under `storage/`) is documented but no longer searched — current
 installs migrate it into `opencode.db` on startup.
+
+### Prompt history
+
+{storage:storeref}`opencode.prompt_history` is OpenCode's recall log, one JSON
+object per line:
+
+```json
+{"input": "Review [Pasted ~43 lines]", "mode": "normal",
+ "parts": [{"type": "text", "text": "...",
+            "source": {"text": {"start": 7, "end": 25,
+                                "value": "[Pasted ~43 lines]"}}}]}
+```
+
+`input` is the prompt as typed. A pasted block shows there as a placeholder,
+and its `parts` entry holds the pasted `text` with the placeholder's span;
+agentgrep splices the paste back in, so pasted text is searchable. `mode` is
+kept as metadata.
+
+The log has no timestamp and no session id, and agentgrep invents neither. Its
+records sort after dated ones, a date filter excludes them, and
+`has:timestamp` is false for them. Plain search reads this log alone, so a
+prompt appears once. Under `--exhaustive` or `--scope all`,
+{storage:storeref}`opencode.db` is read too, and a prompt present in both
+appears once per store, the same way Codex's prompt history stands beside its
+session transcripts and Claude Code's `history.jsonl` beside its project
+transcripts. The log is not a copy of the database: prompts recalled there can
+be absent from `opencode.db` entirely.
 
 ## Changes by version
 

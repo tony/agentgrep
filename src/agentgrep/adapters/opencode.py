@@ -13,6 +13,7 @@ from agentgrep.adapters._common import (
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec
 from agentgrep.readers import (
+    _iter_jsonl,
     as_optional_str,
     open_readonly_sqlite,
     sqlite_table_names,
@@ -136,7 +137,89 @@ def parse_opencode_db(
         connection.close()
 
 
+def _opencode_expand_pastes(text: str, parts: object) -> str:
+    r"""Splice each pasted part's text over its placeholder in ``text``.
+
+    A part's ``source.text`` span names where its placeholder sits in the
+    typed prompt. A span that does not match ``text`` leaves the placeholder
+    as typed, the way a missing Claude Code paste keeps its own.
+
+    Examples
+    --------
+    >>> span = {"start": 4, "end": 21, "value": "[Pasted ~2 lines]"}
+    >>> part = {"type": "text", "text": "a\nb", "source": {"text": span}}
+    >>> _opencode_expand_pastes("fix [Pasted ~2 lines] now", [part])
+    'fix a\nb now'
+    >>> _opencode_expand_pastes("fix it", [part])
+    'fix it'
+    """
+    if not isinstance(parts, list):
+        return text
+    spans: list[tuple[int, int, str]] = []
+    for part in t.cast("list[object]", parts):
+        if not isinstance(part, dict):
+            continue
+        mapping = t.cast("dict[str, object]", part)
+        pasted = as_optional_str(mapping.get("text"))
+        source = mapping.get("source")
+        span = t.cast("dict[str, object]", source).get("text") if isinstance(source, dict) else None
+        if pasted is None or not isinstance(span, dict):
+            continue
+        span_map = t.cast("dict[str, object]", span)
+        start, end = span_map.get("start"), span_map.get("end")
+        if (
+            isinstance(start, int)
+            and isinstance(end, int)
+            and 0 <= start <= end <= len(text)
+            and text[start:end] == span_map.get("value")
+        ):
+            spans.append((start, end, pasted))
+    last_start = len(text)
+    for start, end, pasted in sorted(spans, reverse=True):
+        if end > last_start:
+            continue
+        text = text[:start] + pasted + text[end:]
+        last_start = start
+    return text
+
+
+def parse_opencode_prompt_history(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse OpenCode's ``prompt-history.jsonl`` recall log.
+
+    Each line is ``{input, parts, mode}``: the prompt as typed, where a
+    pasted block shows as a placeholder such as ``[Pasted ~43 lines]``, plus
+    one ``parts`` entry per paste. Each paste is spliced back over its
+    placeholder, so pasted text is searchable.
+
+    The log carries no timestamp and no session id, and none is invented:
+    the records sort after dated ones, date filters exclude them, and each
+    belongs to no session. ``mode`` is kept as metadata.
+    """
+    for event in _iter_jsonl(source.path):
+        if not isinstance(event, dict):
+            continue
+        mapping = t.cast("dict[str, object]", event)
+        typed = as_optional_str(mapping.get("input"))
+        if not typed:
+            continue
+        mode = as_optional_str(mapping.get("mode"))
+        yield SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=_opencode_expand_pastes(typed, mapping.get("parts")),
+            title="OpenCode prompt history",
+            role="user",
+            metadata={"mode": mode} if mode else {},
+        )
+
+
 _OPENCODE_PARSERS: tuple[AnyParserSpec, ...] = (
     ParserSpec("opencode.db_sqlite.v1", parse_opencode_db),
+    ParserSpec("opencode.prompt_history_jsonl.v1", parse_opencode_prompt_history),
 )
 """Dispatch rows for every ``opencode.*`` adapter id."""

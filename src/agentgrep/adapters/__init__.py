@@ -111,6 +111,7 @@ from agentgrep.adapters.grok import (
 from agentgrep.adapters.opencode import (
     _OPENCODE_PARSERS,
     parse_opencode_db,
+    parse_opencode_prompt_history,
 )
 from agentgrep.adapters.pi import (
     _PI_PARSERS,
@@ -183,6 +184,7 @@ __all__ = (
     "parse_hooks_summary_file",
     "parse_json_summary_file",
     "parse_opencode_db",
+    "parse_opencode_prompt_history",
     "parse_pi_context_mode_db",
     "parse_pi_session_file",
     "parse_text_store_file",
