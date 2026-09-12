@@ -36,11 +36,22 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a52 (Yet to be released)
+## agentgrep 0.1.0a53 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a52 (2026-09-12)
+
+agentgrep 0.1.0a52 reads fields that were already on disk. OpenCode prompts
+turn up in a plain `agentgrep search` rather than only under `--exhaustive`,
+session titles from Claude Code and Cursor IDE became searchable text so a
+term in a title matches every record of that session, and `--cwd` reaches
+Cursor IDE turns that carried no working directory before. Further stores
+across Claude Code, Codex, Cursor CLI, Grok, Pi, and Antigravity CLI are
+catalogued for inventory without being searched, and every backend page now
+records which agent version each storage change first appeared in.
 
 ### What's new
 
