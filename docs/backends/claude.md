@@ -12,7 +12,7 @@ remain inventory-only.
 
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
-`observed_version`: `claude-code v2.1.268` (observed 2026-09-11).
+`observed_version`: `claude-code v2.1.269` (observed 2026-09-11).
 
 ## Stores
 
@@ -150,6 +150,24 @@ prompt history.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 2.1.269
+
+Observed 2026-09-11, the same day as 2.1.268; no storage change.
+
+- The sample adds four keys that mark a compacted session:
+  `compactMetadata` and `logicalParentUuid` on system records, and
+  `isCompactSummary` and `isVisibleInTranscriptOnly` on user records.
+  Transcripts written by 2.1.259 through 2.1.268 carry them as well; the
+  2.1.268 sample simply held no compacted session. Search skips
+  `isCompactSummary` recaps, which restate a conversation rather than
+  record a turn.
+- The rest is sample turnover rather than a schema change, because a
+  manifest reads each store's newest files. `pendingBackgroundAgentCount`,
+  `slug`, `attributionPlugin`, and `toolEndsTurn` appear in the 2.1.226
+  manifest; `turnCompanion` stays on session records, where 2.1.268 first
+  saw it; and the subagent `result` and `started` record types this sample
+  misses appear in the 2.1.268 one.
 
 ### 2.1.268
 

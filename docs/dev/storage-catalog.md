@@ -177,7 +177,7 @@ is separately request-bounded, and routing evidence never establishes a result.
 
 ### Claude Code
 
-`observed_version`: ``claude-code v2.1.268`` (observed 2026-09-11).
+`observed_version`: ``claude-code v2.1.269`` (observed 2026-09-11).
 
 Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
 Its global prompt-history audit log lives at
