@@ -134,3 +134,25 @@ state, session environment, uploads, file history, backups, generic
 cache, credentials, and image/paste caches stay catalogued or private
 so storage audits can identify them without treating them as default
 prompt history.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 2.1.268
+
+Seen in 2.1.268 (2026-09-11); absent in 2.1.226 (2026-08-08).
+
+- Session transcripts add three record types: `custom-title` holds the name
+  you give a session with `/rename`, `cost-state` holds cost, duration, and
+  line-count totals, and `atis-latch` holds an `atis` object. None carries
+  message text, so search skips all three.
+- Assistant records add `advisorModel`, `perTurnEffort`, and `apiBlockIndex`;
+  user records add `turnCompanion` and `queueSkipAttachments`. Search reads
+  none of them.
+- Three paths appear that no store row covers: `telemetry/` holds
+  `1p_failed_events.*.json` analytics payloads, `daemon.status.json` records
+  the background daemon's supervisor and workers, and
+  `mcp-needs-auth-cache.json` names MCP servers waiting for authentication.
+  None holds conversation text.

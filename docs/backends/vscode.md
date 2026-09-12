@@ -87,3 +87,12 @@ overrides the mount root (default `/mnt/c/Users`) for non-default drive
 letters, and `VSCODE_APPDATA` pins a single `Roaming` directory when you
 want to target one install. See {doc}`../dev/adr/0009-cross-host-discovery`
 for the discovery and remote-URI mapping design.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 1.137.0
+
+Observed 2026-09-11: no store changes since 1.132.0 (2026-08-08).

@@ -84,3 +84,12 @@ but never enumerated — the adapter reads only text-bearing `part` rows.
 The legacy pre-migration layout (one JSON file per session, message, and
 part under `storage/`) is documented but no longer searched — current
 installs migrate it into `opencode.db` on startup.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 1.18.30
+
+Observed 2026-09-11: no store changes since 1.18.15 (2026-08-08).

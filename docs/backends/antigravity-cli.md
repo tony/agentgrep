@@ -93,3 +93,18 @@ out of an origin filter no matter which scope you search at.
 The model Antigravity records is a coarse family (`gemini-pro-agent`)
 rather than a version-pinned slug, so `model:` groups and filters
 Antigravity conversations without telling you the exact build.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 1.2.1
+
+Seen in 1.2.1 (2026-09-11); absent in 1.1.11 (2026-08-08).
+
+- `skills/<skill>/SKILL.md` appears, catalogued as
+  {storage:storeref}`antigravity-cli.skills`.
+- `~/.gemini/config/import_manifest.json`, an `imports` list, appears in the
+  shared `~/.gemini/config/` directory. agy's binary names the file and Gemini
+  CLI's does not. No store row covers it.

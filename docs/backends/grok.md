@@ -144,3 +144,20 @@ of git. Each session's `summary.json` carries `head_branch`,
 `head_commit`, `git_root_dir`, and `git_remotes` — no store row reads
 that file, so the branch is on disk and out of reach rather than
 absent.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 1.0.25
+
+Seen in 1.0.25 (2026-09-11); absent in 1.0.0 (2026-08-08).
+
+- Subagent dispatch files appear under `subagents/<subagent>/meta.json`, and
+  {storage:storeref}`grok.subagents` reads them. Each also records
+  `effective_model_id` and `child_cwd`, which agentgrep does not read.
+- `grove/`, holding a `pin_gc_orphans.json` with an `orphans` list, and
+  `campaigns_state.json`, holding `dismissed_ids`, appear. No store row covers
+  them, and neither holds conversation text.
+- `models_cache.json`, present in the 1.0.0 observation, is gone.

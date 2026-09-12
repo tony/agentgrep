@@ -125,8 +125,8 @@ bare repositories under `snapshots/`. There is no snapshot role, so the
 few rows that do cover this land under `source_tree` or `cache`.
 
 **Telemetry.** Usage counters and analytics payloads — `statsig/`
-directories, Grok's `memtrace/`, per-agent analytics JSON. No row names
-any of them.
+directories, Grok's `memtrace/`, Claude Code's `telemetry/`, per-agent
+analytics JSON. No row names any of them.
 
 ## Version detection strategies
 
@@ -537,6 +537,12 @@ or compare live disk against what is recorded with
 `uv run scripts/observe_stores.py check --agent all`. Those are written inline
 rather than as `console` blocks on purpose — the documentation suite executes
 every console fence under `docs/`, and `observe` writes into the manifest tree.
+
+Each backend page ends with a *Changes by version* section read from two
+manifests side by side. An entry names the observation that first saw a change
+and the last one that did not. Versions between the two were never observed,
+so the change landed somewhere in that range; an agent with no readable
+version is bracketed by date instead.
 
 Manifests carry schema only. Source counts and the unclaimed-path list describe
 the machine an observation ran on rather than the agent it observed, so they

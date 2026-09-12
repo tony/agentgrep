@@ -87,3 +87,17 @@ both the global and per-workspace `state.vscdb` databases are searchable
 from Linux. `AGENTGREP_WSL_USERS_ROOT` overrides the mount root (default
 `/mnt/c/Users`) for non-default drive letters. See
 {doc}`../dev/adr/0009-cross-host-discovery` for the design.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### Observed 2026-09-11
+
+The observer reads no version for the desktop app, so this entry is bracketed
+by date: seen 2026-09-11, absent 2026-08-08. The WSL remote-server build
+present at the later date reports Cursor 3.17.8.
+
+- `composerHeaders`, in both the global and per-workspace `state.vscdb`, adds
+  a `subagentTypeName` column. agentgrep does not read that table.

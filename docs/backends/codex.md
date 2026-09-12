@@ -186,3 +186,20 @@ Codex has shipped: the JSONL rows are `session_id`, `ts`, and `text`, and
 the legacy JSON rows are `command` and `timestamp`. That store is
 searchable by text, agent, and time, and it does not satisfy an origin
 filter.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 0.154.0
+
+Seen in 0.154.0 (2026-09-11); absent in 0.147.0 (2026-08-08).
+
+- Rollout files add `token_usage_record` items, which carry token counts and
+  no message text, and `compacted` and `inter_agent_communication_metadata`
+  items gain an `ordinal`. Search reads neither.
+- `editor/` appears, holding the external-editor drafts catalogued as
+  {storage:storeref}`codex.editor_drafts`.
+- `tui-thread-reference-capabilities/` appears, holding one empty marker file
+  per thread. No store row covers it.
