@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
-
 from agentgrep.store_catalog._common import _GROK_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
@@ -13,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_GROK_OBSERVED_VERSION = "grok 1.0.0"
+_GROK_OBSERVED_VERSION = "grok 1.0.25"
 """App version the Grok CLI rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -151,20 +149,22 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
             "Per-subagent dispatch record. One JSON object per delegated "
             "subagent: `prompt` (the delegated instruction), `description`, "
             "`subagent_type`, `tool_calls`, `turns`, and parent/child session "
-            "linkage. The subagent's own turns are not persisted separately, so "
-            "this `prompt` is the only searchable record of the delegation."
+            "linkage. `effective_model_id` and `child_cwd` name the model and "
+            "working directory the child ran under. The child session keeps its "
+            "own `chat_history.jsonl`, read as `grok.sessions`; this record is "
+            "the delegation itself. `tool_calls` is a count, not a list."
         ),
         sample_record=(
             '{"subagent_id":"...","parent_session_id":"...",'
             '"subagent_type":"...","description":"<redacted>",'
-            '"prompt":"<redacted>","tool_calls":[]}'
+            '"prompt":"<redacted>","tool_calls":0}'
         ),
         distinguishes_from=("grok.sessions",),
         search_by_default=True,
         search_notes=(
-            "Subagent dispatch prompts are conversation content with no sibling "
-            "transcript; parity with claude.projects.subagent and "
-            "cursor-cli.subagent_transcripts."
+            "Subagent dispatch prompts are conversation content; the child's own "
+            "turns are in its session transcript. Parity with "
+            "claude.projects.subagent and cursor-cli.subagent_transcripts."
         ),
         discovery=(
             DiscoverySpec(
@@ -420,12 +420,39 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern="${GROK_HOME or ${HOME}/.grok}/skills/<name>/SKILL.md",
         env_overrides=("GROK_HOME",),
         observed_version=_GROK_OBSERVED_VERSION,
-        observed_at=datetime.date(2026, 7, 3),
+        observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
-            "`skills/<name>/SKILL.md` skill-instruction files (currently the "
-            "bundled set mirrored under `bundled/skills/`; users can author "
-            "their own). Parity with claude.skills and cursor-cli.skills."
+            "`skills/<name>/SKILL.md` skill-instruction files a user authors. "
+            "The directory is present but empty at grok 1.0.25: the bundled "
+            "set lives under `bundled/skills/` and is no longer mirrored here. "
+            "Parity with claude.skills and cursor-cli.skills."
         ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.grove",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/grove/pin_gc_orphans.json",
+        env_overrides=("GROK_HOME",),
+        observed_version=_GROK_OBSERVED_VERSION,
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=("Pin garbage-collection state: an `orphans` list. Not conversation content."),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.campaigns_state",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/campaigns_state.json",
+        env_overrides=("GROK_HOME",),
+        observed_version=_GROK_OBSERVED_VERSION,
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=("Holds `dismissed_ids`. Not conversation content."),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),

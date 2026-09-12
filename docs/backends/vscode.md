@@ -13,7 +13,7 @@ Base path: `~/.config/Code/User` on Linux
 `%APPDATA%/Code/User` on Windows). Env overrides: `VSCODE_APPDATA`,
 `AGENTGREP_WSL_USERS_ROOT`.
 
-`observed_version`: `VS Code 1.132.0` (observed 2026-08-08).
+`observed_version`: `VS Code 1.137.0` (observed 2026-09-11).
 
 Unlike Windsurf's encrypted conversation blobs, the transcripts are plain text
 agentgrep can read directly. Editions are covered side by side: stable `Code`,
@@ -87,3 +87,12 @@ overrides the mount root (default `/mnt/c/Users`) for non-default drive
 letters, and `VSCODE_APPDATA` pins a single `Roaming` directory when you
 want to target one install. See {doc}`../dev/adr/0009-cross-host-discovery`
 for the discovery and remote-URI mapping design.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 1.137.0
+
+Observed 2026-09-11: no store changes since 1.132.0 (2026-08-08).

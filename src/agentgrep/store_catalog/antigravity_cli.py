@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _ANTIGRAVITY_OBSERVED_AT
+from agentgrep.store_catalog._common import _ANTIGRAVITY_CLI_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
     StoreCoverage,
@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_ANTIGRAVITY_CLI_OBSERVED_VERSION = "agy v1.1.11"
+_ANTIGRAVITY_CLI_OBSERVED_VERSION = "agy v1.2.1"
 """App version the antigravity-cli rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -28,7 +28,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${HOME}/.gemini/antigravity-cli/history.jsonl",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "JSONL prompt recall log. Observed keys: `display` (prompt text), "
             "`timestamp` (Unix milliseconds), `workspace`, optional `type`, "
@@ -61,7 +61,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.gemini/antigravity-cli/conversations/<conversation_uuid>.db",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "One SQLite database per conversation. Table `steps` contains "
             "`idx`, `step_type`, `status`, `has_subtrajectory`, `metadata`, "
@@ -97,7 +97,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ".system_generated/logs/transcript_full.jsonl"
         ),
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "Readable JSONL transcript log under a brain conversation's "
             "`.system_generated/logs/`. Each line is a step record with a "
@@ -133,7 +133,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity-cli/implicit/<conversation_uuid>.pb",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "Implicit/background conversation captures as loose `.pb` files. "
             "The observed payloads are high-entropy with no extractable UTF-8 "
@@ -155,7 +155,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/brain/**/*.md",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="Markdown planning and memory artifacts, not prompt recall.",
         search_by_default=False,
         search_notes="Inspectable only; not searched by default.",
@@ -173,12 +173,29 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="antigravity-cli",
+        store_id="antigravity-cli.skills",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${HOME}/.gemini/config/skills/<name>/SKILL.md",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "`SKILL.md` files with YAML frontmatter (`name`, `description`) under "
+            "`skills/<name>/`. agy's binary names this directory as where it "
+            "loads skills from; it did not exist when observed."
+        ),
+        sample_record="---\nname: <skill>\ndescription: <redacted>\n---\n<instructions>",
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
         store_id="antigravity-cli.cache",
         role=StoreRole.CACHE,
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.gemini/antigravity-cli/cache/",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="Runtime cache files. Cache state, not conversation history.",
         search_by_default=False,
     ),
@@ -189,7 +206,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/log/",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="Application logs. Diagnostics, not chat content.",
         search_by_default=False,
     ),
@@ -200,9 +217,105 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.gemini/antigravity-cli/antigravity-oauth-token",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="OAuth token material. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.gh_skills",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${HOME}/.gemini/antigravity-cli/skills/<skill>/SKILL.md",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "`SKILL.md` files placed by `gh skill install`, carrying provenance "
+            "`metadata` (`github-repo`, `github-ref`, `github-tree-sha`). agy's "
+            "binary never names this directory, so it is not where agy loads skills "
+            "from."
+        ),
+        sample_record="---\nname: <skill>\ndescription: <redacted>\n---\n<instructions>",
+        distinguishes_from=("antigravity-cli.skills",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.plugins",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${HOME}/.gemini/config/plugins/<plugin>/skills/<skill>/SKILL.md",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "Installed agy plugins, one directory each holding `plugin.json`, a "
+            "`README.md`, and `skills/<skill>/SKILL.md`; some add `references/` or "
+            "`scripts/`. Instruction Markdown, not history."
+        ),
+        distinguishes_from=("antigravity-cli.skills",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.config",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${HOME}/.gemini/config/config.json",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "agy configuration in the `~/.gemini/config/` directory, which Gemini "
+            "CLI has no use for."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.import_manifest",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${HOME}/.gemini/config/import_manifest.json",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=("An `imports` list. agy's binary names the file and Gemini CLI's does not."),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.mcp_config",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${HOME}/.gemini/config/mcp_config.json",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "agy's MCP server configuration. Server entries can carry `env` values, "
+            "and tools that rewrite the file leave `mcp_config.json.bak.*` copies "
+            "beside it."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.mcp_tools",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${HOME}/.gemini/antigravity-cli/mcp/<server>/<tool>.json",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "agy's cache of MCP tool definitions: a directory per configured "
+            "server holding one `{name, description, parameters}` file per "
+            "tool. Tool schemas, not conversation content."
+        ),
+        distinguishes_from=("antigravity-cli.mcp_config",),
+        coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),
 )

@@ -266,9 +266,14 @@ def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
     Each ``sessions/<project>/<session>/subagents/<subagent>/meta.json`` is a
     single JSON object describing one dispatched subagent: ``prompt`` (the
     delegated instruction), ``description``, ``subagent_type``, ``tool_calls``,
-    and parent/child session linkage. The subagent's own conversation is not
-    stored elsewhere, so the dispatch prompt is the only searchable record of
-    the delegation — emitted here as supplementary conversation content.
+    and parent/child session linkage. The child session keeps its own
+    ``chat_history.jsonl``, which ``grok.sessions`` reads; this record is the
+    delegation itself — emitted here as supplementary conversation content.
+
+    ``effective_model_id`` names the model the child ran under and
+    ``child_cwd`` its working directory. A record without ``child_cwd`` falls
+    back to the project directory four levels up, decoded the way transcript
+    records are.
     """
     payload = read_json_file(source.path)
     if not isinstance(payload, dict):
@@ -297,8 +302,13 @@ def parse_grok_subagents(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
         title=description or "Grok subagent",
         role="user",
         timestamp=as_optional_str(mapping.get("started_at")),
+        model=as_optional_str(mapping.get("effective_model_id")),
         session_id=child_session_id,
         conversation_id=child_session_id or parent_session_id,
+        origin=_record_origin(
+            cwd=_path_like_str(mapping.get("child_cwd")),
+            fallback=_grok_project_dir_origin(source.path.parents[3]),
+        ),
         metadata=metadata,
     )
 

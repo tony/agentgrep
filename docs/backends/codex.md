@@ -14,7 +14,7 @@ Base path: `~/.codex` (env override: `CODEX_HOME`).
 SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
 `config.toml`, then `CODEX_HOME`.
 
-`observed_version`: `codex-cli 0.147.0` (observed 2026-08-08).
+`observed_version`: `codex-cli 0.154.0` (observed 2026-09-11).
 
 ## Stores
 
@@ -74,8 +74,9 @@ Upstream type: `HistoryEntry { session_id: String, ts: u64, text: String }`
 ### Session transcripts
 
 {storage:storeref}`codex.sessions` is a JSONL `RolloutItem` tagged enum (`type` +
-`payload`): `session_meta` | `response_item` | `compacted` | `turn_context` |
-`event_msg`.
+`payload`). agentgrep reads `session_meta`, `turn_context`, and `response_item`
+and skips the other variants, among them `compacted`, `event_msg`, and
+`token_usage_record`.
 
 ```json
 {"type": "response_item", "payload": {"role": "user", "content": "<prompt>"}}
@@ -138,6 +139,11 @@ Auth, installation id, secrets, `.env`, and policy state are private;
 caches, SQLite sidecars, and temp directories are catalogued for audits
 but stay outside default search.
 
+{storage:storeref}`codex.editor_drafts` is the `editor/` directory where the
+TUI writes the Markdown file it opens in your external editor. Codex deletes
+the file once the editor exits, so one that remains holds a draft from an edit
+that never returned. The store is catalogued and never opened.
+
 ## Project context
 
 | Store | `model` | `cwd` | `branch` |
@@ -180,3 +186,20 @@ Codex has shipped: the JSONL rows are `session_id`, `ts`, and `text`, and
 the legacy JSON rows are `command` and `timestamp`. That store is
 searchable by text, agent, and time, and it does not satisfy an origin
 filter.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 0.154.0
+
+Seen in 0.154.0 (2026-09-11); absent in 0.147.0 (2026-08-08).
+
+- Rollout files add `token_usage_record` items, which carry token counts and
+  no message text, and `compacted` and `inter_agent_communication_metadata`
+  items gain an `ordinal`. Search reads neither.
+- `editor/` appears, holding the external-editor drafts catalogued as
+  {storage:storeref}`codex.editor_drafts`.
+- `tui-thread-reference-capabilities/` appears, holding one empty marker file
+  per thread, catalogued as {storage:storeref}`codex.tui_thread_capabilities`.

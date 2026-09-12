@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_GEMINI_OBSERVED_VERSION = "gemini-cli v0.54.4"
+_GEMINI_OBSERVED_VERSION = "gemini-cli v0.59.0"
 """App version the Gemini CLI rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

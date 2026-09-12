@@ -125,6 +125,7 @@ class TempHomeSandbox:
         "USERPROFILE",
         "XDG_DATA_HOME",
         "XDG_CONFIG_HOME",
+        "XDG_STATE_HOME",
         "CODEX_HOME",
         "CODEX_SQLITE_HOME",
         "CLAUDE_CONFIG_DIR",
@@ -552,6 +553,7 @@ class TempHomeSandbox:
         env["XDG_DATA_HOME"] = str(home / ".local" / "share")
         env["XDG_CONFIG_HOME"] = str(home / ".config")
         env["XDG_CACHE_HOME"] = str(home / ".cache")
+        env["XDG_STATE_HOME"] = str(home / ".local" / "state")
         env["CODEX_HOME"] = str(home / ".codex")
         env["CODEX_SQLITE_HOME"] = str(home / ".codex")
         env["CLAUDE_CONFIG_DIR"] = str(home / ".claude")

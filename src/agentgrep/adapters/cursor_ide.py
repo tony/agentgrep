@@ -20,6 +20,7 @@ from agentgrep.adapters._extract import (
     iter_message_candidates,
 )
 from agentgrep.adapters._registry import AnyParserSpec, ParserSpec
+from agentgrep.adapters.vscode import _vscode_uri_to_path
 from agentgrep.origin import (
     origin_cwd_hash,
 )
@@ -192,6 +193,7 @@ def _iter_cursor_composer_candidates(
     key: str,
     fallback_origin: RecordOrigin | None,
     fallback_model: str | None = None,
+    fallback_title: str | None = None,
 ) -> cabc.Iterator[MessageCandidate]:
     """Yield the turns of one ``composerData:`` or ``bubbleId:`` record.
 
@@ -202,7 +204,8 @@ def _iter_cursor_composer_candidates(
     A ``bubbleId:`` record is a *sibling* row of its ``composerData:`` document
     rather than a child of it, so it cannot see that document's ``gitWorktree``
     block or model on its own. ``fallback_origin`` and ``fallback_model`` carry
-    them across from :func:`_cursor_composer_context`.
+    them across from :func:`_cursor_composer_context`, and ``fallback_title``
+    carries the session's name, so every turn is titled with it.
     """
     if not isinstance(parsed, dict):
         return
@@ -227,7 +230,7 @@ def _iter_cursor_composer_candidates(
         yield MessageCandidate(
             role=role,
             text=text,
-            title=None,
+            title=fallback_title,
             timestamp=extract_timestamp(bubble_map),
             model=_cursor_nested_model(bubble_map) or model,
             session_id=conversation_id,
@@ -239,8 +242,8 @@ def _iter_cursor_composer_candidates(
 def _cursor_composer_context(
     connection: sqlite3.Connection,
     table: str,
-) -> dict[str, tuple[RecordOrigin | None, str | None]]:
-    """Map each composer id to the origin and model on its session document.
+) -> dict[str, tuple[RecordOrigin | None, str | None, str | None]]:
+    """Map each composer id to the origin, model, and name on its session document.
 
     Cursor splits a session across sibling ``cursorDiskKV`` rows: one
     ``composerData:<id>`` document holding the session-level facts, and one
@@ -262,11 +265,12 @@ def _cursor_composer_context(
 
     Returns
     -------
-    dict[str, tuple[RecordOrigin | None, str | None]]
-        Composer id mapped to its ``(origin, model)`` pair. Composers with
-        neither are omitted so the caller falls back to the source origin.
+    dict[str, tuple[RecordOrigin | None, str | None, str | None]]
+        Composer id mapped to its ``(origin, model, title)``, the title being
+        the document's ``name``. Composers with none of the three are
+        omitted so the caller falls back to the source origin.
     """
-    context: dict[str, tuple[RecordOrigin | None, str | None]] = {}
+    context: dict[str, tuple[RecordOrigin | None, str | None, str | None]] = {}
     for key, raw_value in iter_key_value_rows(
         connection,
         table,
@@ -285,9 +289,85 @@ def _cursor_composer_context(
         document = t.cast("dict[str, object]", parsed)
         origin = _cursor_worktree_origin(document, fallback=None)
         model = _cursor_nested_model(document)
-        if origin is not None or model is not None:
-            context[composer_id] = (origin, model)
+        title = as_optional_str(document.get("name"))
+        if origin is not None or model is not None or title is not None:
+            context[composer_id] = (origin, model, title)
     return context
+
+
+def _cursor_composer_headers(
+    connection: sqlite3.Connection,
+) -> dict[str, tuple[RecordOrigin | None, str | None]]:
+    """Map each composer id to the workspace and name in ``composerHeaders``.
+
+    ``composerHeaders`` is a third ``state.vscdb`` table with one row per
+    session; newer builds gate it behind an ``ItemTable`` flag, so the caller
+    reads it only when it exists. ``value.workspaceIdentifier.uri`` names the
+    folder the session ran in — a ``vscode-remote://wsl+<distro>`` URI for a
+    WSL project — and ``workspaceId`` is the ``workspaceStorage`` digest the
+    per-workspace databases are filed under. A composer's turns in the global
+    database therefore gain the ``cwd`` and ``cwd_hash`` a per-workspace
+    record reports.
+
+    The table also lists sessions with no ``composerData:`` or ``bubbleId:``
+    row. This is a lookup keyed by composer id, so those sessions, having no
+    turns, yield no records.
+    """
+    headers: dict[str, tuple[RecordOrigin | None, str | None]] = {}
+    try:
+        rows = connection.execute(
+            "SELECT composerId, workspaceId, value FROM composerHeaders",
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return headers
+    for composer_id, workspace_id, raw_value in rows:
+        if not isinstance(composer_id, str):
+            continue
+        decoded = decode_sqlite_value(raw_value)
+        parsed = parse_embedded_json(decoded) if decoded is not None else None
+        value = t.cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
+        origin = _record_origin(
+            cwd=_cursor_workspace_uri_path(value.get("workspaceIdentifier")),
+            cwd_hash=origin_cwd_hash(as_optional_str(workspace_id)),
+        )
+        name = as_optional_str(value.get("name"))
+        if origin is not None or name is not None:
+            headers[composer_id] = (origin, name)
+    return headers
+
+
+def _cursor_workspace_uri_path(identifier: object) -> str | None:
+    """Return the folder path a ``workspaceIdentifier`` URI names, if reachable.
+
+    A ``vscode-remote`` URI and a ``file`` URI with no authority name a path
+    this machine can open. A ``file`` URI with a ``wsl$`` authority is a
+    Windows UNC path into a distro and is left out rather than guessed at.
+
+    Examples
+    --------
+    >>> _cursor_workspace_uri_path(
+    ...     {"uri": {"scheme": "vscode-remote", "authority": "wsl+Ubuntu", "path": "/work/proj"}},
+    ... )
+    '/work/proj'
+    >>> _cursor_workspace_uri_path({"uri": {"scheme": "file", "authority": "wsl$", "path": "/U/p"}})
+    >>> _cursor_workspace_uri_path(None)
+    """
+    if not isinstance(identifier, dict):
+        return None
+    uri = t.cast("dict[str, object]", identifier).get("uri")
+    if not isinstance(uri, dict):
+        return None
+    parts = t.cast("dict[str, object]", uri)
+    scheme = as_optional_str(parts.get("scheme"))
+    authority = as_optional_str(parts.get("authority")) or ""
+    path = as_optional_str(parts.get("path"))
+    if path is None:
+        return None
+    if scheme == "vscode-remote":
+        return _vscode_uri_to_path(f"vscode-remote://{authority}{path}")
+    if scheme == "file" and not authority:
+        return _vscode_uri_to_path(f"file://{path}")
+    return None
 
 
 def parse_cursor_state_db(
@@ -312,6 +392,9 @@ def parse_cursor_state_db(
             if "cursorDiskKV" in candidate_tables
             else {}
         )
+        composer_headers = (
+            _cursor_composer_headers(connection) if "composerHeaders" in tables else {}
+        )
         seen: set[tuple[str | None, str, str | None, str | None]] = set()
         for table in candidate_tables:
             for key, raw_value in iter_key_value_rows(
@@ -331,7 +414,11 @@ def parse_cursor_state_db(
                 conversation_key = composer_id or key
                 candidate_iters: list[cabc.Iterator[MessageCandidate]] = []
                 if is_composer:
-                    session_origin, session_model = composer_context.get(
+                    session_origin, session_model, session_title = composer_context.get(
+                        composer_id or "",
+                        (None, None, None),
+                    )
+                    header_origin, header_title = composer_headers.get(
                         composer_id or "",
                         (None, None),
                     )
@@ -339,8 +426,9 @@ def parse_cursor_state_db(
                         _iter_cursor_composer_candidates(
                             parsed,
                             key=key,
-                            fallback_origin=session_origin or source_origin,
+                            fallback_origin=session_origin or header_origin or source_origin,
                             fallback_model=session_model,
+                            fallback_title=session_title or header_title,
                         ),
                     )
                 candidate_iters.append(

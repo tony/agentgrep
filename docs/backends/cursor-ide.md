@@ -45,7 +45,7 @@ global store.
 
 | Store | `model` | `cwd` | `branch` |
 |-------|---------|-------|----------|
-| {storage:storeref}`cursor-ide.state_vscdb` | `composerData` `modelConfig.modelName`, `bubbleId` `modelInfo.modelName` | `composerData` `gitWorktree.worktreePath` | `composerData` `gitWorktree.branchName` |
+| {storage:storeref}`cursor-ide.state_vscdb` | `composerData` `modelConfig.modelName`, `bubbleId` `modelInfo.modelName` | `composerData` `gitWorktree.worktreePath`, else `composerHeaders` `workspaceIdentifier.uri` | `composerData` `gitWorktree.branchName` |
 | {storage:storeref}`cursor-ide.workspace_state` | same composer keys | sibling `workspace.json` folder URI | `composerData` `gitWorktree.branchName` |
 
 Cursor keeps the interesting metadata in `cursorDiskKV`, not in the
@@ -65,6 +65,15 @@ opening unrelated workspace databases. The workspace `cwd` is a fact
 about the database, not a promise about every record in it, so a
 composer bubble that names a different worktree still wins for its own
 record.
+
+Where a composer has no `gitWorktree` block, its row in the
+{storage:storeref}`cursor-ide.composer_headers` table fills in: the
+`workspaceIdentifier.uri` folder becomes `origin.cwd` (a
+`vscode-remote://wsl+<distro>` URI maps to its Linux path) and `workspaceId`
+becomes `origin.cwd_hash`, the same digest the per-workspace databases are
+filed under. Every turn of a composer also takes the session's `name` as its
+title, from `composerData`, else from `composerHeaders`. A title is searchable
+text, so a term in it matches every turn of that composer.
 
 Global `state.vscdb` records stay conservative when no composer origin is
 known. They remain searchable by text, agent, scope, and other non-origin
@@ -87,3 +96,20 @@ both the global and per-workspace `state.vscdb` databases are searchable
 from Linux. `AGENTGREP_WSL_USERS_ROOT` overrides the mount root (default
 `/mnt/c/Users`) for non-default drive letters. See
 {doc}`../dev/adr/0009-cross-host-discovery` for the design.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### Observed 2026-09-11
+
+The observer reads no version for the desktop app, so this entry is bracketed
+by date: seen 2026-09-11, absent 2026-08-08. The WSL remote-server build
+present at the later date reports Cursor 3.17.8. The Windows install
+directory has no `product.json`, so the desktop app's own version could not
+be read.
+
+- `composerHeaders`, in both the global and per-workspace `state.vscdb`, adds
+  a `subagentTypeName` column. agentgrep reads the table for workspace origin
+  and titles, not for that column.

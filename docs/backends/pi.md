@@ -10,7 +10,7 @@ route this backend.
 
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
-`observed_version`: `pi v0.84.1` (observed 2026-08-08).
+`observed_version`: `pi v0.85.1` (observed 2026-09-11).
 
 pi (the earendil-works "Pi Agent Harness") groups transcripts by
 working directory. The directory key is the cwd with its leading slash
@@ -116,3 +116,17 @@ searched: `pi.settings`, `pi.models`, `pi.themes`, `pi.tools`,
 `pi.bin`, `pi.prompts`, `pi.debug_log`, and `pi.extensions_npm` (the
 managed npm extension install root). `pi.auth` holds provider
 credentials and is documented but never enumerated from disk.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 0.85.1
+
+Seen in 0.85.1 (2026-09-11); absent in 0.84.1 (2026-08-08).
+
+- `mcp.json`, an `mcpServers` map read by the third-party `pi-mcp-adapter`
+  extension rather than by pi, and `mcp-cache.json`, holding `servers` and
+  `version`, appear in the agent directory, catalogued as
+  {storage:storeref}`pi.mcp_config` and {storage:storeref}`pi.mcp_cache`.

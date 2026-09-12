@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CURSOR_CLI_OBSERVED_VERSION = "cursor-agent 2026.08.04-aaa8809"
+_CURSOR_CLI_OBSERVED_VERSION = "cursor-agent 2026.09.10-fd3934a"
 """App version the Cursor CLI rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -362,5 +362,17 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
                 path_parts_required=("agent-tools",),
             ),
         ),
+    ),
+    StoreDescriptor(
+        agent="cursor-cli",
+        store_id="cursor-cli.sandbox_policies",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${HOME}/.cursor/sandbox-policies/",
+        observed_version=_CURSOR_CLI_OBSERVED_VERSION,
+        observed_at=_CURSOR_CLI_OBSERVED_AT,
+        schema_notes=("Directory present but empty when observed, so no file layout is recorded."),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
     ),
 )

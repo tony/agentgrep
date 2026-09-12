@@ -12,12 +12,18 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CURSOR_IDE_OBSERVED_VERSION = "Cursor IDE 3.15.6"
+_CURSOR_IDE_OBSERVED_VERSION = "Cursor IDE 3.17.8"
 """App version the Cursor IDE rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
 is how one row drifted to a date its own module constant disagreed with.
 ``observations/`` records the store shapes seen at this version.
+
+The observer reads no version for the desktop app, so its manifest is
+``unknown.toml``. This one comes from the ``product.json`` of the WSL
+remote-server build the app installed under ``~/.cursor-server/bin/``.
+The Windows install directory has no ``product.json`` to read instead:
+its ``resources/app`` holds only ``extensions/`` and ``node_modules/``.
 """
 
 
@@ -132,12 +138,16 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "A third table in the same `state.vscdb` as `ItemTable` and "
             "`cursorDiskKV`, holding one row per session: `composerHeaders("
             "composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, "
-            "isSubagent, recency, checkpointAt, value)`. The `value` JSON carries "
+            "isSubagent, recency, checkpointAt, value, subagentTypeName)`. The "
+            "`value` JSON carries "
             "session identity and origin — `name`, `isWorktree`, `trackedGitRepos`, "
             "`agentLocation`, `workspaceIdentifier`, `referencedPlans`. Notably it "
             "lists sessions that have neither a `composerData:` nor a `bubbleId:` "
-            "row, which no other store can see at all; the readers gate to "
-            "`ItemTable` and `cursorDiskKV`, so nothing opens this table today."
+            "row, which no other store can see at all. agentgrep reads it as a "
+            "lookup: `workspaceIdentifier.uri` gives a composer's working "
+            "directory, `workspaceId` its `cwd_hash`, and `name` backs up the "
+            "`composerData` title. Sessions only this table knows have no "
+            "turns, so they yield no records."
         ),
         distinguishes_from=("cursor-ide.state_vscdb",),
         coverage=StoreCoverage.CATALOG_ONLY,

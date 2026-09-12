@@ -12,7 +12,7 @@ remain inventory-only.
 
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
-`observed_version`: `claude-code v2.1.226` (observed 2026-08-08).
+`observed_version`: `claude-code v2.1.269` (observed 2026-09-11).
 
 ## Stores
 
@@ -78,10 +78,21 @@ text.
  "message": {"role": "user", "content": [{"type": "text", "text": "..."}]}}
 ```
 
+A session's records take their title from the transcript's own title
+records: the last `custom-title` (the name given with `/rename`), else the
+last `ai-title` Claude Code generated. agentgrep looks for them only in the
+file's final 64 KiB, where Claude Code keeps re-appending them; a session
+renamed once and never re-titled after a long stretch would carry no title.
+A title is searchable text, so a term in it matches every record of the
+session.
+
 Sub-agent dispatches nest under `<session_uuid>/subagents/` and use
 the same record parser. agentgrep reports them as the distinct runtime store
 `claude.projects_subagents` so main session files and nested sub-agent files do
-not collapse into one source.
+not collapse into one source. Each sub-agent transcript titles its records
+from the {storage:storeref}`claude.projects.subagent_meta` sidecar beside it:
+the dispatch `description`, else its `name`. A title is searchable text, so a
+term in it matches every record of that transcript.
 
 ### Store database
 
@@ -134,3 +145,46 @@ state, session environment, uploads, file history, backups, generic
 cache, credentials, and image/paste caches stay catalogued or private
 so storage audits can identify them without treating them as default
 prompt history.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 2.1.269
+
+Observed 2026-09-11, the same day as 2.1.268; no storage change.
+
+- The sample adds four keys that mark a compacted session:
+  `compactMetadata` and `logicalParentUuid` on system records, and
+  `isCompactSummary` and `isVisibleInTranscriptOnly` on user records.
+  Transcripts written by 2.1.259 through 2.1.268 carry them as well; the
+  2.1.268 sample simply held no compacted session. Search skips
+  `isCompactSummary` recaps, which restate a conversation rather than
+  record a turn.
+- The rest is sample turnover rather than a schema change, because a
+  manifest reads each store's newest files. `pendingBackgroundAgentCount`,
+  `slug`, `attributionPlugin`, and `toolEndsTurn` appear in the 2.1.226
+  manifest; `turnCompanion` stays on session records, where 2.1.268 first
+  saw it; and the subagent `result` and `started` record types this sample
+  misses appear in the 2.1.268 one.
+
+### 2.1.268
+
+Seen in 2.1.268 (2026-09-11); absent in 2.1.226 (2026-08-08).
+
+- Session transcripts add three record types: `custom-title` holds the name
+  you give a session with `/rename`, `cost-state` holds cost, duration, and
+  line-count totals, and `atis-latch` holds an `atis` object. None carries
+  message text, so none becomes a result; `custom-title` titles the
+  session's records instead (see Project transcripts).
+- Assistant records add `advisorModel`, `perTurnEffort`, and `apiBlockIndex`;
+  user records add `turnCompanion` and `queueSkipAttachments`. Search reads
+  none of them.
+- Three paths appear, catalogued since as {storage:storeref}`claude.telemetry`,
+  {storage:storeref}`claude.daemon_status`, and
+  {storage:storeref}`claude.mcp_auth_cache`: `telemetry/` holds
+  `1p_failed_events.*.json` analytics payloads, `daemon.status.json` records
+  the background daemon's supervisor and workers, and
+  `mcp-needs-auth-cache.json` names MCP servers waiting for authentication.
+  None holds conversation text.

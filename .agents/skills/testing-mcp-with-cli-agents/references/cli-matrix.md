@@ -6,9 +6,10 @@ before/after** — no CLI needs `mcp_swap` or a real-config write to be tested.
 Full model-driven tool-call proof was reached on **codex, cursor, grok, agy**;
 **claude** and **gemini** were blocked at account tier/credit, not by the
 harness. Flags drift — re-verify with `<cli> --help` before trusting any
-invocation. The server slug here is `agentgrep`; replace `<ISOLATION_ENV>` with
-its backend-scratching env var — for this search server, the data-dir var that
-points the index/store at a scratch location.
+invocation. The server slug here is `agentgrep`. It is read-only and has no
+backend-scratching env var, so drop the `<ISOLATION_ENV>` entries below when
+testing it; they mark where a server that writes takes its isolation var (for
+example `LIBTMUX_SOCKET` for libtmux-mcp).
 
 ## Cross-cutting lessons (the transferable part)
 
@@ -80,8 +81,8 @@ points the index/store at a scratch location.
 - **`--mode ask`/`--mode plan` are read-only**, so a mutating call is
   suppressed. Omit `--mode` and add `--force`.
 - Project config is **merged** with global (all global servers still load) —
-  isolate by unique name + the backend env var, not by expecting override. No
-  `mcp add`; config is a JSON file only.
+  isolate by unique name (plus the backend env var, for a server that has
+  one), not by expecting override. No `mcp add`; config is a JSON file only.
 
 ### grok — best cheap proof
 - `GROK_HOME=<ws>/.grok grok mcp add agentgrep -e <ISOLATION_ENV>=... -- <server-cmd>`,

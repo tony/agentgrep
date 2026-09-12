@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CODEX_OBSERVED_VERSION = "codex-cli 0.147.0"
+_CODEX_OBSERVED_VERSION = "codex-cli 0.154.0"
 """App version the Codex rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -82,9 +82,11 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/protocol/src/protocol.rs#L2929"),
         schema_notes=(
-            "JSONL `RolloutItem` tagged enum (`type` + `payload`): "
-            "`session_meta` | `response_item` | `compacted` | `turn_context` | "
-            "`event_msg`. First line is a `SessionMetaLine` with `id`, `timestamp`, "
+            "JSONL `RolloutItem` tagged enum (`type` + `payload`). agentgrep reads "
+            "`session_meta`, `turn_context`, and `response_item` and skips the other "
+            "variants, among them `compacted`, `event_msg`, "
+            "`inter_agent_communication_metadata`, and `token_usage_record`. "
+            "First line is a `SessionMetaLine` with `id`, `timestamp`, "
             "`cwd`, `cli_version`, optional `git` info — but no model slug: it "
             "carries `model_provider` (`openai`), while the slug lives on the "
             "per-turn `turn_context` payload (`model`). Older root-level "
@@ -323,6 +325,26 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "it. Parity with `cursor-cli.uploads`."
         ),
         coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.editor_drafts",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/editor/.tmp<random>.md",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref=("github.com/openai/codex@6c59264b/codex-rs/tui/src/external_editor.rs#L119"),
+        schema_notes=(
+            "The Markdown file the TUI hands to your external editor, seeded with "
+            "the composer's text. Codex deletes it once the editor exits, so a file "
+            "that remains holds a draft from an edit that never returned."
+        ),
+        distinguishes_from=("codex.history",),
+        coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
         version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
     ),
@@ -1116,5 +1138,22 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
                 glob="*.sh",
             ),
         ),
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.tui_thread_capabilities",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern=(
+            "${CODEX_HOME or ${HOME}/.codex}/tui-thread-reference-capabilities/<thread_id>"
+        ),
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Empty marker files, one per thread and named by its id. The name is the only content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
     ),
 )

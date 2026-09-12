@@ -136,6 +136,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "pi.sessions_jsonl.v1",
     "pi.context_mode_sqlite.v1",
     "opencode.db_sqlite.v1",
+    "opencode.prompt_history_jsonl.v1",
     "vscode.chat_sessions_json.v1",
     "vscode.inline_history_sqlite.v1",
 )

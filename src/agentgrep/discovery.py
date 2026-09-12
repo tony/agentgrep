@@ -1493,13 +1493,34 @@ def discover_opencode_sources(
     reachable by pointing ``OPENCODE_DB`` at them. The default lookup and
     adapter metadata come from the ``opencode.*`` rows of
     :data:`agentgrep.store_catalog.CATALOG`.
+
+    The prompt-history log lives under ``${XDG_STATE_HOME}/opencode``
+    (falling back to ``${HOME}/.local/state/opencode``), outside the data
+    root, so it is discovered from a second root on every path below —
+    including when ``OPENCODE_DB`` relocates the database, which leaves the
+    state directory where it was.
     """
+    state = resolve_env_root("XDG_STATE_HOME", home / ".local" / "state") / "opencode"
+    state_handles = (
+        discover_from_catalog(
+            home,
+            "opencode",
+            {"opencode_state": state},
+            backends,
+            include_non_default=include_non_default,
+            version_detail=version_detail,
+            store_roles=store_roles,
+            allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+        )
+        if state.is_dir()
+        else []
+    )
     db_override = os.environ.get("OPENCODE_DB")
     if db_override and db_override != ":memory:":
         candidate = pathlib.Path(os.path.expandvars(db_override)).expanduser()
         if candidate.is_absolute():
             if not candidate.is_file():
-                return []
+                return state_handles
             from agentgrep.store_catalog import CATALOG
 
             descriptor = CATALOG.by_id("opencode.db")
@@ -1508,7 +1529,7 @@ def discover_opencode_sources(
                 store_roles,
                 allow_conversation_content_role_fallback=(allow_conversation_content_role_fallback),
             ):
-                return []
+                return state_handles
             handle = SourceHandle(
                 agent="opencode",
                 store="opencode.db",
@@ -1531,11 +1552,11 @@ def discover_opencode_sources(
                     descriptor.discovery[0],
                     DiscoveryVersionContext(),
                 )
-            return [handle]
+            return [handle, *state_handles]
     base = resolve_env_root("XDG_DATA_HOME", home / ".local" / "share") / "opencode"
     if not base.exists():
-        return []
-    return discover_from_catalog(
+        return state_handles
+    data_handles = discover_from_catalog(
         home,
         "opencode",
         base,
@@ -1545,6 +1566,7 @@ def discover_opencode_sources(
         store_roles=store_roles,
         allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
+    return [*data_handles, *state_handles]
 
 
 def _is_wsl() -> bool:

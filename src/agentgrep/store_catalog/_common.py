@@ -7,22 +7,23 @@ import hashlib
 import pathlib
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
-_CATALOG_CAPTURED_AT = datetime.date(2026, 8, 8)
+_CATALOG_CAPTURED_AT = datetime.date(2026, 9, 11)
 
 # Every agent below was re-observed against its installed version on
-# 2026-08-08. The recorded shapes live in ``observations/<agent>/<version>.toml``;
+# 2026-09-11. The recorded shapes live in ``observations/<agent>/<version>.toml``;
 # re-run ``scripts/observe_stores.py check --agent all`` to test these dates
 # against live disk rather than trusting them.
-_GROK_OBSERVED_AT = datetime.date(2026, 8, 8)
-_CLAUDE_OBSERVED_AT = datetime.date(2026, 8, 8)
-_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 8, 8)
-_PI_OBSERVED_AT = datetime.date(2026, 8, 8)
-_OPENCODE_OBSERVED_AT = datetime.date(2026, 8, 8)
-_ANTIGRAVITY_OBSERVED_AT = datetime.date(2026, 8, 8)
-_GEMINI_OBSERVED_AT = datetime.date(2026, 8, 8)
-_CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 8, 8)
-_CODEX_OBSERVED_AT = datetime.date(2026, 8, 8)
-_VSCODE_OBSERVED_AT = datetime.date(2026, 8, 8)
+_GROK_OBSERVED_AT = datetime.date(2026, 9, 11)
+_CLAUDE_OBSERVED_AT = datetime.date(2026, 9, 11)
+_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 9, 11)
+_PI_OBSERVED_AT = datetime.date(2026, 9, 11)
+_OPENCODE_OBSERVED_AT = datetime.date(2026, 9, 11)
+_ANTIGRAVITY_CLI_OBSERVED_AT = datetime.date(2026, 9, 11)
+_ANTIGRAVITY_IDE_OBSERVED_AT = datetime.date(2026, 9, 11)
+_GEMINI_OBSERVED_AT = datetime.date(2026, 9, 11)
+_CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 9, 11)
+_CODEX_OBSERVED_AT = datetime.date(2026, 9, 11)
+_VSCODE_OBSERVED_AT = datetime.date(2026, 9, 11)
 
 # Windsurf is catalogued but not installed here: the ${HOME}/.codeium/windsurf
 # tree exists and was walked, so the date is a real observation of the layout,

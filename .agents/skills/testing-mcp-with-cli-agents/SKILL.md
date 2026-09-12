@@ -17,9 +17,9 @@ description: >-
 Unit tests prove the server's internals; they don't prove a real agent can
 discover a tool, clear its approval gate, call it, and survive cancelling it
 mid-flight. This skill exercises that whole path by pointing installed CLI
-agents at a checkout and driving them. It targets the `agentgrep` search MCP;
-its scratch backend is an isolated index/store dir pointed at by the server's
-data-dir env var or flag (see below).
+agents at a checkout and driving them. It targets the `agentgrep` search MCP,
+which is read-only: it has no data-dir env var or flag and writes nothing, so
+only the CLI's config needs isolating (see below).
 
 ## The core idea: isolate two things, never zero
 
@@ -38,24 +38,27 @@ What "scratch backend" means depends on the server:
 | Server kind | Scratch-backend lever | Ground-truth check |
 |---|---|---|
 | tmux control (libtmux-mcp) | `LIBTMUX_SOCKET=<scratch>` → an isolated `tmux -L <scratch>` server | `tmux -L <scratch> list-windows` |
-| search / index (agentgrep) | a scratch index/store dir via the server's data-dir env/flag | inspect the scratch index, not the real store |
+| read-only search (agentgrep) | none: the server only reads the agent stores, and has no data-dir env var or flag | the same query through `agentgrep search --json` over the same stores |
 | filesystem | a temp working root | check the temp tree |
 | external API | a sandbox/base-URL override or a recording | the sandbox's own state |
 
-The principle is identical everywhere: the server writes only to scratch, and
-you verify against scratch — so "the agent said it worked" is separated from
-"the tool actually did it," and a destructive tool can't harm anything real.
+The principle is identical for every server that writes: the server writes
+only to scratch, and you verify against scratch — so "the agent said it
+worked" is separated from "the tool actually did it," and a destructive tool
+can't harm anything real. A read-only server has nothing to isolate on this
+side; its CLI, reading the same stores, is the independent ground truth.
 
 ## Climb only as high as the question needs — three fidelity layers
 
 ### Layer 0 — Direct MCP smoke, no CLI at all
 
 Fastest and most deterministic. Drive the server over stdio from a tiny FastMCP
-client against a scratch backend and assert the wire contract directly: the tool
-list, a couple of representative calls, an error path. Use this to answer "is
-the tool surface and result shape correct?" before spending a CLI on it.
-Normalize result shapes before asserting — `structuredContent` is often
-`{"result": [...]}`, and single-value returns can arrive as a bare string.
+client (against a scratch backend, for a server that writes) and assert the wire
+contract directly: the tool list, a couple of representative calls, an error
+path. Use this to answer "is the tool surface and result shape correct?" before
+spending a CLI on it. Normalize result shapes before asserting —
+`structuredContent` is often `{"result": [...]}`, and single-value returns can
+arrive as a bare string.
 
 ### Layer 1 — Headless CLI one-shot
 
@@ -79,17 +82,19 @@ uses) and drive it:
 
 ```console
 $ tmux -L cli-harness new-session -d -s agent -x 220 -y 50   # wide, so TUI isn't wrapped
-$ tmux -L cli-harness send-keys -t agent 'cd /repo && <cli launch with a scratch data dir>' Enter
+$ tmux -L cli-harness send-keys -t agent 'cd /repo && <cli launch with its isolated config>' Enter
 $ tmux -L cli-harness capture-pane -p -t agent | tail -5      # poll until the prompt renders
 $ tmux -L cli-harness send-keys -t agent 'Use the agentgrep MCP to <do a thing>'
 $ tmux -L cli-harness send-keys -t agent Enter                # separate event — see below
 $ tmux -L cli-harness send-keys -t agent 'y' Enter            # answer the approval gate
 $ tmux -L cli-harness capture-pane -p -t agent | tail -30     # what the agent rendered
-# then assert GROUND TRUTH against the scratch backend (not the transcript)
+# then assert GROUND TRUTH against the backend, not the transcript
+# (for agentgrep: the same query through `agentgrep search --json`)
 ```
 
 The final ground-truth step is the whole point: Layers 0 and 1 can be fooled by
-a hallucinated success line; the scratch backend cannot.
+a hallucinated success line; the backend — or, for a read-only server, its CLI
+reading the same stores — cannot.
 
 ## Two failure modes that waste the most time
 
@@ -112,15 +117,17 @@ With a long-running tool (a wait, a big scan): start it, then while the TUI show
 "working / esc to interrupt" send `Escape` to that pane. `Esc` during the working
 phase cancels the in-flight tool call while keeping the MCP server subprocess
 alive — the exact client-cancellation a server's teardown path must survive;
-`Esc` after a turn finishes just enters edit-previous mode. Then assert the
-scratch backend is clean and no child process leaked.
+`Esc` after a turn finishes just enters edit-previous mode. Then assert no child
+process leaked and, for a server that writes, that its scratch backend is clean.
 
 ## Comparing two versions (trunk vs a branch)
 
-Two worktrees, two scratch backends, same prompt. Diff three things: the **tool
-surface** (a Layer-0 `tools/list` dump or `mcp list-tools`, diffed), the
-**rendered agent behavior** for the same prompt (capture-pane transcripts), and
-the **scratch-backend state** afterward.
+Two worktrees, same prompt (and two scratch backends, for a server that
+writes). Diff three things: the **tool surface** (a Layer-0 `tools/list` dump or
+`mcp list-tools`, diffed), the **rendered agent behavior** for the same prompt
+(capture-pane transcripts), and the **ground truth** afterward — the
+scratch-backend state, or for agentgrep the CLI's JSON results from each
+worktree.
 
 ## Wiring a checkout into the CLIs: mcp_swap
 
@@ -139,8 +146,9 @@ $ uv run scripts/mcp_swap.py revert
 Run `doctor` first — it reports which server name each CLI points at (and warns
 when the repo is registered under a name other than the derived default),
 un-reverted swaps and orphaned backups, missing backups (revert would fail), and
-auth-overriding env vars like `OPENAI_API_KEY`. Use `--env` to inject the
-backend-isolation var (an isolated data dir) at swap time.
+auth-overriding env vars like `OPENAI_API_KEY`. Use `--env` to inject a
+backend-isolation var at swap time, for a server that has one; agentgrep has
+none.
 
 **Prefer zero-mutation isolation for a test.** mcp_swap is for a swap you *want*
 to persist. To just exercise a checkout, use each CLI's throwaway

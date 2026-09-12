@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_OPENCODE_OBSERVED_VERSION = "opencode v1.18.15"
+_OPENCODE_OBSERVED_VERSION = "opencode v1.18.30"
 """App version the OpenCode rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -114,17 +114,28 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_OPENCODE_OBSERVED_AT,
         schema_notes=(
             "Recalled prompt log, one JSON object per line with the key set "
-            "`{input, parts, mode}`. `input` is the prompt text, `parts` holds "
-            "`{type, text, source}` entries, and `mode` was only ever observed as "
-            "`normal`. There is no timestamp and no session id, so a record here "
-            "cannot be joined to a session in `opencode.db`. Not a duplicate of "
-            "that database either: prompts present here can be absent from it "
-            "entirely. Documented pending an adapter; wiring it would give "
-            "OpenCode the fast prompt path it currently lacks."
+            "`{input, parts, mode}`. `input` is the prompt as typed, with a "
+            "placeholder such as `[Pasted ~43 lines]` where text was pasted; "
+            "each `parts` entry holds that pasted `text` and a `source.text` "
+            "span (`start`, `end`, `value`) locating its placeholder. `mode` was "
+            "only ever observed as `normal`. There is no timestamp and no "
+            "session id, so a record here cannot be joined to a session in "
+            "`opencode.db`. Not a duplicate of that database either: prompts "
+            "present here can be absent from it entirely."
         ),
+        sample_record='{"input":"<redacted>","parts":[],"mode":"normal"}',
         distinguishes_from=("opencode.db",),
-        coverage=StoreCoverage.CATALOG_ONLY,
-        search_by_default=False,
+        search_by_default=True,
+        discovery=(
+            DiscoverySpec(
+                store="opencode.prompt_history",
+                adapter_id="opencode.prompt_history_jsonl.v1",
+                path_kind="history_file",
+                source_kind="jsonl",
+                root_key="opencode_state",
+                files=("prompt-history.jsonl",),
+            ),
+        ),
         version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
     ),
     StoreDescriptor(

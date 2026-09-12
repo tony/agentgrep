@@ -29,8 +29,10 @@ Privacy
 Manifests carry **schema only**: key names, discriminator values, table and
 column names, counts, and ``${HOME}``-tokenised path patterns. They never
 carry record values, prompt text, credentials, or local absolute paths.
-:func:`_tokenize_path` enforces the path rule and :func:`_sample_key_sets`
-reads key names without retaining any value.
+:func:`_tokenize_path` enforces the path rule, :func:`_sample_key_sets`
+reads key names without retaining any value, and :func:`_unclaimed_entries`
+stops at an unclaimed directory so the session and plugin names inside it stay
+out.
 
 Examples
 --------
@@ -156,7 +158,11 @@ AGENT_PROBES: tuple[AgentProbe, ...] = (
     AgentProbe("cursor-cli", ("cursor-agent", "--version"), (".cursor", ".config/cursor")),
     AgentProbe("cursor-ide", (), (".cursor-server",)),
     AgentProbe("gemini", ("gemini", "--version"), (".gemini",)),
-    AgentProbe("antigravity-cli", ("agy", "--version"), (".gemini/antigravity-cli",)),
+    AgentProbe(
+        "antigravity-cli",
+        ("agy", "--version"),
+        (".gemini/antigravity-cli", ".gemini/config"),
+    ),
     AgentProbe("antigravity-ide", (), (".gemini/antigravity",)),
     AgentProbe(
         "grok",
@@ -166,7 +172,9 @@ AGENT_PROBES: tuple[AgentProbe, ...] = (
     ),
     AgentProbe("pi", ("pi", "--version"), (".pi",)),
     AgentProbe(
-        "opencode", ("opencode", "--version"), (".local/share/opencode", ".config/opencode")
+        "opencode",
+        ("opencode", "--version"),
+        (".local/share/opencode", ".config/opencode", ".local/state/opencode"),
     ),
     AgentProbe("vscode", ("code", "--version"), (".config/Code",)),
     AgentProbe("windsurf", (), (".codeium/windsurf",)),
@@ -495,6 +503,11 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
     or vice versa. A generous test under-reports rather than crying wolf, and
     an under-report is the safer failure for a signal a human triages.
 
+    An unclaimed directory is listed once and never descended into. The names
+    inside it — session ids, plugin names, telemetry files — identify
+    instances on this machine rather than further gaps, and a committed
+    manifest must not carry them.
+
     Parameters
     ----------
     probe : AgentProbe
@@ -531,9 +544,12 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
         root = pathlib.Path.home() / home
         if not root.is_dir():
             continue
+        unclaimed_dirs: list[pathlib.Path] = []
         for depth in range(1, UNCLAIMED_DEPTH + 1):
             pattern = "/".join(["*"] * depth)
             for candidate in sorted(root.glob(pattern)):
+                if any(candidate.is_relative_to(parent) for parent in unclaimed_dirs):
+                    continue
                 token = _tokenize_path(candidate)
                 leaf = candidate.name
                 if _UNCLAIMED_NOISE.search(leaf):
@@ -542,12 +558,10 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
                     continue
                 if any(token.startswith(prefix) for prefix in prefixes):
                     continue
-                entries.append(
-                    {
-                        "path_pattern": token,
-                        "kind": "dir" if candidate.is_dir() else "file",
-                    }
-                )
+                is_dir = candidate.is_dir()
+                if is_dir:
+                    unclaimed_dirs.append(candidate)
+                entries.append({"path_pattern": token, "kind": "dir" if is_dir else "file"})
     seen: set[str] = set()
     unique: list[dict[str, object]] = []
     for entry in entries:

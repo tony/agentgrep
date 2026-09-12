@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
-
 from agentgrep.store_catalog._common import _CLAUDE_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
@@ -14,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CLAUDE_OBSERVED_VERSION = "claude-code v2.1.226"
+_CLAUDE_OBSERVED_VERSION = "claude-code v2.1.269"
 """App version the Claude Code rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -66,10 +64,12 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "Sidecar beside each subagent transcript, carrying `spawnDepth`, "
             "`agentType`, and — when the dispatch came from the Task tool — "
             "`toolUseId`, `description`, `model`, and `parentAgentId`. "
-            "`description` is the dispatch text and `model` is the model that "
-            "subagent ran under; neither is recoverable from the `.jsonl` "
-            "transcript beside it, so this is the only record of why a subagent "
-            "was spawned. Worktree-scoped runs also carry `worktreePath` and "
+            "`description` is the dispatch text, the only record of why a "
+            "subagent was spawned; agentgrep reads it, else `name`, as the "
+            "title of every record in the transcript beside it. `model` is only "
+            "the requested alias (`sonnet`, `inherit`); the transcript's "
+            "assistant turns carry the resolved model, which is what records "
+            "report. Worktree-scoped runs also carry `worktreePath` and "
             "`spawnedWithWorktree`."
         ),
         distinguishes_from=("claude.projects.subagent",),
@@ -164,7 +164,10 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "`queue-operation` (queued prompt text in `content`, no `role`), "
             "`mode`, `permission-mode`, `ai-title`, `last-prompt`, `agent-name`, "
             "`pr-link`, `attachment`, `file-history-snapshot`, `system` — only "
-            "role-bearing message records are indexed."
+            "role-bearing message records are indexed. `custom-title` (set by "
+            "`/rename`) and `ai-title` name the session: agentgrep reads the last "
+            "of each from the file's final 64 KiB and titles every record with "
+            "the custom name, else the AI one."
         ),
         sample_record='{"type":"user","uuid":"...","timestamp":"2026-05-17T...","message":{"role":"user","content":[{"type":"text","text":"<redacted>"}]}}',
         search_by_default=True,
@@ -1134,7 +1137,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
         observed_version=_CLAUDE_OBSERVED_VERSION,
-        observed_at=datetime.date(2026, 7, 3),
+        observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
             "Cloned plugin-marketplace repos under "
             "`plugins/marketplaces/<repo>/` holding agent/command/skill "
@@ -1144,6 +1147,77 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         ),
         distinguishes_from=("claude.plugins_cache",),
         coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.telemetry",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/telemetry/"
+            "1p_failed_events.<session_uuid>.<event_uuid>.json"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "First-party analytics events Claude Code failed to send, kept for a "
+            "later retry. Usage telemetry, not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.daemon_status",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/daemon.status.json",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "State of the background daemon: `supervisorPid`, "
+            "`supervisorProcStart`, `workers`, and `writtenAt`. Runtime state, not "
+            "conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.mcp_auth_cache",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/mcp-needs-auth-cache.json",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "MCP servers waiting for authentication, each server name mapped to "
+            "`{id, timestamp}`. Names and times only; no tokens."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.daemon",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/daemon/",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Working directory of the background daemon whose state "
+            "`claude.daemon_status` records: `attach-journal/`, `dispatch/`, a "
+            "`roster.json`, and a `control.key`. The key makes it private: "
+            "documented, never enumerated."
+        ),
+        distinguishes_from=("claude.daemon_status",),
+        coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
     ),
 )

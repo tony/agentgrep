@@ -1,0 +1,315 @@
+manifest_version = 1
+unclaimed = [
+    { path_pattern = "${HOME}/.grok/.metadata_version", kind = "file" },
+    { path_pattern = "${HOME}/.grok/CHANGELOG.json", kind = "file" },
+    { path_pattern = "${HOME}/.grok/CHANGELOG.md", kind = "file" },
+    { path_pattern = "${HOME}/.grok/README.md", kind = "file" },
+    { path_pattern = "${HOME}/.grok/active_sessions.json", kind = "file" },
+    { path_pattern = "${HOME}/.grok/agent_id", kind = "file" },
+    { path_pattern = "${HOME}/.grok/auth.json", kind = "file" },
+    { path_pattern = "${HOME}/.grok/bin", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/bundled", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/completions", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/docs", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/downloads", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/installed-plugins", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/last-copy.txt", kind = "file" },
+    { path_pattern = "${HOME}/.grok/marketplace-cache", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/memtrace", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/projects", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/relocations", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/slash-mru.json", kind = "file" },
+    { path_pattern = "${HOME}/.grok/tip_cursor.json", kind = "file" },
+    { path_pattern = "${HOME}/.grok/trusted_folders.toml", kind = "file" },
+    { path_pattern = "${HOME}/.grok/upload_queue", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/vendor", kind = "dir" },
+    { path_pattern = "${HOME}/.grok/version.json", kind = "file" },
+    { path_pattern = "${HOME}/.grok/logs/mcp", kind = "dir" },
+]
+
+[agent]
+id = "grok"
+app_version = "1.0.25"
+version_source = "cli"
+
+[observation]
+observed_at = 2026-09-11
+platform = "linux"
+catalog_version = 39
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "grok.prompt_history"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/prompt_history.jsonl"
+role = "prompt_history"
+format = "jsonl"
+has_discovery = true
+source_count = 9
+discovers_as = [
+    "grok.prompt_history",
+]
+records_sampled = 52
+
+[store.record_keys]
+"*" = [
+    "is_bash",
+    "prompt",
+    "session_id",
+    "timestamp",
+]
+
+[[store]]
+id = "grok.sessions"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/chat_history.jsonl"
+role = "primary_chat"
+format = "jsonl"
+has_discovery = true
+source_count = 30
+discovers_as = [
+    "grok.sessions",
+]
+discriminator = "type"
+records_sampled = 2821
+
+[store.record_keys]
+assistant = [
+    "content",
+    "model_fingerprint",
+    "model_id",
+    "reasoning_effort",
+    "tool_calls",
+    "type",
+]
+backend_tool_call = [
+    "kind",
+    "type",
+]
+reasoning = [
+    "encrypted_content",
+    "id",
+    "status",
+    "summary",
+    "type",
+]
+system = [
+    "content",
+    "type",
+]
+tool_result = [
+    "content",
+    "tool_call_id",
+    "type",
+]
+user = [
+    "content",
+    "prior_turn_interrupt",
+    "prompt_index",
+    "synthetic_reason",
+    "type",
+]
+
+[[store]]
+id = "grok.session_search"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/session_search.sqlite"
+role = "supplementary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "grok.session_search",
+]
+
+[store.tables]
+meta = [
+    "key",
+    "value",
+]
+session_docs = [
+    "session_id",
+    "cwd",
+    "updated_at",
+    "title",
+    "content",
+    "content_hash",
+    "last_indexed_offset",
+]
+session_docs_fts = [
+    "title",
+    "content",
+]
+session_docs_fts_config = [
+    "k",
+    "v",
+]
+session_docs_fts_data = [
+    "id",
+    "block",
+]
+session_docs_fts_docsize = [
+    "id",
+    "sz",
+]
+session_docs_fts_idx = [
+    "segid",
+    "term",
+    "pgno",
+]
+
+[[store]]
+id = "grok.subagents"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/subagents/<subagent_uuid>/meta.json"
+role = "supplementary_chat"
+format = "json_object"
+has_discovery = true
+source_count = 13
+discovers_as = [
+    "grok.subagents",
+]
+records_sampled = 13
+
+[store.record_keys]
+"*" = [
+    "child_cwd",
+    "child_session_id",
+    "completed_at",
+    "description",
+    "duration_ms",
+    "effective_context_source",
+    "effective_model_id",
+    "fork_copy_error",
+    "parent_session_id",
+    "prompt",
+    "resumed_from",
+    "started_at",
+    "status",
+    "subagent_id",
+    "subagent_type",
+    "tool_calls",
+    "turns",
+]
+
+[[store]]
+id = "grok.sessions.events"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/events.jsonl"
+role = "app_state"
+format = "jsonl"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.sessions.summary"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/summary.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.memory"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/memory/**/MEMORY.md"
+role = "persistent_memory"
+format = "md_frontmatter"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "grok.memory",
+]
+
+[[store]]
+id = "grok.logs"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/logs/unified.jsonl"
+role = "app_state"
+format = "jsonl"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.worktrees_db"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/worktrees.db"
+role = "app_state"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.config"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/config.toml"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.plans"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/plan.md"
+role = "plan"
+format = "md_frontmatter"
+has_discovery = true
+source_count = 0
+discovers_as = [
+    "grok.plans",
+]
+
+[[store]]
+id = "grok.sessions.system_prompt"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/system_prompt.txt"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.sessions.prompt_context"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/prompt_context.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.sessions.hunk_records"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/hunk_records.jsonl"
+role = "app_state"
+format = "jsonl"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.sessions.updates"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/updates.jsonl"
+role = "app_state"
+format = "jsonl"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.sessions.terminal"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/sessions/<url_encoded_project>/<session_uuid>/terminal/call-<id>.log"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.skills"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/skills/<name>/SKILL.md"
+role = "instruction"
+format = "md_frontmatter"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.grove"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/grove/pin_gc_orphans.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.campaigns_state"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/campaigns_state.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0

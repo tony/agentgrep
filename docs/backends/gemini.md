@@ -9,7 +9,7 @@ so `--deep` does not select Gemini conversations.
 
 Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 
-`observed_version`: `gemini-cli v0.54.4` (observed 2026-08-08);
+`observed_version`: `gemini-cli v0.59.0` (observed 2026-09-11);
 types pinned at HEAD `927170fc`.
 
 ## Stores
@@ -100,3 +100,12 @@ both, which is why it is the better habit for this backend.
 
 Gemini records no git branch in any of its prompt stores, so `branch:`
 does not reach this backend.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 0.59.0
+
+Observed 2026-09-11: no store changes since 0.54.4 (2026-08-08).

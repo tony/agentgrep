@@ -505,16 +505,22 @@ def _iter_jsonl_reverse(
     path: pathlib.Path,
     *,
     skip_line: RawJsonlSkipLine | None = None,
+    max_bytes: int | None = None,
 ) -> cabc.Iterator[JSONValue]:
-    """Yield decoded JSONL values from the end of ``path`` toward the start."""
+    """Yield decoded JSONL values from the end of ``path`` toward the start.
+
+    ``max_bytes`` stops the walk that many bytes from the end. The line it
+    cuts through is dropped rather than decoded half-read.
+    """
     try:
         with path.open("rb") as handle:
             handle.seek(0, os.SEEK_END)
             position = handle.tell()
+            floor = 0 if max_bytes is None else max(0, position - max_bytes)
             pending = b""
             yield_now = _PeriodicYield()
-            while position > 0:
-                read_size = min(_JSONL_REVERSE_CHUNK_BYTES, position)
+            while position > floor:
+                read_size = min(_JSONL_REVERSE_CHUNK_BYTES, position - floor)
                 position -= read_size
                 handle.seek(position)
                 pending = handle.read(read_size) + pending
@@ -526,7 +532,7 @@ def _iter_jsonl_reverse(
                         continue
                     yield_now()
                     yield t.cast("JSONValue", decoded)
-            if pending.strip():
+            if position == 0 and pending.strip():
                 decoded = _decode_jsonl_raw_line(pending, skip_line=skip_line)
                 if decoded is not _SKIPPED_JSONL_LINE:
                     yield_now()

@@ -12,6 +12,9 @@ runs = 3
 trunk = "master"
 sync_command = "uv sync --quiet"
 venv = ".venv"
+# A bench may set its own `timeout_seconds`. The all-agent conversation
+# benches do: a warmup plus three runs over every agent's conversations
+# outlasts this default, and a bench that times out records no samples.
 timeout_seconds = 300
 
 [bench.grep-limit-1]
@@ -46,6 +49,7 @@ description = "All-agent conversation grep, JSON output, limit 50"
 command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope conversations --limit 50 --json {query}"
 default_query = "tmux"
 skip_if_missing = "grep"
+timeout_seconds = 1200
 
 [bench.search-all-prompts-json-limit-50]
 description = "All-agent prompt search, JSON output, limit 50"
@@ -68,6 +72,7 @@ description = "Profiling: all-agent conversation grep, JSON output, limit 500"
 command = "{venv}/bin/agentgrep grep --no-progress --agent all --scope conversations --limit 500 --json {query}"
 default_query = "tmux"
 skip_if_missing = "grep"
+timeout_seconds = 1200
 
 [bench.profile-search-all-prompts-ranked-json-limit-50]
 description = "Profiling: all-agent prompt search with ranking, JSON output, limit 50"
@@ -78,6 +83,7 @@ default_query = "tmux"
 description = "Profiling: all-agent conversation search, JSON output, limit 50"
 command = "{venv}/bin/agentgrep search --no-progress --agent all --scope conversations --limit 50 --no-rank --no-group --json {query}"
 default_query = "tmux"
+timeout_seconds = 1200
 
 [bench.profile-find-all-json-limit-500]
 description = "Profiling: all-agent source enumeration, JSON output, limit 500"
@@ -93,6 +99,7 @@ default_query = "tmux"
 description = "Profiling: engine-only all-agent conversation search, sanitized JSON profile, limit 500"
 command = "{venv}/bin/python scripts/profile_engine.py search-conversations --agent all --limit 500 --format json {query}"
 default_query = "tmux"
+timeout_seconds = 1200
 
 [bench.profile-engine-grep-all-prompts-max-count-500]
 description = "Profiling: engine-only all-agent prompt grep, sanitized JSON profile, max-count 500"
@@ -103,6 +110,7 @@ default_query = "tmux"
 description = "Profiling: engine-only all-agent conversation grep, sanitized JSON profile, max-count 500"
 command = "{venv}/bin/python scripts/profile_engine.py grep-conversations --agent all --max-count 500 --format json {query}"
 default_query = "tmux"
+timeout_seconds = 1200
 
 [bench.profile-engine-find-all-prompts-limit-500]
 description = "Profiling: engine-only all-agent prompt-source enumeration, sanitized JSON profile, limit 500"
@@ -118,6 +126,7 @@ default_query = "agent:codex deploy"
 description = "Profiling: engine-only all-agent conversation search with a query-language predicate, sanitized JSON profile, limit 500"
 command = "{venv}/bin/python scripts/profile_engine.py search-conversations --agent all --limit 500 --format json --query-language {query}"
 default_query = "(agent:codex OR agent:claude) model:* deploy"
+timeout_seconds = 1200
 
 [bench.profile-engine-grep-all-prompts-query-max-count-500]
 description = "Profiling: engine-only all-agent prompt grep with a query-language predicate, sanitized JSON profile, max-count 500"
@@ -128,6 +137,7 @@ default_query = "(agent:codex OR agent:cursor-cli) deploy"
 description = "Profiling: engine-only all-agent conversation grep with a query-language predicate, sanitized JSON profile, max-count 500"
 command = "{venv}/bin/python scripts/profile_engine.py grep-conversations --agent all --max-count 500 --format json --query-language {query}"
 default_query = "timestamp:[2026-01 TO 2026-12] model:* bliss"
+timeout_seconds = 1200
 
 [bench.profile-engine-search-cursor-ide-prompts-limit-500]
 description = "Profiling: engine-only Cursor IDE SQLite prompt search, sanitized JSON profile, limit 500"

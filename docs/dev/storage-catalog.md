@@ -126,7 +126,7 @@ few rows that do cover this land under `source_tree` or `cache`.
 
 **Telemetry.** Usage counters and analytics payloads — `statsig/`
 directories, Grok's `memtrace/`, per-agent analytics JSON. No row names
-any of them.
+them, except `claude.telemetry` for Claude Code's `telemetry/`.
 
 ## Version detection strategies
 
@@ -177,7 +177,7 @@ is separately request-bounded, and routing evidence never establishes a result.
 
 ### Claude Code
 
-`observed_version`: ``claude-code v2.1.226`` (observed 2026-08-08).
+`observed_version`: ``claude-code v2.1.269`` (observed 2026-09-11).
 
 Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
 Its global prompt-history audit log lives at
@@ -253,7 +253,7 @@ because they have disjoint data homes and on-disk formats.
 
 ### Codex
 
-`observed_version`: ``codex-cli 0.147.0`` (observed 2026-08-08).
+`observed_version`: ``codex-cli 0.154.0`` (observed 2026-09-11).
 Codex honours `CODEX_HOME` for primary files. SQLite files resolve
 through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
 `CODEX_HOME`.
@@ -295,7 +295,7 @@ present in Codex session metadata.
 
 ### Gemini CLI
 
-`observed_version`: ``gemini-cli v0.54.4`` (observed 2026-08-08); types
+`observed_version`: ``gemini-cli v0.59.0`` (observed 2026-09-11); types
 pinned at HEAD `927170fc`. Three adapters cover the three on-disk
 shapes:
 
@@ -363,7 +363,7 @@ shape wins over an app-version hint.
 
 ### Grok CLI
 
-`observed_version`: ``grok 1.0.0`` (observed 2026-08-08).
+`observed_version`: ``grok 1.0.25`` (observed 2026-09-11).
 
 Grok stores data under `${GROK_HOME or ${HOME}/.grok}/sessions/`
 using URL-encoded absolute project paths as directory keys
@@ -401,7 +401,7 @@ all carrying no user prompt payload and catalogued with
 
 ### Pi
 
-`observed_version`: ``pi v0.84.1`` (observed 2026-08-08).
+`observed_version`: ``pi v0.85.1`` (observed 2026-09-11).
 
 Pi (earendil-works) stores each conversation as one append-only JSONL
 file under `${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/`,
@@ -436,7 +436,7 @@ log, and the npm extension install root.
 
 ### OpenCode
 
-`observed_version`: ``opencode v1.18.15`` (observed 2026-08-08).
+`observed_version`: ``opencode v1.18.30`` (observed 2026-09-11).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database under `${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/`,
@@ -450,6 +450,12 @@ unlike the JSONL-transcript backends:
   `subtask` (the `prompt`); the session `title`, `directory`, and the
   message `model`/timestamp are attached. Message times are
   unix-milliseconds, normalized to ISO-8601.
+- `opencode.prompt_history_jsonl.v1` parses
+  `${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl`,
+  one prompt record per `{input, parts, mode}` line, with each pasted
+  `parts` text spliced over its placeholder in `input`. The log carries no
+  timestamp and no session id, so its records are undated and belong to no
+  session.
 
 Discovery resolves the data root via `XDG_DATA_HOME` (default
 `~/.local/share`) plus the `opencode` segment and finds `opencode.db` by
@@ -467,11 +473,11 @@ canonical transcript stays in `session`/`message`/`part` and the event
 tables are left unsearched to avoid duplicate hits. The secret-bearing
 `account`/`credential` tables are present but never enumerated.
 
-OpenCode also writes a prompt-history log outside its data root, at
-`${XDG_STATE_HOME or ${HOME}/.local/state}/opencode/prompt-history.jsonl`.
-Each line is `{input, parts, mode}` with no timestamp and no session
-id. It is not a duplicate of the database: prompts recalled there can
-be absent from `opencode.db` entirely.
+The prompt-history log lives outside the data root, so discovery resolves
+a second root from `XDG_STATE_HOME` (default `~/.local/state`), and does so
+even when `OPENCODE_DB` relocates the database. It is not a duplicate of
+the database: prompts recalled there can be absent from `opencode.db`
+entirely.
 
 Documentary-only entries cover the legacy per-file JSON layout, config,
 auth (private credentials), snapshots, the repo cache, logs, and tool
@@ -479,7 +485,7 @@ output.
 
 ### VS Code (GitHub Copilot Chat)
 
-`observed_version`: ``VS Code 1.132.0`` (observed 2026-08-08).
+`observed_version`: ``VS Code 1.137.0`` (observed 2026-09-11).
 
 VS Code's built-in Copilot Chat stores readable JSON transcripts under
 the workbench `User/` directory, covered across the `Code`,
@@ -537,6 +543,12 @@ or compare live disk against what is recorded with
 `uv run scripts/observe_stores.py check --agent all`. Those are written inline
 rather than as `console` blocks on purpose — the documentation suite executes
 every console fence under `docs/`, and `observe` writes into the manifest tree.
+
+Each backend page ends with a *Changes by version* section read from two
+manifests side by side. An entry names the observation that first saw a change
+and the last one that did not. Versions between the two were never observed,
+so the change landed somewhere in that range; an agent with no readable
+version is bracketed by date instead.
 
 Manifests carry schema only. Source counts and the unclaimed-path list describe
 the machine an observation ran on rather than the agent it observed, so they

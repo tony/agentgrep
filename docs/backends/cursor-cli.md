@@ -113,3 +113,16 @@ The same database's `meta` row holds hex-encoded JSON whose
 `lastUsedModel` names the model the session ran on, so `model:` does
 reach this store. Cursor's `default` sentinel is rejected rather than
 reported as a slug.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### 2026.09.10-fd3934a
+
+Seen in 2026.09.10-fd3934a (2026-09-11); absent in 2026.08.04-aaa8809
+(2026-08-08).
+
+- `~/.cursor/sandbox-policies/` appears, empty when observed, catalogued as
+  {storage:storeref}`cursor-cli.sandbox_policies`.

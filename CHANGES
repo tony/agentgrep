@@ -42,6 +42,79 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### OpenCode prompts reach plain search (#165)
+
+`agentgrep search` finds OpenCode prompts without `--exhaustive`. OpenCode
+records them in a prompt-history log under `${XDG_STATE_HOME}/opencode`,
+falling back to `~/.local/state/opencode` — outside the data root, so the log
+is found even when `OPENCODE_DB` points the database elsewhere. Text pasted
+into a prompt is spliced back into the prompt it was pasted into.
+
+The log records no timestamp and no session, so these results sort after
+dated ones and a date filter leaves them out. Under `--exhaustive` the
+database is read as well, and a prompt held in both appears once per store,
+as Codex and Claude Code prompts already do. See {ref}`backend-opencode` for
+details.
+
+#### Session titles are searchable text (#165)
+
+A session's title now matches every record of that session. Claude Code
+session records take the title set by `/rename`, else the one Claude Code
+generated, and subagent records take the dispatch description from the
+`.meta.json` sidecar beside their transcript. Cursor IDE turns take the name
+of the composer they belong to. See {ref}`backend-claude` and
+{ref}`backend-cursor-ide` for details.
+
+#### Cursor IDE turns and Grok subagents carry project context (#165)
+
+`--cwd` reaches Cursor IDE turns stored in the global database. A turn with
+no worktree of its own takes the workspace folder as its `cwd` and that
+folder's digest as its `cwd_hash`, which is what the filter matches on. Grok
+subagent dispatches report the model the child ran under and the directory it
+ran in. See {ref}`backend-project-context` for details.
+
+#### New agent stores are catalogued (#165)
+
+{tooliconl}`find` reports stores it did not see before: Claude Code's
+telemetry, daemon status, and MCP auth cache, plus its daemon directory,
+which is marked private because it holds a control key; Codex's per-thread
+markers; Cursor CLI's sandbox policies; Grok's grove and campaign state; Pi's
+MCP adapter files; and Antigravity CLI's configuration directory, plugins
+included, alongside its MCP tool cache.
+
+`antigravity-cli.skills` points at the directory Antigravity CLI loads skills
+from, and the `gh skill install` directory it named before is catalogued
+separately as `antigravity-cli.gh_skills`. None of these stores is searched.
+See {ref}`storage-catalog` for details.
+
+### Documentation
+
+#### Storage changes are recorded by agent version (#165)
+
+Every backend page ends with a "Changes by version" section that ties each
+storage change to the agent version it was first seen in and the last version
+without it, so a reader can tell whether their own installed version is
+affected. Every agent's observed version was re-checked.
+
+### Development
+
+#### Benchmarks take a per-bench timeout (#165)
+
+A `[bench.*]` entry in `scripts/benchmark.toml` can set `timeout_seconds`,
+replacing `[settings].timeout_seconds` for that bench alone. The all-agent
+conversation benches set their own, so a full `compare` measures them instead
+of recording no samples. See {ref}`benchmark` for details.
+
+#### Observation manifests name no local instances (#165)
+
+`scripts/observe_stores.py` lists an unclaimed directory once and no longer
+descends into it. A manifest is committed, and the directory entry alone
+marks the gap, so a manifest now carries no session ids, plugin names, or
+telemetry file names from the machine that recorded it. See
+{ref}`storage-observations` for details.
+
 ## agentgrep 0.1.0a51 (2026-09-06)
 
 agentgrep 0.1.0a51 moves the MCP server onto FastMCP 4 and the second major
