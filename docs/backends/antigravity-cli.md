@@ -59,6 +59,13 @@ the brain Markdown glob cannot. agentgrep discovers the untruncated
 `transcript_full.jsonl` (skipping the `transcript.jsonl` sibling) and exposes
 it as an inspectable store.
 
+### Skills
+
+{storage:storeref}`antigravity-cli.skills` covers `skills/<skill>/SKILL.md`
+definitions under the agy home. The skill observed there was placed by
+`gh skill install`, and agy's own notes name `~/.gemini/config/skills/` as its
+skills directory, so agentgrep documents this path without reading it.
+
 ### Implicit artifacts (encrypted, unsupported)
 
 {storage:storeref}`antigravity-cli.implicit` files at

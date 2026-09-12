@@ -139,6 +139,11 @@ Auth, installation id, secrets, `.env`, and policy state are private;
 caches, SQLite sidecars, and temp directories are catalogued for audits
 but stay outside default search.
 
+{storage:storeref}`codex.editor_drafts` is the `editor/` directory where the
+TUI writes the Markdown file it opens in your external editor. Codex deletes
+the file once the editor exits, so one that remains holds a draft from an edit
+that never returned. The store is catalogued and never opened.
+
 ## Project context
 
 | Store | `model` | `cwd` | `branch` |

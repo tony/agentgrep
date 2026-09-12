@@ -173,6 +173,26 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="antigravity-cli",
+        store_id="antigravity-cli.skills",
+        role=StoreRole.INSTRUCTION,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${HOME}/.gemini/antigravity-cli/skills/<skill>/SKILL.md",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "`SKILL.md` files with YAML frontmatter (`name`, `description`) under "
+            "`skills/<skill>/`. The observed skill was placed by `gh skill install` "
+            "and carries its provenance `metadata` (`github-repo`, `github-ref`, "
+            "`github-tree-sha`). agy's own migration notes name "
+            "`~/.gemini/config/skills/<name>/SKILL.md` as its skills directory, so "
+            "this path is documented and not searched."
+        ),
+        sample_record="---\nname: <skill>\ndescription: <redacted>\n---\n<instructions>",
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
         store_id="antigravity-cli.cache",
         role=StoreRole.CACHE,
         format=StoreFormat.JSON_OBJECT,

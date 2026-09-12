@@ -330,6 +330,26 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="codex",
+        store_id="codex.editor_drafts",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/editor/.tmp<random>.md",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref=("github.com/openai/codex@6c59264b/codex-rs/tui/src/external_editor.rs#L119"),
+        schema_notes=(
+            "The Markdown file the TUI hands to your external editor, seeded with "
+            "the composer's text. Codex deletes it once the editor exits, so a file "
+            "that remains holds a draft from an edit that never returned."
+        ),
+        distinguishes_from=("codex.history",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+    ),
+    StoreDescriptor(
+        agent="codex",
         store_id="codex.goals_db",
         role=StoreRole.PLAN,
         format=StoreFormat.SQLITE,
