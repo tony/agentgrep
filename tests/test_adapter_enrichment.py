@@ -8,14 +8,18 @@ key layout.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import pathlib
+import sqlite3
 import typing as t
 
 import pytest
 
 from agentgrep.adapters.claude import parse_claude_project_file
+from agentgrep.adapters.cursor_ide import parse_cursor_state_db
 from agentgrep.adapters.grok import parse_grok_subagents
+from agentgrep.origin import origin_cwd_hash
 from agentgrep.records import SourceHandle
 
 from .conftest import fixture_path
@@ -141,3 +145,73 @@ def test_claude_subagent_records_take_the_sidecar_title(
     records = list(parse_claude_project_file(source))
     assert records
     assert {record.title for record in records} == {expected_title}
+
+
+class CursorComposerCase(t.NamedTuple):
+    """One ``state.vscdb`` shape and the title and origin its turn should carry."""
+
+    test_id: str
+    extra_sql: str
+    expected_title: str | None
+    expected_cwd: str | None
+
+
+CURSOR_COMPOSER_CASES = (
+    CursorComposerCase(
+        "headers-give-workspace",
+        "",
+        "Refactor the parser",
+        "/home/user/work/project",
+    ),
+    CursorComposerCase(
+        "no-headers-table",
+        "DROP TABLE composerHeaders;",
+        "Refactor the parser",
+        None,
+    ),
+    CursorComposerCase(
+        "header-name-backs-up-document",
+        "UPDATE cursorDiskKV SET value = '{}' WHERE key LIKE 'composerData:%';",
+        "Refactor the parser",
+        "/home/user/work/project",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    list(CursorComposerCase._fields),
+    CURSOR_COMPOSER_CASES,
+    ids=[case.test_id for case in CURSOR_COMPOSER_CASES],
+)
+def test_cursor_composer_turns_take_session_title_and_workspace(
+    tmp_path: pathlib.Path,
+    test_id: str,
+    extra_sql: str,
+    expected_title: str | None,
+    expected_cwd: str | None,
+) -> None:
+    """A global-database turn is titled and placed by its composer's rows."""
+    database = tmp_path / "globalStorage" / "state.vscdb"
+    database.parent.mkdir()
+    script = fixture_path("cursor-ide.state_vscdb", "composer-headers.sql").read_text(
+        encoding="utf-8"
+    )
+    with contextlib.closing(sqlite3.connect(database)) as connection:
+        connection.executescript(script + extra_sql)
+        connection.commit()
+    source = SourceHandle(
+        agent="cursor-ide",
+        store="cursor-ide.state_vscdb",
+        adapter_id="cursor_ide.state_vscdb_modern.v1",
+        path=database,
+        path_kind="sqlite_db",
+        source_kind="sqlite",
+        search_root=None,
+        mtime_ns=0,
+    )
+    (record,) = parse_cursor_state_db(source)
+    assert record.title == expected_title
+    assert (record.origin.cwd if record.origin else None) == expected_cwd
+    if expected_cwd is not None:
+        assert record.origin is not None
+        assert record.origin.cwd_hash == origin_cwd_hash("0123456789abcdef0123456789abcdef")

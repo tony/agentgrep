@@ -143,8 +143,11 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
             "session identity and origin — `name`, `isWorktree`, `trackedGitRepos`, "
             "`agentLocation`, `workspaceIdentifier`, `referencedPlans`. Notably it "
             "lists sessions that have neither a `composerData:` nor a `bubbleId:` "
-            "row, which no other store can see at all; the readers gate to "
-            "`ItemTable` and `cursorDiskKV`, so nothing opens this table today."
+            "row, which no other store can see at all. agentgrep reads it as a "
+            "lookup: `workspaceIdentifier.uri` gives a composer's working "
+            "directory, `workspaceId` its `cwd_hash`, and `name` backs up the "
+            "`composerData` title. Sessions only this table knows have no "
+            "turns, so they yield no records."
         ),
         distinguishes_from=("cursor-ide.state_vscdb",),
         coverage=StoreCoverage.CATALOG_ONLY,

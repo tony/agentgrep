@@ -45,7 +45,7 @@ global store.
 
 | Store | `model` | `cwd` | `branch` |
 |-------|---------|-------|----------|
-| {storage:storeref}`cursor-ide.state_vscdb` | `composerData` `modelConfig.modelName`, `bubbleId` `modelInfo.modelName` | `composerData` `gitWorktree.worktreePath` | `composerData` `gitWorktree.branchName` |
+| {storage:storeref}`cursor-ide.state_vscdb` | `composerData` `modelConfig.modelName`, `bubbleId` `modelInfo.modelName` | `composerData` `gitWorktree.worktreePath`, else `composerHeaders` `workspaceIdentifier.uri` | `composerData` `gitWorktree.branchName` |
 | {storage:storeref}`cursor-ide.workspace_state` | same composer keys | sibling `workspace.json` folder URI | `composerData` `gitWorktree.branchName` |
 
 Cursor keeps the interesting metadata in `cursorDiskKV`, not in the
@@ -65,6 +65,15 @@ opening unrelated workspace databases. The workspace `cwd` is a fact
 about the database, not a promise about every record in it, so a
 composer bubble that names a different worktree still wins for its own
 record.
+
+Where a composer has no `gitWorktree` block, its row in the
+{storage:storeref}`cursor-ide.composer_headers` table fills in: the
+`workspaceIdentifier.uri` folder becomes `origin.cwd` (a
+`vscode-remote://wsl+<distro>` URI maps to its Linux path) and `workspaceId`
+becomes `origin.cwd_hash`, the same digest the per-workspace databases are
+filed under. Every turn of a composer also takes the session's `name` as its
+title, from `composerData`, else from `composerHeaders`. A title is searchable
+text, so a term in it matches every turn of that composer.
 
 Global `state.vscdb` records stay conservative when no composer origin is
 known. They remain searchable by text, agent, scope, and other non-origin
@@ -102,4 +111,5 @@ directory has no `product.json`, so the desktop app's own version could not
 be read.
 
 - `composerHeaders`, in both the global and per-workspace `state.vscdb`, adds
-  a `subagentTypeName` column. agentgrep does not read that table.
+  a `subagentTypeName` column. agentgrep reads the table for workspace origin
+  and titles, not for that column.
