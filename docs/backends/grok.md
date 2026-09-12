@@ -9,7 +9,7 @@ assistant, reasoning, and tool records also require conversation or all scope.
 
 Base path: `~/.grok` (env override: `GROK_HOME`).
 
-`observed_version`: `grok 1.0.0` (observed 2026-08-08).
+`observed_version`: `grok 1.0.25` (observed 2026-09-11).
 
 Grok stores data under `~/.grok/sessions/` using URL-encoded project
 paths as directory keys (e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`).

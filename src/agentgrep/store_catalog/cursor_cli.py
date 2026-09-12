@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CURSOR_CLI_OBSERVED_VERSION = "cursor-agent 2026.08.04-aaa8809"
+_CURSOR_CLI_OBSERVED_VERSION = "cursor-agent 2026.09.10-fd3934a"
 """App version the Cursor CLI rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

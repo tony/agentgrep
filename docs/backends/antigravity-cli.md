@@ -10,7 +10,7 @@ database remains best-effort because its schema is not public.
 
 Base path: `~/.gemini/antigravity-cli` (no observed env override).
 
-`observed_version`: `agy v1.1.11` (observed 2026-08-08).
+`observed_version`: `agy v1.2.1` (observed 2026-09-11).
 
 Antigravity CLI is a separate backend from Gemini CLI even though both
 store data under `~/.gemini`.

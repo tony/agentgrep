@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CODEX_OBSERVED_VERSION = "codex-cli 0.147.0"
+_CODEX_OBSERVED_VERSION = "codex-cli 0.154.0"
 """App version the Codex rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -82,9 +82,11 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/protocol/src/protocol.rs#L2929"),
         schema_notes=(
-            "JSONL `RolloutItem` tagged enum (`type` + `payload`): "
-            "`session_meta` | `response_item` | `compacted` | `turn_context` | "
-            "`event_msg`. First line is a `SessionMetaLine` with `id`, `timestamp`, "
+            "JSONL `RolloutItem` tagged enum (`type` + `payload`). agentgrep reads "
+            "`session_meta`, `turn_context`, and `response_item` and skips the other "
+            "variants, among them `compacted`, `event_msg`, "
+            "`inter_agent_communication_metadata`, and `token_usage_record`. "
+            "First line is a `SessionMetaLine` with `id`, `timestamp`, "
             "`cwd`, `cli_version`, optional `git` info — but no model slug: it "
             "carries `model_provider` (`openai`), while the slug lives on the "
             "per-turn `turn_context` payload (`model`). Older root-level "

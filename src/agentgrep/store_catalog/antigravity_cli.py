@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _ANTIGRAVITY_OBSERVED_AT
+from agentgrep.store_catalog._common import _ANTIGRAVITY_CLI_OBSERVED_AT
 from agentgrep.stores import (
     DiscoverySpec,
     StoreCoverage,
@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_ANTIGRAVITY_CLI_OBSERVED_VERSION = "agy v1.1.11"
+_ANTIGRAVITY_CLI_OBSERVED_VERSION = "agy v1.2.1"
 """App version the antigravity-cli rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -28,7 +28,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${HOME}/.gemini/antigravity-cli/history.jsonl",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "JSONL prompt recall log. Observed keys: `display` (prompt text), "
             "`timestamp` (Unix milliseconds), `workspace`, optional `type`, "
@@ -61,7 +61,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.gemini/antigravity-cli/conversations/<conversation_uuid>.db",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "One SQLite database per conversation. Table `steps` contains "
             "`idx`, `step_type`, `status`, `has_subtrajectory`, `metadata`, "
@@ -97,7 +97,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
             ".system_generated/logs/transcript_full.jsonl"
         ),
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "Readable JSONL transcript log under a brain conversation's "
             "`.system_generated/logs/`. Each line is a step record with a "
@@ -133,7 +133,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity-cli/implicit/<conversation_uuid>.pb",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "Implicit/background conversation captures as loose `.pb` files. "
             "The observed payloads are high-entropy with no extractable UTF-8 "
@@ -155,7 +155,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/brain/**/*.md",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="Markdown planning and memory artifacts, not prompt recall.",
         search_by_default=False,
         search_notes="Inspectable only; not searched by default.",
@@ -178,7 +178,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSON_OBJECT,
         path_pattern="${HOME}/.gemini/antigravity-cli/cache/",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="Runtime cache files. Cache state, not conversation history.",
         search_by_default=False,
     ),
@@ -189,7 +189,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.TEXT,
         path_pattern="${HOME}/.gemini/antigravity-cli/log/",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="Application logs. Diagnostics, not chat content.",
         search_by_default=False,
     ),
@@ -200,7 +200,7 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.OPAQUE,
         path_pattern="${HOME}/.gemini/antigravity-cli/antigravity-oauth-token",
         observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
-        observed_at=_ANTIGRAVITY_OBSERVED_AT,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes="OAuth token material. Documented but never enumerated.",
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,

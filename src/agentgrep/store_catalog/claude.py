@@ -14,7 +14,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CLAUDE_OBSERVED_VERSION = "claude-code v2.1.226"
+_CLAUDE_OBSERVED_VERSION = "claude-code v2.1.268"
 """App version the Claude Code rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_VSCODE_OBSERVED_VERSION = "VS Code 1.132.0"
+_VSCODE_OBSERVED_VERSION = "VS Code 1.137.0"
 """App version the VS Code rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

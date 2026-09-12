@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_OPENCODE_OBSERVED_VERSION = "opencode v1.18.15"
+_OPENCODE_OBSERVED_VERSION = "opencode v1.18.30"
 """App version the OpenCode rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

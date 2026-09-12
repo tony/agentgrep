@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_PI_OBSERVED_VERSION = "pi v0.84.1"
+_PI_OBSERVED_VERSION = "pi v0.85.1"
 """App version the Pi rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

@@ -14,7 +14,7 @@ Base path: `~/.codex` (env override: `CODEX_HOME`).
 SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
 `config.toml`, then `CODEX_HOME`.
 
-`observed_version`: `codex-cli 0.147.0` (observed 2026-08-08).
+`observed_version`: `codex-cli 0.154.0` (observed 2026-09-11).
 
 ## Stores
 
@@ -74,8 +74,9 @@ Upstream type: `HistoryEntry { session_id: String, ts: u64, text: String }`
 ### Session transcripts
 
 {storage:storeref}`codex.sessions` is a JSONL `RolloutItem` tagged enum (`type` +
-`payload`): `session_meta` | `response_item` | `compacted` | `turn_context` |
-`event_msg`.
+`payload`). agentgrep reads `session_meta`, `turn_context`, and `response_item`
+and skips the other variants, among them `compacted`, `event_msg`, and
+`token_usage_record`.
 
 ```json
 {"type": "response_item", "payload": {"role": "user", "content": "<prompt>"}}
