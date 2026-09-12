@@ -22,7 +22,7 @@ import pytest
 
 pytestmark = [pytest.mark.mcp, pytest.mark.setup]
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO_ROOT / "scripts" / "mcp_swap.py"
 
 _spec = importlib.util.spec_from_file_location("mcp_swap", _SCRIPT)

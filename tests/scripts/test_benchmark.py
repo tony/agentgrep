@@ -15,7 +15,7 @@ import pytest
 
 pytestmark = pytest.mark.setup
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO_ROOT / "scripts" / "benchmark.py"
 
 _spec = importlib.util.spec_from_file_location("benchmark", _SCRIPT)
