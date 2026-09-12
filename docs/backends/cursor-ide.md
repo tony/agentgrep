@@ -97,7 +97,9 @@ the last one that did not; see {ref}`storage-observations`.
 
 The observer reads no version for the desktop app, so this entry is bracketed
 by date: seen 2026-09-11, absent 2026-08-08. The WSL remote-server build
-present at the later date reports Cursor 3.17.8.
+present at the later date reports Cursor 3.17.8. The Windows install
+directory has no `product.json`, so the desktop app's own version could not
+be read.
 
 - `composerHeaders`, in both the global and per-workspace `state.vscdb`, adds
   a `subagentTypeName` column. agentgrep does not read that table.

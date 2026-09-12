@@ -19,14 +19,11 @@ _CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 9, 11)
 _PI_OBSERVED_AT = datetime.date(2026, 9, 11)
 _OPENCODE_OBSERVED_AT = datetime.date(2026, 9, 11)
 _ANTIGRAVITY_CLI_OBSERVED_AT = datetime.date(2026, 9, 11)
+_ANTIGRAVITY_IDE_OBSERVED_AT = datetime.date(2026, 9, 11)
 _GEMINI_OBSERVED_AT = datetime.date(2026, 9, 11)
 _CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 9, 11)
 _CODEX_OBSERVED_AT = datetime.date(2026, 9, 11)
 _VSCODE_OBSERVED_AT = datetime.date(2026, 9, 11)
-
-# Antigravity IDE exposes no version here, so its stamp stays on the date its
-# version was last read. Its stores still matched that observation on 2026-09-11.
-_ANTIGRAVITY_IDE_OBSERVED_AT = datetime.date(2026, 8, 8)
 
 # Windsurf is catalogued but not installed here: the ${HOME}/.codeium/windsurf
 # tree exists and was walked, so the date is a real observation of the layout,

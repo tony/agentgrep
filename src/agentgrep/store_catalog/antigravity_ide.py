@@ -17,6 +17,14 @@ _ANTIGRAVITY_IDE_OBSERVED_VERSION = "Antigravity 1.104.0"
 The observation date lives in ``observed_at`` alone. Repeating it here
 is how one row drifted to a date its own module constant disagreed with.
 ``observations/`` records the store shapes seen at this version.
+
+The observer reads no version for the desktop app, so its manifest is
+``unknown.toml``. This one comes from the ``product.json`` of the WSL
+remote-server build under ``~/.antigravity-server/bin/``, the build that
+last wrote the stores below. The Windows app installed beside it is
+Antigravity IDE 2.5.5 (VS Code 1.107.0); it keeps its own
+``.gemini/antigravity`` tree on the Windows side, which these rows do not
+cover.
 """
 
 

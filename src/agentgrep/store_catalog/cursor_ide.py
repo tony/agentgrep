@@ -22,6 +22,8 @@ is how one row drifted to a date its own module constant disagreed with.
 The observer reads no version for the desktop app, so its manifest is
 ``unknown.toml``. This one comes from the ``product.json`` of the WSL
 remote-server build the app installed under ``~/.cursor-server/bin/``.
+The Windows install directory has no ``product.json`` to read instead:
+its ``resources/app`` holds only ``extensions/`` and ``node_modules/``.
 """
 
 

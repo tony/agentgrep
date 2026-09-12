@@ -11,7 +11,12 @@ plans, and skills. For searchable Antigravity history, reach for
 
 Base path: `~/.gemini/antigravity` (no observed env override).
 
-`observed_version`: `Antigravity 1.104.0` (observed 2026-08-08).
+`observed_version`: `Antigravity 1.104.0` (observed 2026-09-11).
+
+The version comes from the WSL remote-server build under
+`~/.antigravity-server/bin/`, the build that last wrote these stores. The
+Windows app installed beside it (Antigravity IDE 2.5.5) keeps its own store
+tree on the Windows side, which agentgrep does not cover.
 
 Antigravity IDE is documented as its own backend instead of being folded
 into Gemini CLI.
@@ -56,3 +61,14 @@ chat transcripts and are not searched by default.
 `brain/<uuid>/task.md.resolved` plus numbered `.resolved.0..N` snapshots. The
 `.resolved` suffix keeps it outside the `**/*.md` brain glob, so it is
 catalogued separately as inspectable plan text.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### Observed 2026-09-11
+
+No store changes since 2026-08-08. The observer reads no version for the
+desktop app, so both observations are bracketed by date; the WSL
+remote-server build reports Antigravity 1.104.0 at each.
