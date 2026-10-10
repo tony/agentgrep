@@ -168,8 +168,14 @@ class AgentgrepResponseLimitingMiddleware(ResponseLimitingMiddleware):
         self,
         text: str,
         meta: dict[str, t.Any] | None = None,
+        is_error: bool = False,
     ) -> ToolResult:
-        """Return the largest UTF-8-safe error payload within ``max_size``."""
+        """Return the largest UTF-8-safe error payload within ``max_size``.
+
+        ``is_error`` mirrors the FastMCP 4.1.0 signature
+        (PrefectHQ/fastmcp#5309). It does not change the result: generic
+        truncation always fails closed with ``is_error=True``.
+        """
 
         def error_result(content: str) -> ToolResult:
             return ToolResult(
