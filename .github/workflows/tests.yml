@@ -8,10 +8,14 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +36,18 @@ jobs:
       - name: Type check (ty)
         run: uv run ty check --output-format github
       - name: Tests (pytest)
+        if: matrix.os != 'ubuntu-latest'
         run: uv run pytest -m ""
+      - name: Tests with coverage (pytest)
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run pytest -m "" --cov=agentgrep --cov-report=xml
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+          files: ./coverage.xml
+          use_oidc: true
 
   release:
     runs-on: ubuntu-latest
