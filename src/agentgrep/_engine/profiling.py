@@ -105,7 +105,7 @@ class EngineProfiler:
         self,
         name: str,
         **attributes: ProfileAttribute,
-    ) -> cabc.Iterator[None]:
+    ) -> cabc.Generator[None]:
         """Record elapsed time for a named phase."""
         start = time.perf_counter()
         try:
@@ -149,7 +149,7 @@ def current_engine_profiler() -> EngineProfiler | None:
 
 
 @contextlib.contextmanager
-def use_engine_profiler(profiler: EngineProfiler) -> cabc.Iterator[None]:
+def use_engine_profiler(profiler: EngineProfiler) -> cabc.Generator[None]:
     """Make ``profiler`` active for nested engine calls."""
     token = _ACTIVE_PROFILER.set(profiler)
     try:

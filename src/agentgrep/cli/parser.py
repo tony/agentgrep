@@ -565,7 +565,7 @@ def normalize_color_mode(argv: cabc.Sequence[str] | None) -> ColorMode:
 
 
 @contextlib.contextmanager
-def configured_color_environment(color_mode: ColorMode) -> cabc.Iterator[None]:
+def configured_color_environment(color_mode: ColorMode) -> cabc.Generator[None]:
     """Temporarily configure env vars for argparse help color handling."""
     force_color = os.environ.get("FORCE_COLOR")
     try:
