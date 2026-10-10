@@ -17,6 +17,7 @@ import re
 import time
 import typing as t
 
+from agentgrep._engine.source_filters import query_needs_prompt_session_sources
 from agentgrep.adapters import store_role_for_record
 from agentgrep.discovery import discover_sources
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
@@ -671,17 +672,18 @@ def discover_sources_for_search(
 ) -> list[SourceHandle]:
     """Discover only the source roles needed for a search query scope.
 
-    Prompt effort stays on dedicated prompt-history sources. Targeted effort
-    starts from the same compact evidence set; the request-local router resolves
-    only its bounded conversation decision. Exhaustive effort admits transcript
-    sources directly.
+    Prompt effort stays on dedicated prompt-history sources unless an origin
+    predicate needs origin-bearing session records. Targeted effort starts from
+    the same compact evidence set; the request-local router resolves only its
+    bounded conversation decision. Exhaustive effort admits transcript sources
+    directly.
     """
     from agentgrep._engine.planning import build_logical_search_plan
 
     logical_plan = build_logical_search_plan(query)
     allow_conversation_content_role_fallback = query.scope in {"conversations", "all"}
     if logical_plan.request.effort in {"prompt", "targeted"}:
-        return discover_sources(
+        prompt_sources = discover_sources(
             home,
             query.agents,
             backends,
@@ -689,6 +691,28 @@ def discover_sources_for_search(
             store_roles=PROMPT_HISTORY_STORE_ROLES,
             allow_conversation_content_role_fallback=False,
         )
+        if not query_needs_prompt_session_sources(query):
+            return prompt_sources
+
+        sources = [
+            *prompt_sources,
+            *discover_sources(
+                home,
+                query.agents,
+                backends,
+                version_detail=version_detail,
+                store_roles=CONVERSATION_STORE_ROLES,
+            ),
+        ]
+        deduped: list[SourceHandle] = []
+        seen: set[tuple[AgentName, str, str, pathlib.Path]] = set()
+        for source in sources:
+            key = (source.agent, source.store, source.adapter_id, source.path)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(source)
+        return deduped
     if query.scope == "all":
         return searchable_sources(
             discover_sources(
@@ -732,6 +756,7 @@ def source_matches_scope(
     *,
     effort: SearchEffort | None = None,
     prompt_history_agents: frozenset[str] | None = None,
+    include_prompt_session_sources: bool = False,
 ) -> bool:
     """Return whether ``source`` can yield records for the requested scope.
 
@@ -755,14 +780,16 @@ def source_matches_scope(
         if role == StoreRole.PROMPT_HISTORY:
             return True
         if role in CONVERSATION_STORE_ROLES:
-            return source.agent not in legacy_agents
+            return include_prompt_session_sources or source.agent not in legacy_agents
         return True
     if prompt_history_agents is not None:
         msg = "cannot combine effort with prompt_history_agents"
         raise ValueError(msg)
     role = store_role_for_record(source.store, source.adapter_id)
     if effort == "prompt":
-        return role == StoreRole.PROMPT_HISTORY
+        return role == StoreRole.PROMPT_HISTORY or (
+            include_prompt_session_sources and role in CONVERSATION_STORE_ROLES
+        )
     if scope == "all":
         return True
     if scope == "conversations":

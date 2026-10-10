@@ -22,7 +22,10 @@ from agentgrep._engine.planning import (
     _normalized_search_effort,
     _query_limit_requires_drain,
 )
-from agentgrep._engine.source_filters import source_may_match_query
+from agentgrep._engine.source_filters import (
+    query_needs_prompt_session_sources,
+    source_may_match_query,
+)
 from agentgrep.progress import (
     NoopSearchProgress,
     SearchControl,
@@ -279,6 +282,7 @@ class InlineExecutionDriver:
         raw_count = 0
         canonical_authority_keys: set[_CodexAuthorityKey] = set()
         pending_state_records: list[tuple[SearchRecord, tuple[_CodexAuthorityKey, ...]]] = []
+        include_prompt_session_sources = query_needs_prompt_session_sources(query)
 
         def current_count() -> int:
             return len(deduped) if query.dedupe else raw_count
@@ -337,6 +341,7 @@ class InlineExecutionDriver:
                     source,
                     query.scope,
                     effort=_normalized_search_effort(query),
+                    include_prompt_session_sources=include_prompt_session_sources,
                 ):
                     continue
                 if not source_may_match_query(query, source):
@@ -1581,11 +1586,13 @@ def _eligible_tasks(
 ) -> cabc.Iterator[SourceTask]:
     """Yield plan tasks that still match late-bound query predicates."""
     task_list = tuple(tasks)
+    include_prompt_session_sources = query_needs_prompt_session_sources(query)
     for task in task_list:
         if not source_matches_scope(
             task.source,
             query.scope,
             effort=_normalized_search_effort(query),
+            include_prompt_session_sources=include_prompt_session_sources,
         ):
             continue
         if not source_may_match_query(query, task.source):
