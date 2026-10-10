@@ -42,6 +42,15 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Fixes
+
+#### Oversized MCP results no longer raise on FastMCP 4.1 (#167)
+
+With FastMCP 4.1.0 installed, a tool result larger than the response limit
+failed with a `TypeError` instead of returning the bounded error. The
+response limiter now accepts the `is_error` argument FastMCP 4.1 passes, and
+truncated results come back as bounded errors as before.
+
 ## agentgrep 0.1.0a52 (2026-09-12)
 
 agentgrep 0.1.0a52 reads fields that were already on disk. OpenCode prompts
