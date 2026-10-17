@@ -23,7 +23,7 @@ import typing as t
 
 import rapidfuzz.distance
 import rapidfuzz.fuzz
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.screen import ModalScreen
@@ -160,7 +160,7 @@ class HistoryRecall(CopySelectionGuard, ModalScreen[t.Optional[str]]):  # noqa: 
     PREVIEW_ROWS: t.ClassVar[int] = 12
     _DEBOUNCE_SECONDS: t.ClassVar[float] = 0.15
 
-    BINDINGS: t.ClassVar[list[Binding]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
         Binding("escape", "cancel", "Cancel", priority=True, show=False),
         # priority so ctrl+c stages here (clear/close) instead of the app's
         # ctrl+c -> smart_quit firing and quitting out from under the modal.

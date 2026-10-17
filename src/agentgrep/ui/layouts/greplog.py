@@ -136,7 +136,7 @@ class _SelectableLog(Log):
 class GrepLogLayout(LayoutScreen):
     """A query input over an append-only :class:`Log` of streamed records."""
 
-    ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[log]"
+    ZOOM_ARGUMENT_HINT: t.ClassVar[str | None] = "[log]"
 
     DEFAULT_CSS = """
     GrepLogLayout { layout: vertical; }

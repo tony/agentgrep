@@ -6,7 +6,7 @@ import typing as t
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.theme import Theme
@@ -29,7 +29,7 @@ class ThemePicker(CopySelectionGuard, ModalScreen[None]):
         (0, "-compact"),
         (68, "-wide"),
     ]
-    BINDINGS: t.ClassVar[list[Binding]] = [
+    BINDINGS: t.ClassVar[list[BindingType]] = [
         Binding("j", "next_theme", show=False),
         Binding("k", "previous_theme", show=False),
         Binding("escape", "cancel", show=False, priority=True),

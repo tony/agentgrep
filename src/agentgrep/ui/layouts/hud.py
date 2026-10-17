@@ -73,7 +73,7 @@ if t.TYPE_CHECKING:
 class HudLayout(_HudSearchBase):
     """Search box, streaming results list, detail pane, and status chrome."""
 
-    ZOOM_ARGUMENT_HINT: t.ClassVar[str] = "[results|detail]"
+    ZOOM_ARGUMENT_HINT: t.ClassVar[str | None] = "[results|detail]"
 
     # ``priority=True`` on the directional ``ctrl+hjkl`` bindings pushes
     # them into Textual's priority dispatch lane so they win over any

@@ -19,7 +19,7 @@ import threading
 import typing as t
 from dataclasses import dataclass
 
-from textual.app import App
+from textual.app import App, CSSPathType
 from textual.binding import BindingType
 from textual.worker import Worker, WorkerState
 
@@ -110,7 +110,7 @@ class ExplorerApp(App[None]):
 
     ENABLE_COMMAND_PALETTE: t.ClassVar[bool] = False
     COMMANDS: t.ClassVar[set[t.Any]] = set()
-    CSS_PATH: t.ClassVar[str] = "styles.tcss"
+    CSS_PATH: t.ClassVar[CSSPathType | None] = "styles.tcss"
     BINDINGS: t.ClassVar[list[BindingType]] = []
 
     def __init__(
