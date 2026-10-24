@@ -36,11 +36,18 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a53 (Yet to be released)
+## agentgrep 0.1.0a54 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a53 (2026-10-24)
+
+agentgrep 0.1.0a53 runs on Python 3.15, where every command in 0.1.0a52
+crashed before it started, including `uvx agentgrep`. With FastMCP 4.1
+installed, oversized MCP tool results come back as bounded errors instead of
+raising.
 
 ### Fixes
 
