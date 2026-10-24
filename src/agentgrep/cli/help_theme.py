@@ -165,25 +165,7 @@ def create_themed_formatter(color_mode: ColorMode) -> type[AgentGrepHelpFormatte
     class ThemedAgentGrepHelpFormatter(AgentGrepHelpFormatter):
         """AgentGrepHelpFormatter with a configured theme."""
 
-        _agentgrep_help_theme: object | None
-
-        def __init__(
-            self,
-            prog: str,
-            indent_increment: int = 2,
-            max_help_position: int = 24,
-            width: int | None = None,
-            *,
-            color: bool = True,
-        ) -> None:
-            super().__init__(
-                prog,
-                indent_increment=indent_increment,
-                max_help_position=max_help_position,
-                width=width,
-                color=color,
-            )
-            self._agentgrep_help_theme = theme
+        _agentgrep_help_theme = theme
 
     return ThemedAgentGrepHelpFormatter
 
@@ -192,13 +174,17 @@ class AgentGrepHelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Extend help output with syntax-colored example sections.
 
     The theme is held on ``_agentgrep_help_theme`` rather than ``_theme``
-    on purpose: Python 3.14's ``argparse.HelpFormatter`` owns ``_theme``
-    for its native usage/option coloring and re-sets it from
-    ``_get_formatter`` via ``_set_color`` after construction, so a binding
-    on ``_theme`` would be clobbered (and its namedtuple has no ``query``
-    field). Keeping our theme on a private name lets argparse color the
-    usage/options sections while we color the description's examples and
-    inline code with :class:`AnsiHelpTheme`.
+    on purpose: ``argparse.HelpFormatter`` owns ``_theme`` for its native
+    usage/option coloring (an attribute ``_set_color`` re-sets after
+    construction on 3.14, a read-only property on 3.15), and its namedtuple
+    has no ``query`` field. Keeping our theme on a private name lets
+    argparse color the usage/options sections while we color the
+    description's examples and inline code with :class:`AnsiHelpTheme`.
+
+    Subclasses must not override ``__init__``: argparse constructs the
+    formatter as ``formatter_class(prog=...)`` and applies color afterwards
+    through ``_set_color``, and the constructor's keywords differ between
+    versions (3.15 removed ``color``).
     """
 
     _agentgrep_help_theme: object | None = None

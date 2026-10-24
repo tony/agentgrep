@@ -44,6 +44,14 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 ### Fixes
 
+#### agentgrep runs on Python 3.15 (#169)
+
+agentgrep 0.1.0a52 crashed on Python 3.15 before running any command, even
+`agentgrep --version`, with `TypeError: HelpFormatter.__init__() got an
+unexpected keyword argument 'color'`. That includes `uvx agentgrep` whenever
+uv picks Python 3.15. Every command now works on Python 3.15, colored `--help`
+looks the same as before, and PyPI lists Python 3.15 as supported.
+
 #### Oversized MCP results no longer raise on FastMCP 4.1 (#167)
 
 With FastMCP 4.1.0 installed, a tool result larger than the response limit
