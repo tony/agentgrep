@@ -56,6 +56,14 @@ CLI's conversation titles, summaries, and plugin data; and Cursor IDE's
 remote-server logs, with its server tokens marked private. None of these
 stores is searched. See {ref}`storage-catalog` for details.
 
+#### Grok's current memory is searchable (#178)
+
+Grok Build keeps its memory in `~/.grok/memory-v2/` and no longer writes
+`~/.grok/memory/`, so nothing from Grok's current memory turned up in a
+search. Every Markdown note there, from the generated index to topic notes and
+archived observations, is now read, and `--scope all` reaches it as it does the
+older tree. See {ref}`backend-grok` for details.
+
 ### Fixes
 
 #### Claude Code search skips request snapshots (#172)
