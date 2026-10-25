@@ -12,7 +12,7 @@ remain inventory-only.
 
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
-`observed_version`: `claude-code v2.1.269` (observed 2026-09-11).
+`observed_version`: `claude-code v2.1.310` (observed 2026-10-25).
 
 ## Stores
 

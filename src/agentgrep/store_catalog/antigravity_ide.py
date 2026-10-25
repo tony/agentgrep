@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_ANTIGRAVITY_IDE_OBSERVED_VERSION = "Antigravity 1.104.0"
+_ANTIGRAVITY_IDE_OBSERVED_VERSION = "Antigravity 1.13.3"
 """App version the antigravity-ide rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

@@ -9,7 +9,7 @@ but unsupported.
 
 Base path: `~/.codeium/windsurf` (Codeium's Windsurf "Cascade" agent).
 
-`observed_version`: Windsurf Cascade (observed 2026-06-21).
+`observed_version`: Windsurf Cascade (observed 2026-08-08).
 
 ```{warning}
 Windsurf is **documented but unsupported**. Its per-session Cascade

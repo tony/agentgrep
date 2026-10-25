@@ -14,7 +14,7 @@ Base path: `~/.codex` (env override: `CODEX_HOME`).
 SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
 `config.toml`, then `CODEX_HOME`.
 
-`observed_version`: `codex-cli 0.154.0` (observed 2026-09-11).
+`observed_version`: `codex-cli 0.164.0` (observed 2026-10-25).
 
 ## Stores
 

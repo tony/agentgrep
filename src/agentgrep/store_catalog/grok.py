@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_GROK_OBSERVED_VERSION = "grok 1.0.25"
+_GROK_OBSERVED_VERSION = "grok 1.0.70"
 """App version the Grok CLI rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

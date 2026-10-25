@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CODEX_OBSERVED_VERSION = "codex-cli 0.154.0"
+_CODEX_OBSERVED_VERSION = "codex-cli 0.164.0"
 """App version the Codex rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

@@ -12,7 +12,7 @@ from agentgrep.stores import (
     VersionDetectionStrategy,
 )
 
-_CURSOR_IDE_OBSERVED_VERSION = "Cursor IDE 3.17.8"
+_CURSOR_IDE_OBSERVED_VERSION = "Cursor IDE 3.26.13"
 """App version the Cursor IDE rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here

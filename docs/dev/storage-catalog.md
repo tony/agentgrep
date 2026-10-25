@@ -177,7 +177,7 @@ is separately request-bounded, and routing evidence never establishes a result.
 
 ### Claude Code
 
-`observed_version`: ``claude-code v2.1.269`` (observed 2026-09-11).
+`observed_version`: ``claude-code v2.1.310`` (observed 2026-10-25).
 
 Claude honours `CLAUDE_CONFIG_DIR`, falling back to `${HOME}/.claude`.
 Its global prompt-history audit log lives at
@@ -253,7 +253,7 @@ because they have disjoint data homes and on-disk formats.
 
 ### Codex
 
-`observed_version`: ``codex-cli 0.154.0`` (observed 2026-09-11).
+`observed_version`: ``codex-cli 0.164.0`` (observed 2026-10-25).
 Codex honours `CODEX_HOME` for primary files. SQLite files resolve
 through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
 `CODEX_HOME`.
@@ -295,7 +295,7 @@ present in Codex session metadata.
 
 ### Gemini CLI
 
-`observed_version`: ``gemini-cli v0.59.0`` (observed 2026-09-11); types
+`observed_version`: ``gemini-cli v0.65.0`` (observed 2026-10-25); types
 pinned at HEAD `927170fc`. Three adapters cover the three on-disk
 shapes:
 
@@ -363,7 +363,7 @@ shape wins over an app-version hint.
 
 ### Grok CLI
 
-`observed_version`: ``grok 1.0.25`` (observed 2026-09-11).
+`observed_version`: ``grok 1.0.70`` (observed 2026-10-25).
 
 Grok stores data under `${GROK_HOME or ${HOME}/.grok}/sessions/`
 using URL-encoded absolute project paths as directory keys
@@ -401,7 +401,7 @@ all carrying no user prompt payload and catalogued with
 
 ### Pi
 
-`observed_version`: ``pi v0.85.1`` (observed 2026-09-11).
+`observed_version`: ``pi v1.4.0`` (observed 2026-10-25).
 
 Pi (earendil-works) stores each conversation as one append-only JSONL
 file under `${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/sessions/`,
@@ -436,7 +436,7 @@ log, and the npm extension install root.
 
 ### OpenCode
 
-`observed_version`: ``opencode v1.18.30`` (observed 2026-09-11).
+`observed_version`: ``opencode v1.19.4`` (observed 2026-10-25).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database under `${XDG_DATA_HOME or ${HOME}/.local/share}/opencode/`,
@@ -485,7 +485,7 @@ output.
 
 ### VS Code (GitHub Copilot Chat)
 
-`observed_version`: ``VS Code 1.137.0`` (observed 2026-09-11).
+`observed_version`: ``VS Code 1.143.0`` (observed 2026-10-25).
 
 VS Code's built-in Copilot Chat stores readable JSON transcripts under
 the workbench `User/` directory, covered across the `Code`,

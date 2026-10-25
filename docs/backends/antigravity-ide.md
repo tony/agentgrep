@@ -11,7 +11,7 @@ plans, and skills. For searchable Antigravity history, reach for
 
 Base path: `~/.gemini/antigravity` (no observed env override).
 
-`observed_version`: `Antigravity 1.104.0` (observed 2026-09-11).
+`observed_version`: `Antigravity 1.13.3` (observed 2026-10-25).
 
 The version comes from the WSL remote-server build under
 `~/.antigravity-server/bin/`, the build that last wrote these stores. The
