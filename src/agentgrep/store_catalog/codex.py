@@ -91,7 +91,10 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "carries `model_provider` (`openai`), while the slug lives on the "
             "per-turn `turn_context` payload (`model`). Older root-level "
             "`sessions/rollout-*.json` files are JSON objects with `session` "
-            "metadata and an `items` array of message-like records."
+            "metadata and an `items` array of message-like records. With its "
+            "`local_thread_store_compression` feature on, Codex compresses rollouts "
+            "older than seven days to `.jsonl.zst` (`codex.sessions_zst`), which this "
+            "store does not read."
         ),
         sample_record='{"type":"response_item","payload":{"role":"user","content":"<redacted>"}}',
         distinguishes_from=("codex.history",),

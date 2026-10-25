@@ -84,6 +84,14 @@ and skips the other variants, among them `compacted`, `event_msg`, and
 
 Upstream type: [`codex-rs/protocol/src/protocol.rs:2929`](https://github.com/openai/codex/blob/3fb81667/codex-rs/protocol/src/protocol.rs#L2929).
 
+With its `local_thread_store_compression` feature on (under development and
+off by default), Codex compresses each rollout last written seven or more days
+ago in place to `rollout-*.jsonl.zst`: the same lines in one zstd frame. They
+are catalogued as {storage:storeref}`codex.sessions_zst`, and agentgrep
+discovers `*.jsonl` only, so a compressed thread is not searched. When
+observed on 2026-10-25 with the feature on, 9,420 files were compressed and 170
+were plain.
+
 Older installs can also have root-level
 `sessions/rollout-YYYY-MM-DD-*.json` files. Those are JSON objects
 with `session` metadata and an `items` array carrying message-like
@@ -95,7 +103,8 @@ the same primary chat store through `codex.sessions_legacy_json.v1`.
 {storage:storeref}`codex.session_index` is an append-only index with `id`,
 `thread_name`, and `updated_at`. It is useful for inventory and session
 selection, but the full transcript remains `sessions/YYYY/MM/DD/rollout-*.jsonl`
-or the legacy root `sessions/rollout-*.json` shape.
+(or its compressed `.jsonl.zst` form) or the legacy root
+`sessions/rollout-*.json` shape.
 
 ### SQLite Stores
 

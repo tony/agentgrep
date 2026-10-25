@@ -267,6 +267,9 @@ Schemas are pinned directly to the upstream Rust types:
   `RolloutItem` with variants `SessionMeta`, `ResponseItem`,
   `Compacted`, `TurnContext`, `EventMsg`
   ([`codex-rs/protocol/src/protocol.rs:2929`](https://github.com/openai/codex/blob/3fb81667/codex-rs/protocol/src/protocol.rs#L2929)).
+  With its `local_thread_store_compression` feature on, Codex compresses
+  rollouts older than seven days to `rollout-…jsonl.zst`; agentgrep reads the
+  plain files only.
 - Legacy root `sessions/rollout-*.json` → JSON object with `session`
   metadata and an `items` array carrying message-like records.
 
