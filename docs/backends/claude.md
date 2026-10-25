@@ -12,7 +12,7 @@ remain inventory-only.
 
 Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
 
-`observed_version`: `claude-code v2.1.269` (observed 2026-09-11).
+`observed_version`: `claude-code v2.1.310` (observed 2026-10-25).
 
 ## Stores
 
@@ -150,6 +150,36 @@ prompt history.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 2.1.310
+
+Seen in 2.1.310 (2026-10-25); absent in 2.1.269 (2026-09-11).
+
+- Session and subagent transcripts add three request-snapshot record types:
+  `api-request`, `api-request-shape`, and `api-request-blob`. A blob's
+  `message` copies a message the request sent, the system prompt and the
+  injected context among them. Search had read blobs as turns, so it returned
+  each message twice and returned the system prompt; it now skips them.
+- Session transcripts add `bridge-session` records, carrying a
+  `bridgeSessionId`, a `lastSequenceNum`, and the owning account and
+  organization ids. None holds message text.
+- Assistant records add `requestRef`, `requestedModel`, `resendCannotCure`,
+  `thinkingDisplay`, `thinkingDurationMs`, `wireIngestContext`, and
+  `wireToolInputs`. User records add `interruptedMessageId`,
+  `permissionDecision`, `queueSkipSlashCommands`, `sandboxed`, `turnOrigin`,
+  and `turnPosition`. Search reads none of them.
+- The sample carries no `slug`, which the 2.1.226 through 2.1.269 manifests
+  list on assistant, attachment, system, and user records. Transcripts
+  written by 2.1.299 still carry it, so it went between 2.1.299 and 2.1.310.
+- The rest of the diff is sample turnover: `pr-link`, `compactMetadata`,
+  `logicalParentUuid`, `isCompactSummary`, and `isVisibleInTranscriptOnly`
+  still occur in recent transcripts.
+- Paths appear that no row covered, catalogued since as {storage:storeref}`claude.hooks`,
+  {storage:storeref}`claude.policy_limits`, {storage:storeref}`claude.remote_settings`,
+  {storage:storeref}`claude.remote`, {storage:storeref}`claude.plugin_directory_cache`,
+  {storage:storeref}`claude.plugins_synced`, and {storage:storeref}`claude.mcp_discover_verdicts`. Five
+  directories, `.cc-writes`, `bridge-spawn`, `dev-mods`, `seed-admin`, and
+  `ssh`, were empty when observed and are {storage:storeref}`claude.scratch_dirs`.
 
 ### 2.1.269
 

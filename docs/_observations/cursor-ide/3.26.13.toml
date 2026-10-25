@@ -1,0 +1,115 @@
+manifest_version = 1
+unclaimed = [
+    { path_pattern = "${HOME}/.cursor-server/bin", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor-server/data", kind = "dir" },
+    { path_pattern = "${HOME}/.cursor-server/extensions", kind = "dir" },
+]
+
+[agent]
+id = "cursor-ide"
+app_version = "3.26.13"
+version_source = "version_file"
+
+[observation]
+observed_at = 2026-10-25
+platform = "linux"
+catalog_version = 41
+generator = "scripts/observe_stores.py"
+
+[[store]]
+id = "cursor-ide.state_vscdb"
+path_pattern = "${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 1
+discovers_as = [
+    "cursor-ide.state_vscdb",
+]
+
+[store.tables]
+ItemTable = [
+    "key",
+    "value",
+]
+composerHeaders = [
+    "composerId",
+    "workspaceId",
+    "createdAt",
+    "lastUpdatedAt",
+    "isArchived",
+    "isSubagent",
+    "recency",
+    "checkpointAt",
+    "value",
+    "subagentTypeName",
+]
+cursorDiskKV = [
+    "key",
+    "value",
+]
+
+[[store]]
+id = "cursor-ide.workspace_state"
+path_pattern = "${HOME}/.config/Cursor/User/workspaceStorage/<hash>/state.vscdb"
+role = "primary_chat"
+format = "sqlite"
+has_discovery = true
+source_count = 74
+discovers_as = [
+    "cursor-ide.workspace_state",
+]
+
+[store.tables]
+ItemTable = [
+    "key",
+    "value",
+]
+composerHeaders = [
+    "composerId",
+    "workspaceId",
+    "createdAt",
+    "lastUpdatedAt",
+    "isArchived",
+    "isSubagent",
+    "recency",
+    "checkpointAt",
+    "value",
+    "subagentTypeName",
+]
+cursorDiskKV = [
+    "key",
+    "value",
+]
+
+[[store]]
+id = "cursor-ide.composer_headers"
+path_pattern = "${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
+role = "app_state"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-ide.conversation_search"
+path_pattern = "${HOME}/.config/Cursor/User/globalStorage/conversation-search.db"
+role = "cache"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-ide.server_log"
+path_pattern = "${HOME}/.cursor-server/.<commit>.log"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "cursor-ide.server_token"
+path_pattern = "${HOME}/.cursor-server/.<commit>.token"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0

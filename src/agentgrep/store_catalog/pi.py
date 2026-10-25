@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_PI_OBSERVED_VERSION = "pi v0.85.1"
+_PI_OBSERVED_VERSION = "pi v1.4.0"
 """App version the Pi rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -268,6 +268,57 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         observed_version=_PI_OBSERVED_VERSION,
         observed_at=_PI_OBSERVED_AT,
         schema_notes=("The `pi-mcp-adapter` extension's cache: `servers` and a `version`."),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.mcp_adapter",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/mcp-adapter.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version=_PI_OBSERVED_VERSION,
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "An `mcpServers` map written for the `pi-mcp-adapter` extension, beside `mcp.json`. "
+            "Server entries can carry `env` values."
+        ),
+        distinguishes_from=("pi.mcp_config",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.mcp_onboarding",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/mcp-onboarding.json",
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version=_PI_OBSERVED_VERSION,
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "The adapter's first-run state: `piBuiltinMcpHandledVersion`, `setupCompleted`, "
+            "`sharedConfigHintShown`, and `version`. Not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="pi",
+        store_id="pi.subagents_state",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${PI_CODING_AGENT_DIR or ${HOME}/.pi/agent}/pi-subagents/last-seen-version.json"
+        ),
+        env_overrides=("PI_CODING_AGENT_DIR",),
+        observed_version=_PI_OBSERVED_VERSION,
+        observed_at=_PI_OBSERVED_AT,
+        schema_notes=(
+            "The `pi-subagents` extension's record of the version it last saw: one `version` key. "
+            "Not conversation content."
+        ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),

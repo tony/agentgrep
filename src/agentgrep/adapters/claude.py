@@ -75,6 +75,9 @@ def parse_claude_project_file(
         if isinstance(event, dict) and event.get("isCompactSummary") is True:
             # `/compact` machine summaries are derived recaps, not user turns.
             continue
+        if isinstance(event, dict) and event.get("type") == _CLAUDE_REQUEST_BLOB_TYPE:
+            # A request blob copies what was sent to the API, system prompt included.
+            continue
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
@@ -120,6 +123,9 @@ _CLAUDE_TITLE_TAIL_BYTES = 64 * 1024
 Claude Code re-appends its title records as a session goes on, so the last
 one sits near the end; every titled local session had it within this span.
 """
+
+_CLAUDE_REQUEST_BLOB_TYPE = "api-request-blob"
+"""Transcript record type holding a copy of a message sent to the API."""
 
 _CLAUDE_TITLE_MARKERS = ('"type":"custom-title"', '"type":"ai-title"')
 

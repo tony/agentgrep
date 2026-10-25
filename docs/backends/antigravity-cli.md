@@ -10,7 +10,7 @@ database remains best-effort because its schema is not public.
 
 Base path: `~/.gemini/antigravity-cli` (no observed env override).
 
-`observed_version`: `agy v1.2.1` (observed 2026-09-11).
+`observed_version`: `agy v1.4.7` (observed 2026-10-25).
 
 Antigravity CLI is a separate backend from Gemini CLI even though both
 store data under `~/.gemini`.
@@ -113,6 +113,17 @@ Antigravity conversations without telling you the exact build.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 1.4.7
+
+Seen in 1.4.7 (2026-10-25); absent in 1.2.1 (2026-09-11).
+
+- No conversation store changed shape.
+- Three paths appear in `~/.gemini/antigravity-cli/`, catalogued since as
+  {storage:storeref}`antigravity-cli.annotations`, which holds one text-proto file per
+  conversation with a single `title`; {storage:storeref}`antigravity-cli.jetbox_summaries`,
+  an undecoded protobuf; and {storage:storeref}`antigravity-cli.plugin_data`, a directory
+  per plugin that was empty when observed. agentgrep reads none of them.
 
 ### 1.2.1
 

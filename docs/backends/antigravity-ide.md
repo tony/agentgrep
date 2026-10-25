@@ -11,10 +11,11 @@ plans, and skills. For searchable Antigravity history, reach for
 
 Base path: `~/.gemini/antigravity` (no observed env override).
 
-`observed_version`: `Antigravity 1.104.0` (observed 2026-09-11).
+`observed_version`: `Antigravity 1.13.3` (observed 2026-10-25).
 
-The version comes from the WSL remote-server build under
-`~/.antigravity-server/bin/`, the build that last wrote these stores. The
+The version is the `ideVersion` of the WSL remote-server build under
+`~/.antigravity-server/bin/`, the build that last wrote these stores; the
+`version` beside it is the VS Code release Antigravity forks. The
 Windows app installed beside it (Antigravity IDE 2.5.5) keeps its own store
 tree on the Windows side, which agentgrep does not cover.
 
@@ -67,8 +68,15 @@ catalogued separately as inspectable plan text.
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
 
+### Observed 2026-10-25
+
+No store changes since 2026-09-11. The observer now reads a version for
+the WSL remote-server build, Antigravity 1.13.3, from its `ideVersion`. That
+build is dated 2025-12-19, so the 2026-09-11 observation walked it too.
+
 ### Observed 2026-09-11
 
 No store changes since 2026-08-08. The observer reads no version for the
-desktop app, so both observations are bracketed by date; the WSL
-remote-server build reports Antigravity 1.104.0 at each.
+desktop app, so both observations are bracketed by date. The WSL
+remote-server build at each was Antigravity 1.13.3; the 1.104.0 its
+`version` key reports is the VS Code release it forks.

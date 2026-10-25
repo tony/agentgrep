@@ -9,7 +9,7 @@ so `--deep` does not select Gemini conversations.
 
 Base path: `~/.gemini` (env override: `GEMINI_CLI_HOME`).
 
-`observed_version`: `gemini-cli v0.59.0` (observed 2026-09-11);
+`observed_version`: `gemini-cli v0.65.0` (observed 2026-10-25);
 types pinned at HEAD `927170fc`.
 
 ## Stores
@@ -105,6 +105,10 @@ does not reach this backend.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 0.65.0
+
+Observed 2026-10-25: no store changes since 0.59.0 (2026-09-11).
 
 ### 0.59.0
 

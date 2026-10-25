@@ -7,27 +7,28 @@ import hashlib
 import pathlib
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
-_CATALOG_CAPTURED_AT = datetime.date(2026, 9, 11)
+_CATALOG_CAPTURED_AT = datetime.date(2026, 10, 25)
 
 # Every agent below was re-observed against its installed version on
-# 2026-09-11. The recorded shapes live in ``observations/<agent>/<version>.toml``;
-# re-run ``scripts/observe_stores.py check --agent all`` to test these dates
-# against live disk rather than trusting them.
-_GROK_OBSERVED_AT = datetime.date(2026, 9, 11)
-_CLAUDE_OBSERVED_AT = datetime.date(2026, 9, 11)
-_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 9, 11)
-_PI_OBSERVED_AT = datetime.date(2026, 9, 11)
-_OPENCODE_OBSERVED_AT = datetime.date(2026, 9, 11)
-_ANTIGRAVITY_CLI_OBSERVED_AT = datetime.date(2026, 9, 11)
-_ANTIGRAVITY_IDE_OBSERVED_AT = datetime.date(2026, 9, 11)
-_GEMINI_OBSERVED_AT = datetime.date(2026, 9, 11)
-_CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 9, 11)
-_CODEX_OBSERVED_AT = datetime.date(2026, 9, 11)
-_VSCODE_OBSERVED_AT = datetime.date(2026, 9, 11)
+# 2026-10-25. The recorded shapes live in
+# ``docs/_observations/<agent>/<version>.toml``; re-run
+# ``scripts/observe_stores.py check --agent all`` to test these dates against
+# live disk rather than trusting them.
+_GROK_OBSERVED_AT = datetime.date(2026, 10, 25)
+_CLAUDE_OBSERVED_AT = datetime.date(2026, 10, 25)
+_CURSOR_IDE_OBSERVED_AT = datetime.date(2026, 10, 25)
+_PI_OBSERVED_AT = datetime.date(2026, 10, 25)
+_OPENCODE_OBSERVED_AT = datetime.date(2026, 10, 25)
+_ANTIGRAVITY_CLI_OBSERVED_AT = datetime.date(2026, 10, 25)
+_ANTIGRAVITY_IDE_OBSERVED_AT = datetime.date(2026, 10, 25)
+_GEMINI_OBSERVED_AT = datetime.date(2026, 10, 25)
+_CURSOR_CLI_OBSERVED_AT = datetime.date(2026, 10, 25)
+_CODEX_OBSERVED_AT = datetime.date(2026, 10, 25)
+_VSCODE_OBSERVED_AT = datetime.date(2026, 10, 25)
 
-# Windsurf is catalogued but not installed here: the ${HOME}/.codeium/windsurf
-# tree exists and was walked, so the date is a real observation of the layout,
-# but no app version was readable to stamp against it.
+# Windsurf keeps its own date. Its newest build (2.3.15, read from the
+# remote server's product.json) wrote none of the catalogued data: the
+# newest transcript is from 2025, so no stamp can claim that build.
 _WINDSURF_OBSERVED_AT = datetime.date(2026, 8, 8)
 
 

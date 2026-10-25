@@ -12,7 +12,7 @@ Base path: `~/.local/share/opencode` (env overrides: `XDG_DATA_HOME`,
 `OPENCODE_DB`); prompt history under `~/.local/state/opencode` (env override:
 `XDG_STATE_HOME`).
 
-`observed_version`: `opencode v1.18.30` (observed 2026-09-11).
+`observed_version`: `opencode v1.19.4` (observed 2026-10-25).
 
 OpenCode (anomalyco/opencode) stores conversations in a single SQLite
 database, `opencode.db`, under its XDG data directory
@@ -114,6 +114,10 @@ be absent from `opencode.db` entirely.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 1.19.4
+
+Observed 2026-10-25: no store changes since 1.18.30 (2026-09-11).
 
 ### 1.18.30
 

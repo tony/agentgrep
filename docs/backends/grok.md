@@ -9,7 +9,7 @@ assistant, reasoning, and tool records also require conversation or all scope.
 
 Base path: `~/.grok` (env override: `GROK_HOME`).
 
-`observed_version`: `grok 1.0.25` (observed 2026-09-11).
+`observed_version`: `grok 1.0.70` (observed 2026-10-25).
 
 Grok stores data under `~/.grok/sessions/` using URL-encoded project
 paths as directory keys (e.g. `%2Fhome%2Fd%2Fwork%2Fpython%2Fproj`).
@@ -153,6 +153,21 @@ absent.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 1.0.70
+
+Seen in 1.0.70 (2026-10-25); absent in 1.0.25 (2026-09-11).
+
+- Subagent `meta.json` files add `attempt_id`. Search reads none of it.
+- `memory-v2/` appears beside `memory/`, with a generated `MEMORY.md` index,
+  `topics/`, `archive/`, and `observations/_inbox/` notes in `global/` and in
+  one directory per workspace. It is catalogued as {storage:storeref}`grok.memory_v2`
+  and not searched: {storage:storeref}`grok.memory` reads `memory/` only.
+- Four more paths appear, catalogued since as {storage:storeref}`grok.dashboard_db`,
+  {storage:storeref}`grok.background_tasks`, {storage:storeref}`grok.pager_config`, and
+  {storage:storeref}`grok.settings_cache`.
+- `prior_turn_interrupt` is missing from the user-record sample, but six
+  session files on disk still carry it, so this is sample turnover.
 
 ### 1.0.25
 

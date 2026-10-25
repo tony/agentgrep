@@ -9,7 +9,7 @@ but unsupported.
 
 Base path: `~/.codeium/windsurf` (Codeium's Windsurf "Cascade" agent).
 
-`observed_version`: Windsurf Cascade (observed 2026-06-21).
+`observed_version`: Windsurf Cascade (observed 2026-08-08).
 
 ```{warning}
 Windsurf is **documented but unsupported**. Its per-session Cascade
@@ -55,3 +55,26 @@ documented by location only.
 (user-authored global rules — the Windsurf analogue of `CLAUDE.md`). They are
 readable Markdown, but documented by location only because Windsurf as a whole
 is unsupported.
+
+## Changes by version
+
+Each entry brackets a change between the observation that first saw it and
+the last one that did not; see {ref}`storage-observations`.
+
+### Observed 2026-10-25
+
+The observer reads no version for Windsurf, so this entry is bracketed by
+date: seen 2026-10-25, absent 2026-08-08. The WSL remote-server builds report
+Windsurf 2.3.15 (`.windsurf-server`) and 3.2.23 (`.devin-server`). No store
+changed: the newest file in the catalogued `cascade/`, `implicit/`, `brain/`,
+and `memories/` directories is dated 2026-02-19, before either build was
+installed, so no build is stamped.
+
+- The Windows install directory now holds Devin Desktop, whose `product.json`
+  reports Windsurf 3.2.23 and the data folder `.devin`. That folder holds an
+  `argv.json` and nothing else, and its Electron data directory holds browser
+  caches and web storage, with no conversation store found. A `.devin-migration-failed-Devin` marker
+  sits beside it. agentgrep has no Devin backend, so nothing there is
+  searched.
+- The manifest is rewritten at the same unversioned name, so it lists each
+  unclaimed directory once instead of the names inside it.

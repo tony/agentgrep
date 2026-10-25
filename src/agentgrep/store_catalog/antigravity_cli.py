@@ -11,7 +11,7 @@ from agentgrep.stores import (
     StoreRole,
 )
 
-_ANTIGRAVITY_CLI_OBSERVED_VERSION = "agy v1.2.1"
+_ANTIGRAVITY_CLI_OBSERVED_VERSION = "agy v1.4.7"
 """App version the antigravity-cli rows below were verified against.
 
 The observation date lives in ``observed_at`` alone. Repeating it here
@@ -315,6 +315,52 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
             "tool. Tool schemas, not conversation content."
         ),
         distinguishes_from=("antigravity-cli.mcp_config",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.annotations",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.gemini/antigravity-cli/annotations/<conversation_uuid>.pbtxt",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "One text-proto file per conversation, holding a single `title` string: the "
+            "conversation's name. agentgrep does not read these, so every agy conversation "
+            "result carries the same fixed title."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.jetbox_summaries",
+        role=StoreRole.CACHE,
+        format=StoreFormat.PROTOBUF,
+        path_pattern="${HOME}/.gemini/antigravity-cli/jetbox_summaries_proto.pb",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "An undecoded protobuf blob, tens of kilobytes here, that agy keeps beside its "
+            "conversations. agentgrep has not decoded it."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="antigravity-cli",
+        store_id="antigravity-cli.plugin_data",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${HOME}/.gemini/antigravity-cli/plugin_data/<plugin>/",
+        observed_version=_ANTIGRAVITY_CLI_OBSERVED_VERSION,
+        observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
+        schema_notes=(
+            "A directory per installed plugin for the plugin's own state. Every one was empty when "
+            "observed."
+        ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),

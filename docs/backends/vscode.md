@@ -13,7 +13,7 @@ Base path: `~/.config/Code/User` on Linux
 `%APPDATA%/Code/User` on Windows). Env overrides: `VSCODE_APPDATA`,
 `AGENTGREP_WSL_USERS_ROOT`.
 
-`observed_version`: `VS Code 1.137.0` (observed 2026-09-11).
+`observed_version`: `VS Code 1.143.0` (observed 2026-10-25).
 
 Unlike Windsurf's encrypted conversation blobs, the transcripts are plain text
 agentgrep can read directly. Editions are covered side by side: stable `Code`,
@@ -92,6 +92,10 @@ for the discovery and remote-URI mapping design.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 1.143.0
+
+Observed 2026-10-25: no store changes since 1.137.0 (2026-09-11).
 
 ### 1.137.0
 

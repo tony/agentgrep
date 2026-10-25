@@ -10,7 +10,7 @@ route this backend.
 
 Base path: `~/.pi/agent` (env override: `PI_CODING_AGENT_DIR`).
 
-`observed_version`: `pi v0.85.1` (observed 2026-09-11).
+`observed_version`: `pi v1.4.0` (observed 2026-10-25).
 
 pi (the earendil-works "Pi Agent Harness") groups transcripts by
 working directory. The directory key is the cwd with its leading slash
@@ -121,6 +121,16 @@ credentials and is documented but never enumerated from disk.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 1.4.0
+
+Seen in 1.4.0 (2026-10-25); absent in 0.85.1 (2026-09-11).
+
+- The session store did not change shape across the move from 0.85.1 to a
+  1.x release.
+- Three extension-state paths appear in the agent directory, catalogued since
+  as {storage:storeref}`pi.mcp_adapter`, {storage:storeref}`pi.mcp_onboarding`, and
+  {storage:storeref}`pi.subagents_state`.
 
 ### 0.85.1
 

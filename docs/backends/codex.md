@@ -14,7 +14,7 @@ Base path: `~/.codex` (env override: `CODEX_HOME`).
 SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
 `config.toml`, then `CODEX_HOME`.
 
-`observed_version`: `codex-cli 0.154.0` (observed 2026-09-11).
+`observed_version`: `codex-cli 0.164.0` (observed 2026-10-25).
 
 ## Stores
 
@@ -84,6 +84,14 @@ and skips the other variants, among them `compacted`, `event_msg`, and
 
 Upstream type: [`codex-rs/protocol/src/protocol.rs:2929`](https://github.com/openai/codex/blob/3fb81667/codex-rs/protocol/src/protocol.rs#L2929).
 
+With its `local_thread_store_compression` feature on (under development and
+off by default), Codex compresses each rollout last written seven or more days
+ago in place to `rollout-*.jsonl.zst`: the same lines in one zstd frame. They
+are catalogued as {storage:storeref}`codex.sessions_zst`, and agentgrep
+discovers `*.jsonl` only, so a compressed thread is not searched. When
+observed on 2026-10-25 with the feature on, 9,420 files were compressed and 170
+were plain.
+
 Older installs can also have root-level
 `sessions/rollout-YYYY-MM-DD-*.json` files. Those are JSON objects
 with `session` metadata and an `items` array carrying message-like
@@ -95,7 +103,8 @@ the same primary chat store through `codex.sessions_legacy_json.v1`.
 {storage:storeref}`codex.session_index` is an append-only index with `id`,
 `thread_name`, and `updated_at`. It is useful for inventory and session
 selection, but the full transcript remains `sessions/YYYY/MM/DD/rollout-*.jsonl`
-or the legacy root `sessions/rollout-*.json` shape.
+(or its compressed `.jsonl.zst` form) or the legacy root
+`sessions/rollout-*.json` shape.
 
 ### SQLite Stores
 
@@ -191,6 +200,28 @@ filter.
 
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
+
+### 0.164.0
+
+Seen in 0.164.0 (2026-10-25); absent in 0.154.0 (2026-09-11).
+
+- Rollouts last written seven or more days ago are stored as
+  `rollout-*.jsonl.zst`: the same lines in one zstd frame. Codex does this
+  only with its `local_thread_store_compression` feature on, which is under
+  development and off by default and shipped in 0.137.0, before the first
+  observation here, so this entry records when compressed rollouts were first
+  recorded on the observed machine, not when Codex added them. The plain
+  rollouts the observer counts fell from 6,256 in 0.147.0 to 2,782 in 0.154.0
+  to 397 in 0.164.0, so compressed rollouts were already present at the
+  0.154.0 observation, which did not record them. When observed, 9,420 files
+  were compressed and 170 were plain. They are catalogued as
+  {storage:storeref}`codex.sessions_zst`; agentgrep discovers `*.jsonl` only,
+  so every compressed thread is not searched.
+- `response_item` payloads add `metadata`. Search reads none.
+- Eight paths appear, catalogued since as {storage:storeref}`codex.hook_trust`,
+  {storage:storeref}`codex.app_server_control`, {storage:storeref}`codex.app_server_daemon`,
+  {storage:storeref}`codex.packages`, {storage:storeref}`codex.backups`, {storage:storeref}`codex.mention_usage`,
+  {storage:storeref}`codex.tui_luna_reserve`, and {storage:storeref}`codex.worktrees`.
 
 ### 0.154.0
 
