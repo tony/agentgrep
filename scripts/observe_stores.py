@@ -59,6 +59,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -122,6 +123,14 @@ otherwise dominate the list.
 
 _VERSION_RE = re.compile(r"\d+\.\d+[.\w-]*")
 
+WINDOWS_MOUNT = pathlib.Path("/mnt")
+"""Where WSL mounts the Windows drives.
+
+A probe command that resolves under it is a Windows launcher, and is read
+rather than run: VS Code's ``code`` routes through Remote-WSL, which downloads
+a server into the home directory before it looks at ``--version``.
+"""
+
 
 @dataclasses.dataclass(frozen=True)
 class AgentProbe:
@@ -134,7 +143,8 @@ class AgentProbe:
     command : tuple[str, ...]
         Argv used to read the installed version. Read-only by contract: only
         ``--version``-style invocations belong here, never a subcommand that
-        can mutate agent state.
+        can mutate agent state. A command under :data:`WINDOWS_MOUNT` is never
+        run; the version is read from the ``product.json`` beside it.
     homes : tuple[str, ...]
         ``${HOME}``-relative directories that hold the agent's data, walked
         when reconciling unclaimed paths.
@@ -229,6 +239,39 @@ def _tokenize_path(path: pathlib.Path | str) -> str:
     return text.replace(os.sep, "/")
 
 
+def _launcher_product_version(executable: pathlib.Path) -> str:
+    """Read the version an Electron install records beside its launcher.
+
+    The launcher lives in ``<install>/bin/``; the install keeps its
+    ``product.json`` under ``resources/app/``, inside a per-commit folder in
+    current builds.
+
+    Parameters
+    ----------
+    executable : pathlib.Path
+        Resolved path of the launcher.
+
+    Returns
+    -------
+    str
+        The ``version`` of the most recently modified ``product.json``, or
+        ``""`` when none is readable.
+    """
+    install = executable.parent.parent
+    products = [*install.glob("*/resources/app/product.json")]
+    products += install.glob("resources/app/product.json")
+    candidates = sorted(products, key=_mtime, reverse=True)
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            continue
+        value = payload.get("version") if isinstance(payload, dict) else None
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 def _read_installed_version(probe: AgentProbe) -> tuple[str, str]:
     """Read an agent's installed version without mutating its state.
 
@@ -247,7 +290,12 @@ def _read_installed_version(probe: AgentProbe) -> tuple[str, str]:
         ``(version, source)`` where source is ``cli``, ``version_file``, or
         ``unknown``.
     """
-    if probe.command:
+    executable = shutil.which(probe.command[0]) if probe.command else None
+    if executable is not None and pathlib.Path(executable).is_relative_to(WINDOWS_MOUNT):
+        version = _launcher_product_version(pathlib.Path(executable))
+        if version:
+            return version, "version_file"
+    elif probe.command:
         try:
             completed = subprocess.run(
                 probe.command,

@@ -243,6 +243,28 @@ def test_version_file_glob_reads_the_newest_match(
     assert script._read_installed_version(probe) == ("2.0.0", "version_file")
 
 
+def test_windows_launcher_is_read_not_run(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under WSL, ``code --version`` downloads a server into the home before reading its flags."""
+    install = tmp_path / "mnt" / "c" / "VS Code"
+    launcher = install / "bin" / "code"
+    launcher.parent.mkdir(parents=True)
+    ran = tmp_path / "launcher-ran"
+    launcher.write_text(f"#!/bin/sh\ntouch {ran}\necho 9.9.9\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    product = install / "abc1234567" / "resources" / "app" / "product.json"
+    product.parent.mkdir(parents=True)
+    product.write_text(json.dumps({"version": "1.143.0"}), encoding="utf-8")
+    monkeypatch.setenv("PATH", str(launcher.parent))
+    script = _load_observer()
+    monkeypatch.setattr(script, "WINDOWS_MOUNT", tmp_path / "mnt", raising=False)
+    probe = script.AgentProbe("vscode", ("code", "--version"))
+    assert script._read_installed_version(probe) == ("1.143.0", "version_file")
+    assert not ran.exists()
+
+
 def test_catalogue_rows_share_their_agent_observation_date() -> None:
     """A row with its own ``observed_at`` claims a check its module never made.
 
