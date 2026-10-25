@@ -66,6 +66,14 @@ injected context. Search read them as turns, so it returned every message
 twice along with text the user never typed. They are now skipped. See
 {ref}`backend-claude` for details.
 
+#### Claude Code transcript results carry their dates (#177)
+
+Results from Claude Code session and subagent transcripts carried no
+timestamp, so they sorted after every dated result and a date filter such as
+`timestamp:>2026-01-01` left all of them out. Each now carries the time of the
+message it came from, and a message sent more than once in a session appears
+once per send. See {ref}`backend-claude` for details.
+
 ### Documentation
 
 #### Backend pages record the newest client versions (#172)
