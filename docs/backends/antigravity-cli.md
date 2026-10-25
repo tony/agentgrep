@@ -59,6 +59,14 @@ the brain Markdown glob cannot. agentgrep discovers the untruncated
 `transcript_full.jsonl` (skipping the `transcript.jsonl` sibling) and exposes
 it as an inspectable store.
 
+Records from both stores take the conversation's title from
+{storage:storeref}`antigravity-cli.annotations`, the one-line text proto
+`annotations/<conversation_uuid>.pbtxt` that holds the `title` agy generates.
+A conversation agy never titled has no such file: its database records keep
+the fixed title `Antigravity CLI conversation`, and its transcript records
+carry none. A title is searchable text, so a term in it matches every record
+of that conversation.
+
 ### Skills
 
 {storage:storeref}`antigravity-cli.skills` covers
@@ -123,7 +131,8 @@ Seen in 1.4.7 (2026-10-25); absent in 1.2.1 (2026-09-11).
   {storage:storeref}`antigravity-cli.annotations`, which holds one text-proto file per
   conversation with a single `title`; {storage:storeref}`antigravity-cli.jetbox_summaries`,
   an undecoded protobuf; and {storage:storeref}`antigravity-cli.plugin_data`, a directory
-  per plugin that was empty when observed. agentgrep reads none of them.
+  per plugin that was empty when observed. agentgrep reads only the
+  annotation titles, as the title of each conversation's records.
 
 ### 1.2.1
 

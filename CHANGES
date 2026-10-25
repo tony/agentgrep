@@ -64,6 +64,14 @@ search. Every Markdown note there, from the generated index to topic notes and
 archived observations, is now read, and `--scope all` reaches it as it does the
 older tree. See {ref}`backend-grok` for details.
 
+#### Antigravity CLI results carry their conversation's title (#179)
+
+Antigravity CLI results take the title agy generates for their conversation,
+where every result used to carry the same fixed title. A term from a
+conversation's title now matches every record of that conversation. agy titles
+only some conversations; the others keep the fixed title. See
+{ref}`backend-antigravity-cli` for details.
+
 ### Fixes
 
 #### Claude Code search skips request snapshots (#172)
