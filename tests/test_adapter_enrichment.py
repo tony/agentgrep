@@ -292,3 +292,35 @@ def test_claude_session_records_take_the_transcript_title(
     records = list(parse_claude_project_file(source))
     assert records
     assert {record.title for record in records} == {expected_title}
+
+
+def test_claude_session_records_take_their_event_timestamp(tmp_path: pathlib.Path) -> None:
+    """A transcript record is dated by the event around its message.
+
+    Claude Code stamps the outer event; the nested ``message`` that carries the
+    role has no timestamp of its own.
+    """
+    transcript = (
+        tmp_path / "projects" / "-work-example" / "00000000-0000-0000-0000-000000000000.jsonl"
+    )
+    transcript.parent.mkdir(parents=True)
+    body = fixture_path("claude.projects.session", "example.jsonl").read_text(encoding="utf-8")
+    transcript.write_text(body, encoding="utf-8")
+    event_timestamps = {
+        event["timestamp"]
+        for event in map(json.loads, body.splitlines())
+        if event.get("type") in {"user", "assistant"}
+    }
+    source = SourceHandle(
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path=transcript,
+        path_kind="session_file",
+        source_kind="jsonl",
+        search_root=None,
+        mtime_ns=0,
+    )
+    records = list(parse_claude_project_file(source))
+    assert records
+    assert {record.timestamp for record in records} <= event_timestamps

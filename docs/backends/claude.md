@@ -78,6 +78,9 @@ text.
  "message": {"role": "user", "content": [{"type": "text", "text": "..."}]}}
 ```
 
+Each record takes the `timestamp` of the event around its message; the
+nested `message` carries none.
+
 A session's records take their title from the transcript's own title
 records: the last `custom-title` (the name given with `/rename`), else the
 last `ai-title` Claude Code generated. agentgrep looks for them only in the

@@ -16,6 +16,7 @@ from agentgrep.adapters._common import (
 )
 from agentgrep.adapters._extract import (
     build_search_record,
+    extract_timestamp,
     iter_message_candidates,
 )
 from agentgrep.adapters._generic import (
@@ -81,6 +82,12 @@ def parse_claude_project_file(
         for candidate in iter_message_candidates(
             event,
             fallback_conversation_id=conversation_id,
+            # Claude Code stamps the outer event, not the nested message.
+            fallback_timestamp=(
+                extract_timestamp(t.cast("dict[str, object]", event))
+                if isinstance(event, dict)
+                else None
+            ),
         ):
             key = (
                 candidate.role,
