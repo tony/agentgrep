@@ -61,6 +61,15 @@ directory. A project directory named after its encoded path is listed as
 `<encoded_project>`, so a manifest no longer carries the username of the
 machine that recorded it.
 
+#### A project skill runs the storage sweep (#170)
+
+`/refresh-backends` walks a contributor through the recurring storage sweep:
+check each installed agent client against the store catalogue, record a
+manifest per client version, catalogue new stores, tie each storage change to
+the version that first showed it, and prove search still works and is no
+slower. It commits in the order earlier sweeps used and leaves `CHANGES` alone
+unless asked.
+
 ## agentgrep 0.1.0a53 (2026-10-24)
 
 agentgrep 0.1.0a53 runs on Python 3.15, where every command in 0.1.0a52
