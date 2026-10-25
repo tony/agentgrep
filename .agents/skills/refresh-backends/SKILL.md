@@ -85,16 +85,17 @@ Commit in this order, skipping a kind with nothing in it. Subjects stay at
    $ uv run scripts/observe_stores.py check --agent <id>
    ```
 
-   `cursor-ide`, `antigravity-ide`, and `windsurf` have no version probe, so
-   their manifests stay `unknown.toml` and `check` never reports an upgrade.
-   Read the newest `~/.<ide>-server/bin/<commit>/product.json` by hand
-   (`version` for Cursor and Antigravity, `windsurfVersion` for Windsurf)
-   and compare it with the stamp.
+   `windsurf` has no version probe, so `check` never reports its upgrades.
+   Read `windsurfVersion` from the newest
+   `~/.windsurf-server/bin/<commit>/product.json`, and decide whether that
+   build wrote its catalogued data before stamping it. The first `check`
+   after the IDE probes landed reports each IDE once as drift from its
+   `unknown.toml`.
 
 3. **Observe** each in-scope agent whose version changed or that `check`
    reports drifting. A new version writes a new manifest; drift at the same
    version rewrites that version's file. A refusal to write `unknown.toml`
-   over a versioned manifest means the CLI's `--version` failed: report it,
+   over a versioned manifest means the version probe failed: report it,
    never work around it.
 
    ```console
@@ -154,14 +155,9 @@ Commit in this order, skipping a kind with nothing in it. Subjects stay at
 
    An agent that is not installed, or whose version you could not read,
    keeps its version and date: move its `_OBSERVED_AT` out of the dated
-   block with a comment saying why, as Windsurf's is. A row with its own
-   `observed_at=` date instead of the module constant is stale: this lists
-   such rows and prints nothing when there are none. Re-verify each on disk
-   and point it at the constant.
-
-   ```console
-   $ grep -n 'observed_at=' src/agentgrep/store_catalog/*.py | grep -v '_OBSERVED_AT'
-   ```
+   block with a comment saying why, as Windsurf's is. When the gate fails on
+   a row that keeps its own `observed_at`, re-verify that row on disk before
+   pointing it at the module constant.
 
 6. **Version the change** under `## Changes by version` on the agent's page,
    adding that section, with the opening paragraph other pages use, where it
