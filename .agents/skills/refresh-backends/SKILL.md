@@ -127,6 +127,10 @@ Commit in this order, skipping a kind with nothing in it. Subjects stay at
      reads: update the descriptor and adapter, add a redacted fixture under
      `tests/samples/<agent>/<store_id>/`, and show the new test failing
      before it passes.
+   - `source_count <old> -> <new>` on a store agentgrep reads means its
+     files moved, were renamed, or were recompressed, and search lost them.
+     Make discovery and the adapter follow them, or, when that needs a
+     design, list it first under what was left undone.
    - New readable conversation store: give it the `primary_chat` or
      `supplementary_chat` role, never `prompt_history`, so default search
      does not open it.
@@ -205,7 +209,8 @@ Commit in this order, skipping a kind with nothing in it. Subjects stay at
    Before the last commit, `check` exits 0 for every in-scope agent; a
    client that updated mid-sweep gets commit 7.
 
-9. **Measure** after the last commit, with every configured bench; the
+9. **Measure** after the last commit, with every configured bench and its
+   configured runs and warmup, which each bench's timeout is sized for; the
    `benchmark` skill covers flags and `analyze`. Default `search` must not
    slow beyond run-to-run noise; explain any remaining delta with
    `scripts/profile_engine.py` evidence. A fix goes back through step 8.
