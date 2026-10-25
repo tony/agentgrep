@@ -243,6 +243,20 @@ def test_version_file_glob_reads_the_newest_match(
     assert script._read_installed_version(probe) == ("2.0.0", "version_file")
 
 
+def test_antigravity_ide_reads_its_own_version(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Antigravity's ``version`` is the VS Code release it forks; its own is ``ideVersion``."""
+    product = tmp_path / ".antigravity-server" / "bin" / "abc" / "product.json"
+    product.parent.mkdir(parents=True)
+    product.write_text(json.dumps({"version": "1.104.0", "ideVersion": "1.13.3"}), encoding="utf-8")
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    script = _load_observer()
+    (probe,) = (probe for probe in script.AGENT_PROBES if probe.agent == "antigravity-ide")
+    assert script._read_installed_version(probe) == ("1.13.3", "version_file")
+
+
 def test_windows_launcher_is_read_not_run(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

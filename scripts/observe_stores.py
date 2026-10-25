@@ -185,6 +185,8 @@ AGENT_PROBES: tuple[AgentProbe, ...] = (
         (),
         (".gemini/antigravity",),
         version_file=".antigravity-server/bin/*/product.json",
+        # ``version`` there is the VS Code release Antigravity forks.
+        version_key="ideVersion",
     ),
     AgentProbe(
         "grok",
