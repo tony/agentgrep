@@ -495,22 +495,37 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         store_id="grok.memory_v2",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.MARKDOWN_FRONTMATTER,
-        path_pattern=(
-            "${GROK_HOME or ${HOME}/.grok}/memory-v2/{global,workspaces/<workspace>}/MEMORY.md"
-        ),
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/memory-v2/**/*.md",
         env_overrides=("GROK_HOME",),
         observed_version=_GROK_OBSERVED_VERSION,
         observed_at=_GROK_OBSERVED_AT,
         schema_notes=(
-            "The second-generation memory tree, beside `memory/`. Each of `global/` and "
-            "`workspaces/<workspace>/` holds a generated `MEMORY.md` index, `topics/`, `archive/`, "
+            "The second-generation memory tree, beside `memory/`, which Grok Build no longer "
+            "writes. Each of `global/` and `workspaces/<workspace>/` holds a generated "
+            "`MEMORY.md` index, `topics/`, `archive/`, "
             "`observations/_inbox/<session>__t<turn>-<turn>__n<index>.md` notes, and the SQLite "
-            "files `index.sqlite` and `memory_state.sqlite`. `grok.memory` reads the older tree "
-            "only, so these notes are not searched."
+            "files `index.sqlite` and `memory_state.sqlite`. Inbox and archived notes open with "
+            "YAML front matter (`schema_version: 2`, `type`, `topic_hint`, `session_id`, and "
+            "others). agentgrep reads every Markdown note as one text record; the SQLite files "
+            "are not read."
+        ),
+        sample_record=(
+            '---\nschema_version: 2\nprompt_version: "memory-v2-capture-1"\ntype: project\n'
+            "topic_hint: <topic>\nsession_id: <uuid>\n---\n# <title>\n<redacted>"
         ),
         distinguishes_from=("grok.memory",),
-        coverage=StoreCoverage.CATALOG_ONLY,
+        coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="grok.memory_v2",
+                adapter_id="grok.memory_text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("memory-v2",),
+                glob="**/*.md",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="grok",
