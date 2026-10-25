@@ -93,6 +93,10 @@ for the discovery and remote-URI mapping design.
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
 
+### 1.143.0
+
+Observed 2026-10-25: no store changes since 1.137.0 (2026-09-11).
+
 ### 1.137.0
 
 Observed 2026-09-11: no store changes since 1.132.0 (2026-08-08).

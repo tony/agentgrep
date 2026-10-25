@@ -115,6 +115,10 @@ be absent from `opencode.db` entirely.
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
 
+### 1.19.4
+
+Observed 2026-10-25: no store changes since 1.18.30 (2026-09-11).
+
 ### 1.18.30
 
 Observed 2026-09-11: no store changes since 1.18.15 (2026-08-08).

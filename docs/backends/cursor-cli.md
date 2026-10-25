@@ -119,6 +119,15 @@ reported as a slug.
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
 
+### 2026.10.22-27dcf5f
+
+Seen in 2026.10.22-27dcf5f (2026-10-25); absent in 2026.09.10-fd3934a
+(2026-09-11).
+
+- The role-less `turn_ended` records in transcripts and subagent transcripts
+  gain an `error` key beside `status`. They carry no message text, so none
+  becomes a result.
+
 ### 2026.09.10-fd3934a
 
 Seen in 2026.09.10-fd3934a (2026-09-11); absent in 2026.08.04-aaa8809

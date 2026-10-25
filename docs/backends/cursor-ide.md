@@ -102,6 +102,19 @@ from Linux. `AGENTGREP_WSL_USERS_ROOT` overrides the mount root (default
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
 
+### Observed 2026-10-25
+
+The observer now reads a version for the WSL remote-server build, 3.26.13
+(3.17.8 on 2026-09-11), so this entry is bracketed by date: seen 2026-10-25,
+absent 2026-09-11. The Windows install directory still has no `product.json`,
+so the desktop app's own version is unread.
+
+- No store changed shape: the global and workspace `state.vscdb` tables and
+  columns match the last observation.
+- The remote server keeps a `.<commit>.log` and a `.<commit>.token` file per
+  build beside `bin/`. They are catalogued since as {storage:storeref}`cursor-ide.server_log`
+  and {storage:storeref}`cursor-ide.server_token`; the token is private.
+
 ### Observed 2026-09-11
 
 The observer reads no version for the desktop app, so this entry is bracketed

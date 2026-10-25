@@ -68,6 +68,12 @@ catalogued separately as inspectable plan text.
 Each entry brackets a change between the observation that first saw it and
 the last one that did not; see {ref}`storage-observations`.
 
+### Observed 2026-10-25
+
+No store changes since 2026-09-11. The observer now reads a version for
+the WSL remote-server build, Antigravity 1.13.3, from its `ideVersion`. That
+build is dated 2025-12-19, so the 2026-09-11 observation walked it too.
+
 ### Observed 2026-09-11
 
 No store changes since 2026-08-08. The observer reads no version for the
