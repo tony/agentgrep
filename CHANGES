@@ -42,6 +42,41 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### More agent stores are catalogued (#172)
+
+{tooliconl}`find` reports stores it did not see before: Claude Code's hooks,
+policy limits, remote settings and runtime, plugin caches, and MCP discovery
+verdicts; Codex's hook trust, app-server files, packages, install backups,
+mention usage, thread reserves, worktrees, and compressed rollouts; Grok's
+dashboard, background tasks, second-generation memory notes, pager, and
+settings cache; Pi's MCP adapter, onboarding, and subagent state; Antigravity
+CLI's conversation titles, summaries, and plugin data; and Cursor IDE's
+remote-server logs, with its server tokens marked private. None of these
+stores is searched. See {ref}`storage-catalog` for details.
+
+### Fixes
+
+#### Claude Code search skips request snapshots (#172)
+
+Claude Code 2.1.310 writes `api-request-blob` records beside a session's
+turns, each a copy of a message sent to the model with the system prompt and
+injected context. Search read them as turns, so it returned every message
+twice along with text the user never typed. They are now skipped. See
+{ref}`backend-claude` for details.
+
+### Documentation
+
+#### Backend pages record the newest client versions (#172)
+
+Each backend page's "Changes by version" section gains an entry for the
+client versions installed at the latest observation. The Codex page says that
+rollouts compressed by Codex's opt-in `local_thread_store_compression`
+feature are not searched, and the Antigravity IDE page takes its version from
+`ideVersion`, which names Antigravity's own release rather than the VS Code
+release it forks.
+
 ### Development
 
 #### The storage observer reads IDE versions and reports lost sources (#171)
