@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import importlib.util
 import pathlib
 import sys
@@ -9,6 +10,7 @@ import typing as t
 
 import pytest
 
+from agentgrep.store_catalog import CATALOG
 from docs._ext.storages._observations import (
     MANIFEST_VERSION,
     AgentObservation,
@@ -177,3 +179,15 @@ def test_unclaimed_listing_stops_at_an_unclaimed_directory(
     entries = script._unclaimed_entries(probe, ["${HOME}/.agent/sessions.json"])
     reported = {entry["path_pattern"] for entry in entries}
     assert (f"${{HOME}}/{path}" in reported) is listed
+
+
+def test_catalogue_rows_share_their_agent_observation_date() -> None:
+    """A row with its own ``observed_at`` claims a check its module never made.
+
+    Restamping moves one constant per agent; a row that pins a literal date
+    keeps it, and then claims the module's version on a day it was not checked.
+    """
+    dates: dict[str, set[object]] = collections.defaultdict(set)
+    for store in CATALOG.stores:
+        dates[str(store.agent)].add(store.observed_at)
+    assert {agent: found for agent, found in dates.items() if len(found) > 1} == {}
