@@ -36,11 +36,20 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a54 (Yet to be released)
+## agentgrep 0.1.0a55 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a54 (2026-10-25)
+
+agentgrep 0.1.0a54 reads more of what agents store. Claude Code transcript
+results carry their dates, so newest-first ordering and date filters include
+them, and search no longer returns the copies of sent messages that Claude Code
+2.1.310 writes beside each turn. Grok's current memory notes are searchable
+with `--scope all`, Antigravity CLI results carry their conversation's title,
+and stores across six agents are newly catalogued for inventory.
 
 ### What's new
 
