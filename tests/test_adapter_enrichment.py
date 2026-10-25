@@ -16,11 +16,16 @@ import typing as t
 
 import pytest
 
+from agentgrep.adapters.antigravity_cli import (
+    parse_antigravity_cli_conversation_db,
+    parse_antigravity_cli_transcript,
+)
 from agentgrep.adapters.claude import parse_claude_project_file
 from agentgrep.adapters.cursor_ide import parse_cursor_state_db
 from agentgrep.adapters.grok import parse_grok_subagents
 from agentgrep.origin import origin_cwd_hash
 from agentgrep.records import SourceHandle
+from agentgrep.stores import SourceKind
 
 from .conftest import fixture_path
 
@@ -324,3 +329,98 @@ def test_claude_session_records_take_their_event_timestamp(tmp_path: pathlib.Pat
     records = list(parse_claude_project_file(source))
     assert records
     assert {record.timestamp for record in records} <= event_timestamps
+
+
+class AntigravityTitleCase(t.NamedTuple):
+    """One conversation's annotation file and the titles its records take."""
+
+    test_id: str
+    annotation: bytes | None
+    conversation_title: str
+    transcript_title: str | None
+
+
+ANTIGRAVITY_TITLE_CASES: tuple[AntigravityTitleCase, ...] = (
+    AntigravityTitleCase(
+        "annotated",
+        rb'title:"Fix the \"parser\" bug \303\251"',
+        'Fix the "parser" bug \u00e9',
+        'Fix the "parser" bug \u00e9',
+    ),
+    AntigravityTitleCase("unannotated", None, "Antigravity CLI conversation", None),
+)
+
+
+@pytest.mark.parametrize(
+    list(AntigravityTitleCase._fields),
+    ANTIGRAVITY_TITLE_CASES,
+    ids=[case.test_id for case in ANTIGRAVITY_TITLE_CASES],
+)
+def test_antigravity_cli_records_take_the_conversation_title(
+    tmp_path: pathlib.Path,
+    test_id: str,
+    annotation: bytes | None,
+    conversation_title: str,
+    transcript_title: str | None,
+) -> None:
+    """Records of a titled conversation carry the title from its annotation file."""
+    home = tmp_path / "antigravity-cli"
+    conversation_id = "00000000-0000-0000-0000-000000000001"
+    if annotation is not None:
+        (home / "annotations").mkdir(parents=True)
+        (home / "annotations" / f"{conversation_id}.pbtxt").write_bytes(annotation)
+    database = home / "conversations" / f"{conversation_id}.db"
+    database.parent.mkdir(parents=True)
+    step_text = b"Summarize the parser module for review"
+    with contextlib.closing(sqlite3.connect(database)) as connection:
+        connection.execute("CREATE TABLE steps (idx INTEGER, step_payload BLOB, step_format TEXT)")
+        connection.execute(
+            "INSERT INTO steps VALUES (0, ?, 'proto')",
+            (b"\x0a" + bytes([len(step_text)]) + step_text,),
+        )
+        connection.commit()
+    transcript = (
+        home / "brain" / conversation_id / ".system_generated" / "logs" / "transcript_full.jsonl"
+    )
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(
+        json.dumps({"type": "USER_INPUT", "content": "Summarize the parser module"}) + "\n",
+        encoding="utf-8",
+    )
+
+    def source(store: str, adapter_id: str, path: pathlib.Path, kind: SourceKind) -> SourceHandle:
+        return SourceHandle(
+            agent="antigravity-cli",
+            store=store,
+            adapter_id=adapter_id,
+            path=path,
+            path_kind="session_file",
+            source_kind=kind,
+            search_root=None,
+            mtime_ns=0,
+        )
+
+    conversation = list(
+        parse_antigravity_cli_conversation_db(
+            source(
+                "antigravity-cli.conversations",
+                "antigravity_cli.conversations_sqlite_protobuf.v1",
+                database,
+                "sqlite",
+            )
+        )
+    )
+    transcript_records = list(
+        parse_antigravity_cli_transcript(
+            source(
+                "antigravity-cli.transcript",
+                "antigravity_cli.transcript_jsonl.v1",
+                transcript,
+                "jsonl",
+            )
+        )
+    )
+    assert conversation
+    assert transcript_records
+    assert {record.title for record in conversation} == {conversation_title}
+    assert {record.title for record in transcript_records} == {transcript_title}

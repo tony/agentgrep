@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import pathlib
+import re
 import sqlite3
 import typing as t
 
@@ -96,6 +98,53 @@ them has ``steps`` and nothing else, and must still yield its records.
 """
 
 
+_ANTIGRAVITY_CONVERSATION_TITLE = "Antigravity CLI conversation"
+"""Title of a conversation-database record whose conversation has no annotation."""
+
+
+_ANTIGRAVITY_TITLE_RE = re.compile(rb'^\s*title:\s*"((?:[^"\\]|\\.)*)"', re.MULTILINE | re.DOTALL)
+"""The ``title`` string of an ``annotations/<conversation_uuid>.pbtxt`` text proto."""
+
+
+_TEXTPROTO_ESCAPE_RE = re.compile(rb"\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|.)", re.DOTALL)
+_TEXTPROTO_SIMPLE_ESCAPES = {
+    b"n": b"\n",
+    b"t": b"\t",
+    b"r": b"\r",
+    b"a": b"\a",
+    b"b": b"\b",
+    b"f": b"\f",
+    b"v": b"\v",
+}
+
+
+def _unescape_textproto(match: re.Match[bytes]) -> bytes:
+    """Decode one text-proto escape; UTF-8 bytes arrive as octal escapes."""
+    token = match.group(1)
+    if token[:1] == b"x":
+        return bytes([int(token[1:], 16)])
+    if token[:1] in b"01234567":
+        return bytes([int(token, 8) & 0xFF])
+    return _TEXTPROTO_SIMPLE_ESCAPES.get(token, token)
+
+
+def _antigravity_conversation_title(home: pathlib.Path, conversation_id: str) -> str | None:
+    """Return the title ``agy`` generated for a conversation, if it wrote one.
+
+    ``annotations/<conversation_uuid>.pbtxt`` holds one text-proto line,
+    ``title:"..."``; a conversation ``agy`` never titled has no file.
+    """
+    try:
+        data = (home / "annotations" / f"{conversation_id}.pbtxt").read_bytes()
+    except OSError:
+        return None
+    match = _ANTIGRAVITY_TITLE_RE.search(data)
+    if match is None:
+        return None
+    raw = _TEXTPROTO_ESCAPE_RE.sub(_unescape_textproto, match.group(1))
+    return raw.decode("utf-8", errors="replace").strip() or None
+
+
 _ANTIGRAVITY_MODEL_PREFIX = "gemini-"
 """Prefix the ``model_enum`` values carry (``gemini-pro-agent``).
 
@@ -158,6 +207,10 @@ def parse_antigravity_cli_conversation_db(
     """
     session_id = source.path.stem
     timestamp = isoformat_from_mtime_ns(source.mtime_ns)
+    title = (
+        _antigravity_conversation_title(source.path.parent.parent, session_id)
+        or _ANTIGRAVITY_CONVERSATION_TITLE
+    )
     connection = open_readonly_sqlite(source.path)
     try:
         if "steps" not in sqlite_table_names(connection):
@@ -186,7 +239,7 @@ def parse_antigravity_cli_conversation_db(
                     adapter_id=source.adapter_id,
                     path=source.path,
                     text=normalized,
-                    title="Antigravity CLI conversation",
+                    title=title,
                     role=None,
                     timestamp=timestamp,
                     model=model,
@@ -216,6 +269,12 @@ def parse_antigravity_cli_transcript(
     """
     parents = source.path.parents
     conversation_id = parents[2].name if len(parents) > 2 else None
+    # brain/<conversation_uuid>/.system_generated/logs/transcript_full.jsonl
+    title = (
+        _antigravity_conversation_title(parents[4], conversation_id)
+        if conversation_id is not None and len(parents) > 4
+        else None
+    )
     for event in _iter_jsonl(source.path):
         if not isinstance(event, dict):
             continue
@@ -235,6 +294,7 @@ def parse_antigravity_cli_transcript(
             adapter_id=source.adapter_id,
             path=source.path,
             text=content,
+            title=title,
             role="user" if is_user else "assistant",
             timestamp=as_optional_str(mapping.get("created_at")),
             session_id=conversation_id,
