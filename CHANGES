@@ -42,6 +42,25 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Development
+
+#### The storage observer reads IDE versions and reports lost sources (#171)
+
+`scripts/observe_stores.py` reads the Cursor IDE and Antigravity IDE versions
+from their WSL remote-server builds, so `check` reports an IDE upgrade instead
+of comparing against an unversioned manifest. `check` also reports paths that
+appear outside the catalogue or leave it, and a store whose source count falls
+below half of the last observation, which is how a client that moves or
+recompresses its files shows up. See {ref}`storage-observations` for details.
+
+#### Observing stays read-only and anonymous (#171)
+
+Under WSL, the VS Code version is read from the Windows install instead of by
+running its launcher, which downloaded a VS Code Server into the home
+directory. A project directory named after its encoded path is listed as
+`<encoded_project>`, so a manifest no longer carries the username of the
+machine that recorded it.
+
 ## agentgrep 0.1.0a53 (2026-10-24)
 
 agentgrep 0.1.0a53 runs on Python 3.15, where every command in 0.1.0a52

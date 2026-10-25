@@ -59,6 +59,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -122,6 +123,14 @@ otherwise dominate the list.
 
 _VERSION_RE = re.compile(r"\d+\.\d+[.\w-]*")
 
+WINDOWS_MOUNT = pathlib.Path("/mnt")
+"""Where WSL mounts the Windows drives.
+
+A probe command that resolves under it is a Windows launcher, and is read
+rather than run: VS Code's ``code`` routes through Remote-WSL, which downloads
+a server into the home directory before it looks at ``--version``.
+"""
+
 
 @dataclasses.dataclass(frozen=True)
 class AgentProbe:
@@ -134,13 +143,16 @@ class AgentProbe:
     command : tuple[str, ...]
         Argv used to read the installed version. Read-only by contract: only
         ``--version``-style invocations belong here, never a subcommand that
-        can mutate agent state.
+        can mutate agent state. A command under :data:`WINDOWS_MOUNT` is never
+        run; the version is read from the ``product.json`` beside it.
     homes : tuple[str, ...]
         ``${HOME}``-relative directories that hold the agent's data, walked
         when reconciling unclaimed paths.
     version_file : str
         ``${HOME}``-relative JSON file carrying a version, used when the CLI
-        is absent. ``""`` when the agent ships none.
+        is absent. A glob picks the most recently modified match, since an
+        IDE's remote server keeps one build directory per commit. ``""`` when
+        the agent ships none.
     version_key : str
         Top-level key read from ``version_file``.
     """
@@ -156,14 +168,26 @@ AGENT_PROBES: tuple[AgentProbe, ...] = (
     AgentProbe("claude", ("claude", "--version"), (".claude",)),
     AgentProbe("codex", ("codex", "--version"), (".codex",)),
     AgentProbe("cursor-cli", ("cursor-agent", "--version"), (".cursor", ".config/cursor")),
-    AgentProbe("cursor-ide", (), (".cursor-server",)),
+    AgentProbe(
+        "cursor-ide",
+        (),
+        (".cursor-server",),
+        version_file=".cursor-server/bin/*/product.json",
+    ),
     AgentProbe("gemini", ("gemini", "--version"), (".gemini",)),
     AgentProbe(
         "antigravity-cli",
         ("agy", "--version"),
         (".gemini/antigravity-cli", ".gemini/config"),
     ),
-    AgentProbe("antigravity-ide", (), (".gemini/antigravity",)),
+    AgentProbe(
+        "antigravity-ide",
+        (),
+        (".gemini/antigravity",),
+        version_file=".antigravity-server/bin/*/product.json",
+        # ``version`` there is the VS Code release Antigravity forks.
+        version_key="ideVersion",
+    ),
     AgentProbe(
         "grok",
         ("grok", "--version"),
@@ -217,6 +241,39 @@ def _tokenize_path(path: pathlib.Path | str) -> str:
     return text.replace(os.sep, "/")
 
 
+def _launcher_product_version(executable: pathlib.Path) -> str:
+    """Read the version an Electron install records beside its launcher.
+
+    The launcher lives in ``<install>/bin/``; the install keeps its
+    ``product.json`` under ``resources/app/``, inside a per-commit folder in
+    current builds.
+
+    Parameters
+    ----------
+    executable : pathlib.Path
+        Resolved path of the launcher.
+
+    Returns
+    -------
+    str
+        The ``version`` of the most recently modified ``product.json``, or
+        ``""`` when none is readable.
+    """
+    install = executable.parent.parent
+    products = [*install.glob("*/resources/app/product.json")]
+    products += install.glob("resources/app/product.json")
+    candidates = sorted(products, key=_mtime, reverse=True)
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            continue
+        value = payload.get("version") if isinstance(payload, dict) else None
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 def _read_installed_version(probe: AgentProbe) -> tuple[str, str]:
     """Read an agent's installed version without mutating its state.
 
@@ -235,7 +292,12 @@ def _read_installed_version(probe: AgentProbe) -> tuple[str, str]:
         ``(version, source)`` where source is ``cli``, ``version_file``, or
         ``unknown``.
     """
-    if probe.command:
+    executable = shutil.which(probe.command[0]) if probe.command else None
+    if executable is not None and pathlib.Path(executable).is_relative_to(WINDOWS_MOUNT):
+        version = _launcher_product_version(pathlib.Path(executable))
+        if version:
+            return version, "version_file"
+    elif probe.command:
         try:
             completed = subprocess.run(
                 probe.command,
@@ -252,8 +314,9 @@ def _read_installed_version(probe: AgentProbe) -> tuple[str, str]:
                 return match.group(0), "cli"
 
     if probe.version_file:
-        candidate = pathlib.Path.home() / probe.version_file
-        if candidate.is_file():
+        matches = sorted(pathlib.Path.home().glob(probe.version_file), key=_mtime)
+        candidate = matches[-1] if matches else None
+        if candidate is not None and candidate.is_file():
             try:
                 payload = json.loads(candidate.read_text(encoding="utf-8"))
             except OSError, ValueError:
@@ -495,6 +558,25 @@ def _claimed_prefixes(agent: str) -> list[str]:
     ]
 
 
+def _encoded_home_re() -> re.Pattern[str]:
+    """Match a directory name that encodes a path under the home directory.
+
+    Agents name per-project directories after the project's absolute path:
+    ``-home-user-work-repo`` for Claude Code, ``home-user-work-repo`` and
+    ``%2Fhome%2Fuser%2Fwork%2Frepo`` for Grok. Such a name carries the
+    username even after :func:`_tokenize_path` has replaced the home prefix.
+
+    Returns
+    -------
+    re.Pattern[str]
+        Pattern matching the dashed and URL-encoded forms of the home path.
+    """
+    home = str(pathlib.Path.home()).strip("/")
+    dashed = re.escape(home.replace("/", "-"))
+    url = re.escape("%2F" + home.replace("/", "%2F"))
+    return re.compile(rf"(?:^|-){dashed}(?:-|$)|{url}(?:%2F|$)", re.IGNORECASE)
+
+
 def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, object]]:
     """List paths under an agent home that no descriptor pattern mentions.
 
@@ -506,7 +588,8 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
     An unclaimed directory is listed once and never descended into. The names
     inside it — session ids, plugin names, telemetry files — identify
     instances on this machine rather than further gaps, and a committed
-    manifest must not carry them.
+    manifest must not carry them. For the same reason a directory named after
+    an encoded project path is listed as ``<encoded_project>``.
 
     Parameters
     ----------
@@ -539,6 +622,7 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
         and any(prefix.startswith(f"{root}/") and prefix.rstrip("/") != root for root in roots)
     ]
 
+    encoded_home = _encoded_home_re()
     entries: list[dict[str, object]] = []
     for home in probe.homes:
         root = pathlib.Path.home() / home
@@ -561,6 +645,8 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
                 is_dir = candidate.is_dir()
                 if is_dir:
                     unclaimed_dirs.append(candidate)
+                if encoded_home.search(leaf):
+                    token = f"{token.rsplit('/', 1)[0]}/<encoded_project>"
                 entries.append({"path_pattern": token, "kind": "dir" if is_dir else "file"})
     seen: set[str] = set()
     unique: list[dict[str, object]] = []
@@ -928,6 +1014,9 @@ def diff_manifest(previous: dict[str, object], current: dict[str, object]) -> li
         new_count = int(t.cast("int", new.get("source_count", 0)))
         if (old_count == 0) != (new_count == 0):
             lines.append(f"{store_id}: source_count {old_count} -> {new_count}")
+        elif new_count * 2 < old_count:
+            # Files that move or are recompressed leave search with no schema change.
+            lines.append(f"{store_id}: source_count {old_count} -> {new_count}, under half")
         old_key = old.get("discriminator")
         new_key = new.get("discriminator")
         if old_key != new_key:
@@ -941,6 +1030,18 @@ def diff_manifest(previous: dict[str, object], current: dict[str, object]) -> li
                 lines.append(f"{store_id}[{value}]: keys removed {gone}")
             if added:
                 lines.append(f"{store_id}[{value}]: keys added {added}")
+
+    # A client can add or drop a directory without a version bump, and only
+    # the unclaimed list records it.
+    old_unclaimed, new_unclaimed = (
+        {
+            str(entry["path_pattern"])
+            for entry in t.cast("list[dict[str, object]]", m.get("unclaimed", []))
+        }
+        for m in (previous, current)
+    )
+    lines.extend(f"{path}: newly unclaimed" for path in sorted(new_unclaimed - old_unclaimed))
+    lines.extend(f"{path}: no longer unclaimed" for path in sorted(old_unclaimed - new_unclaimed))
     return lines
 
 
