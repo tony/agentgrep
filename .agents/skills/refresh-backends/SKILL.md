@@ -34,14 +34,33 @@ means `--agent all`. "In scope" below means these agents.
 - Never hand-edit a manifest, and never rewrite or delete one for a version
   that is no longer installed. One that already leaks a path is the user's
   call to scrub: report it.
-- Never push, tag, or open a PR.
+- Never push, tag, or open a PR. No backup branches.
 - If the user asked for `CHANGES`, its entries land last, in their own
   `docs(CHANGES) <description>` commit under the existing unreleased
   heading, with no version lead paragraph. Otherwise leave `CHANGES` alone
   and list the entries it needs in the report.
-- Commit atomically in the repo's style: `docs(backends): Observe <Agent>
-  <version>` for manifests and restamps, `agentgrep(feat[catalog]): ...` for
-  new rows. No backup branches.
+
+## Commits
+
+Commit in this order, skipping a kind with nothing in it. Subjects stay at
+50 characters or fewer, and bodies take the `why:`/`what:` form from
+`.github/WRITING.md`.
+
+1. `agentgrep(fix[observe]): ...` when the observer itself misbehaves,
+   with a test in `tests/test_storage_observations.py`.
+2. `agentgrep(chore[catalog]): Refresh observed stamps`: every new
+   manifest, restamp, and version line. The body names each agent and
+   version recorded, and says earlier manifests stay untouched.
+3. `agentgrep(feat[catalog]): Catalogue <n> new stores`: new rows, the
+   `catalog_version` bump, and the touched agents re-observed at their
+   unchanged versions.
+4. `agentgrep(feat[<agent>]): ...` or `agentgrep(fix[<agent>]): ...`:
+   adapter changes with their fixture and test.
+5. `docs(backends): Correct claims the sweep disproved`.
+6. `docs(backends): Record storage changes by version`.
+7. `docs(backends): Observe <Agent> <version>` for a client that updates
+   mid-sweep: its manifest, restamp, version lines, and entry in one commit.
+8. `docs(CHANGES) <description>`, when the user asked for it.
 
 ## Steps
 
@@ -100,7 +119,9 @@ means `--agent all`. "In scope" below means these agents.
      observer samples each store's newest 40 files, so keys drift in and out
      of the sample without a schema change.
    - Version changed, shape didn't: restamp only.
-   - New unclaimed path: add a `catalog_only` or `private` row.
+   - New unclaimed path: add a `catalog_only` row, or `private` when it
+     holds credentials or keys. A new home directory for the agent also goes
+     in its `AgentProbe.homes` in `scripts/observe_stores.py`.
    - Changed discriminator, keys, tables, or columns in a store agentgrep
      reads: update the descriptor and adapter, add a redacted fixture under
      `tests/samples/<agent>/<store_id>/`, and show the new test failing
@@ -110,31 +131,48 @@ means `--agent all`. "In scope" below means these agents.
      does not open it.
    - A file newer than its newest record is an empty draft session, not a
      parse failure.
+   - Re-read the agent's backend page and each touched row's
+     `schema_notes`, and correct any claim the observation disproves.
 
    Any descriptor add, removal, or reshape follows "Adding or updating a
-   store" in `docs/dev/storage-catalog.md` and bumps `catalog_version` in the
-   same commit. Re-observe afterwards. If the unclaimed list now names the
-   children of a directory, the new row claims that directory by name
-   without covering its children: put a `<placeholder>` or glob at that
-   level of its pattern.
+   store" in `docs/dev/storage-catalog.md`, including its `upstream_ref`
+   (pinned to an upstream commit, `github.com/<org>/<repo>@<sha>/...`) or
+   `sample_record`. Bump `catalog_version` and re-observe the agent in that
+   same commit. If the unclaimed list now names the children of a directory,
+   the new row claims that directory by name without covering its children:
+   put a `<placeholder>` or glob at that level of its pattern.
 
-5. **Restamp** to the new version:
+5. **Restamp** only what you re-read:
 
    - `_<AGENT>_OBSERVED_VERSION`, keeping its prefix (`claude-code v...`).
-   - `_<AGENT>_OBSERVED_AT` and `_CATALOG_CAPTURED_AT` in
+   - `_<AGENT>_OBSERVED_AT`, `_CATALOG_CAPTURED_AT`, and the date in the
+     comment above the dated block, in
      `src/agentgrep/store_catalog/_common.py`.
    - The `observed_version` line wherever `docs/backends/<agent>.md` and
      `docs/dev/storage-catalog.md` carry one. Windsurf's page is
      `docs/backends/unsupported/windsurf.md`.
+
+   An agent that is not installed, or whose version you could not read,
+   keeps its version and date: move its `_OBSERVED_AT` out of the dated
+   block with a comment saying why, as Windsurf's is. A row with its own
+   `observed_at=` date instead of the module constant is stale: this lists
+   such rows and prints nothing when there are none. Re-verify each on disk
+   and point it at the constant.
+
+   ```console
+   $ grep -n 'observed_at=' src/agentgrep/store_catalog/*.py | grep -v '_OBSERVED_AT'
+   ```
 
 6. **Version the change** under `## Changes by version` on the agent's page,
    adding that section, with the opening paragraph other pages use, where it
    is missing. Each `### <new>` entry opens "Seen in <new> (YYYY-MM-DD);
    absent in <old> (YYYY-MM-DD)." Versions between two observations were
    never seen, so a change landed after `<old>` and by `<new>`; never name an
-   exact version. With no readable version, bracket by observation date. A
-   version with no storage change still gets an entry saying so. A store
-   agentgrep does not read is "not searched", never "excluded".
+   exact version. With no readable version, the entry is `### Observed
+   YYYY-MM-DD`, bracketed "seen <date>, absent <date>", naming any build
+   version you could read. A version with no storage change still gets an
+   entry saying so. A store agentgrep does not read is "not searched", never
+   "excluded".
 
 7. **Prove search** for every touched agent id except `windsurf`, which has
    no search surface; check it through its docs page. Pick `<term>` from a
@@ -168,7 +206,8 @@ means `--agent all`. "In scope" below means these agents.
    $ git diff --cached | grep -nE "^\+.*(/home/|/mnt/|/Users/|home-$USER-|%2F(home|Users)%2F)"
    ```
 
-   Before the last commit, `check` exits 0 for every in-scope agent.
+   Before the last commit, `check` exits 0 for every in-scope agent; a
+   client that updated mid-sweep gets commit 7.
 
 9. **Measure** after the last commit, with every configured bench; the
    `benchmark` skill covers flags and `analyze`. Default `search` must not
@@ -186,6 +225,6 @@ End with exactly these parts:
 - A table: agent | old → new version | what changed | searchable (record
   count) | perf delta.
 - Each store left documented but unread, with the reason.
-- `CHANGES` entries the user-visible changes need, unless step 8 committed
+- `CHANGES` entries the user-visible changes need, unless commit 8 landed
   them.
 - Anything left undone, with the reason.
