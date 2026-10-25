@@ -296,6 +296,46 @@ def test_check_reports_unclaimed_path_changes() -> None:
     ]
 
 
+class SourceDropCase(t.NamedTuple):
+    """A store's source count at two observations and whether ``check`` reports it."""
+
+    test_id: str
+    previous: int
+    current: int
+    reported: bool
+
+
+SOURCE_DROP_CASES: tuple[SourceDropCase, ...] = (
+    SourceDropCase("most-sources-gone", 2782, 400, reported=True),
+    SourceDropCase("old-sessions-pruned", 3470, 3373, reported=False),
+)
+
+
+@pytest.mark.parametrize(
+    list(SourceDropCase._fields),
+    SOURCE_DROP_CASES,
+    ids=[case.test_id for case in SOURCE_DROP_CASES],
+)
+def test_check_reports_a_store_that_lost_most_of_its_sources(
+    test_id: str,
+    previous: int,
+    current: int,
+    reported: bool,
+) -> None:
+    """Files that move or are recompressed drop out of search with no schema change.
+
+    Codex began compressing older rollouts to ``.jsonl.zst``, which discovery
+    does not glob, and only the source count showed it.
+    """
+    script = _load_observer()
+
+    def manifest(count: int) -> dict[str, object]:
+        return {"store": [{"id": "agent.sessions", "source_count": count}]}
+
+    lines = script.diff_manifest(manifest(previous), manifest(current))
+    assert any(line.startswith("agent.sessions: source_count") for line in lines) is reported
+
+
 def test_catalogue_rows_share_their_agent_observation_date() -> None:
     """A row with its own ``observed_at`` claims a check its module never made.
 

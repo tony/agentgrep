@@ -1014,6 +1014,9 @@ def diff_manifest(previous: dict[str, object], current: dict[str, object]) -> li
         new_count = int(t.cast("int", new.get("source_count", 0)))
         if (old_count == 0) != (new_count == 0):
             lines.append(f"{store_id}: source_count {old_count} -> {new_count}")
+        elif new_count * 2 < old_count:
+            # Files that move or are recompressed leave search with no schema change.
+            lines.append(f"{store_id}: source_count {old_count} -> {new_count}, under half")
         old_key = old.get("discriminator")
         new_key = new.get("discriminator")
         if old_key != new_key:
