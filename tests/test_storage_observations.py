@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import collections
 import importlib.util
+import json
+import os
 import pathlib
 import sys
 import typing as t
@@ -179,6 +181,22 @@ def test_unclaimed_listing_stops_at_an_unclaimed_directory(
     entries = script._unclaimed_entries(probe, ["${HOME}/.agent/sessions.json"])
     reported = {entry["path_pattern"] for entry in entries}
     assert (f"${{HOME}}/{path}" in reported) is listed
+
+
+def test_version_file_glob_reads_the_newest_match(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An IDE keeps one remote-server build per commit; the newest one is installed."""
+    for build, version, mtime in (("aaa", "2.0.0", 2_000_000_000), ("bbb", "1.0.0", 1_000_000_000)):
+        product = tmp_path / ".ide-server" / "bin" / build / "product.json"
+        product.parent.mkdir(parents=True)
+        product.write_text(json.dumps({"version": version}), encoding="utf-8")
+        os.utime(product, (mtime, mtime))
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    script = _load_observer()
+    probe = script.AgentProbe("ide", version_file=".ide-server/bin/*/product.json")
+    assert script._read_installed_version(probe) == ("2.0.0", "version_file")
 
 
 def test_catalogue_rows_share_their_agent_observation_date() -> None:

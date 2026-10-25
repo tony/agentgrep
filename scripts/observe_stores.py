@@ -140,7 +140,9 @@ class AgentProbe:
         when reconciling unclaimed paths.
     version_file : str
         ``${HOME}``-relative JSON file carrying a version, used when the CLI
-        is absent. ``""`` when the agent ships none.
+        is absent. A glob picks the most recently modified match, since an
+        IDE's remote server keeps one build directory per commit. ``""`` when
+        the agent ships none.
     version_key : str
         Top-level key read from ``version_file``.
     """
@@ -156,14 +158,24 @@ AGENT_PROBES: tuple[AgentProbe, ...] = (
     AgentProbe("claude", ("claude", "--version"), (".claude",)),
     AgentProbe("codex", ("codex", "--version"), (".codex",)),
     AgentProbe("cursor-cli", ("cursor-agent", "--version"), (".cursor", ".config/cursor")),
-    AgentProbe("cursor-ide", (), (".cursor-server",)),
+    AgentProbe(
+        "cursor-ide",
+        (),
+        (".cursor-server",),
+        version_file=".cursor-server/bin/*/product.json",
+    ),
     AgentProbe("gemini", ("gemini", "--version"), (".gemini",)),
     AgentProbe(
         "antigravity-cli",
         ("agy", "--version"),
         (".gemini/antigravity-cli", ".gemini/config"),
     ),
-    AgentProbe("antigravity-ide", (), (".gemini/antigravity",)),
+    AgentProbe(
+        "antigravity-ide",
+        (),
+        (".gemini/antigravity",),
+        version_file=".antigravity-server/bin/*/product.json",
+    ),
     AgentProbe(
         "grok",
         ("grok", "--version"),
@@ -252,8 +264,9 @@ def _read_installed_version(probe: AgentProbe) -> tuple[str, str]:
                 return match.group(0), "cli"
 
     if probe.version_file:
-        candidate = pathlib.Path.home() / probe.version_file
-        if candidate.is_file():
+        matches = sorted(pathlib.Path.home().glob(probe.version_file), key=_mtime)
+        candidate = matches[-1] if matches else None
+        if candidate is not None and candidate.is_file():
             try:
                 payload = json.loads(candidate.read_text(encoding="utf-8"))
             except OSError, ValueError:
