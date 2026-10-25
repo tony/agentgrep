@@ -1220,4 +1220,156 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         coverage=StoreCoverage.PRIVATE,
         search_by_default=False,
     ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.hooks",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/hooks/<hook_script>",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "User-written hook scripts that the settings point at. Code, not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.policy_limits",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or "
+            "${HOME}/.claude}/{policy-limits.json,policy-limits.json.signature.json,policy-limits.json.stamp.json}"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Organisation policy synced from the server. `policy-limits.json` has "
+            "`compliance_taints`, `defaults`, `monitoring_notice`, and `restrictions`; the "
+            "`.signature.json` copy has `jws` and `receivedAt`; the `.stamp.json` copy has "
+            "`confirmed_at`, `hipaa_seen`, `identity`, `kind`, `sha`, and `v`. Not conversation "
+            "content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.remote_settings",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/"
+            "{remote-settings.json,remote-settings.json.synced-at}"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Remote settings synced from the server: `remote-settings.json`, an "
+            "object that was empty when observed, and `remote-settings.json.synced-at`, "
+            "a bare number for when it last synced. Not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.remote",
+        role=StoreRole.CACHE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/remote/<component>/",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Program and runtime files for remote sessions: `ccd-cli/` holds one "
+            "build per version, named `<version>-<hash>`; `run/` and `srv/` hold "
+            "runtime files named by hash; `plugins/` was empty when observed. "
+            "Not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.plugin_directory_cache",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/plugin-directory-cache-v2.json"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "The plugin directory fetched from the marketplace: `entryNameClaims`, `entryNames`, "
+            "`fetchedAt`, `listings`, and `schemaVersion`. Several megabytes, rebuilt on fetch, "
+            "and not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.plugins_synced",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or "
+            "${HOME}/.claude}/plugins/synced/<account_org>/{.marketplaces.json,.last-complete-round}"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Server-synced marketplace state, one directory per account and organisation pair (two "
+            "UUIDs joined by an underscore), each with a matching `.bucket-<account_org>` "
+            "directory. The names identify an account, so the observer lists the directory once. "
+            "Not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.mcp_discover_verdicts",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/state/mcp-discover-verdicts.json",
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "A map from an MCP server id to `{modernProtocolVersion, observedAt}`: what discovery "
+            "learned about each server. Not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.scratch_dirs",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern=(
+            "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/"
+            "{.cc-writes,bridge-spawn,dev-mods,seed-admin,ssh}/"
+        ),
+        env_overrides=("CLAUDE_CONFIG_DIR",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Five directories that appear as Claude Code runs and were empty when "
+            "observed: `.cc-writes`, `bridge-spawn`, `dev-mods`, `seed-admin`, "
+            "and `ssh`. Their names suggest the features that fill them, which "
+            "agentgrep has not seen in use."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
 )

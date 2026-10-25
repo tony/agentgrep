@@ -1,17 +1,9 @@
 manifest_version = 1
 unclaimed = [
-    { path_pattern = "${HOME}/.codex/.hook-trust", kind = "dir" },
     { path_pattern = "${HOME}/.codex/.sandbox_migration", kind = "file" },
     { path_pattern = "${HOME}/.codex/AGENTS.md", kind = "file" },
-    { path_pattern = "${HOME}/.codex/app-server-control", kind = "dir" },
-    { path_pattern = "${HOME}/.codex/app-server-daemon", kind = "dir" },
-    { path_pattern = "${HOME}/.codex/backups", kind = "dir" },
     { path_pattern = "${HOME}/.codex/mcp-oauth-locks", kind = "dir" },
-    { path_pattern = "${HOME}/.codex/mention_usage.json", kind = "file" },
-    { path_pattern = "${HOME}/.codex/packages", kind = "dir" },
     { path_pattern = "${HOME}/.codex/thread-writer-locks", kind = "dir" },
-    { path_pattern = "${HOME}/.codex/tui-luna-reserve", kind = "dir" },
-    { path_pattern = "${HOME}/.codex/worktrees", kind = "dir" },
 ]
 
 [agent]
@@ -22,7 +14,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-10-25
 platform = "linux"
-catalog_version = 40
+catalog_version = 41
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -52,12 +44,12 @@ path_pattern = "${CODEX_HOME or ${HOME}/.codex}/sessions/YYYY/MM/DD/rollout-YYYY
 role = "primary_chat"
 format = "jsonl"
 has_discovery = true
-source_count = 397
+source_count = 400
 discovers_as = [
     "codex.sessions",
 ]
 discriminator = "type"
-records_sampled = 13200
+records_sampled = 13052
 
 [store.record_keys]
 compacted = [
@@ -488,6 +480,78 @@ discovers_as = [
 id = "codex.tui_thread_capabilities"
 path_pattern = "${CODEX_HOME or ${HOME}/.codex}/tui-thread-reference-capabilities/<thread_id>"
 role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.sessions_zst"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl.zst"
+role = "primary_chat"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.hook_trust"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/.hook-trust/<hook_hash>"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.app_server_control"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/app-server-control/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.app_server_daemon"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/app-server-daemon/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.packages"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/packages/app-server-daemon/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.backups"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/backups/<run>/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.mention_usage"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/mention_usage.json"
+role = "app_state"
+format = "json_array"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.tui_luna_reserve"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/tui-luna-reserve/<thread_id>.json"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "codex.worktrees"
+path_pattern = "${CODEX_HOME or ${HOME}/.codex}/worktrees/<id>/<repo>/"
+role = "source_tree"
 format = "opaque"
 has_discovery = false
 source_count = 0

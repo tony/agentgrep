@@ -1156,4 +1156,163 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.sessions_zst",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.OPAQUE,
+        path_pattern=(
+            "${CODEX_HOME or ${HOME}/.codex}/sessions/YYYY/MM/DD/"
+            "rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl.zst"
+        ),
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        upstream_ref="github.com/openai/codex@6aaac694/codex-rs/rollout/src/compression.rs#L371",
+        schema_notes=(
+            "The `codex.sessions` rollout, compressed in place: the same "
+            "`RolloutItem` lines in one zstd frame, with the extension "
+            "`.jsonl.zst`. Codex writes it only while its "
+            "`local_thread_store_compression` feature is on (under development and "
+            "off by default since 0.137.0), for rollouts last written at least seven "
+            "days ago. With the feature on here, 9,420 files were compressed and 170 "
+            "still plain `.jsonl`, and the `codex.sessions` source count fell from "
+            "6,256 (0.147.0) to 2,782 (0.154.0) to 397 (0.164.0). agentgrep discovers "
+            "`*.jsonl` only, so these threads are not searched."
+        ),
+        distinguishes_from=("codex.sessions",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.hook_trust",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/.hook-trust/<hook_hash>",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "One file per trusted hook, named by its hash and holding a `sha256:` digest. Not "
+            "conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.app_server_control",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/app-server-control/",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "The app server's control socket and startup lock. Runtime state, not conversation "
+            "content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.app_server_daemon",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/app-server-daemon/",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Process files for the app-server daemon and its updater: pid files, lock files, a "
+            "socket, and `.stderr.log` files with `.previous` copies. Runtime state, not "
+            "conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.packages",
+        role=StoreRole.CACHE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/packages/app-server-daemon/",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Installed app-server releases, one `releases/<version>-<target triple>` directory "
+            "each, with `current`, `auto-update-version`, `selection-history`, and `install.lock`. "
+            "Program files, not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.backups",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/backups/<run>/",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "A directory per install or reinstall run, holding `config.toml` copies and JSON "
+            "reports of what the run saw. The config copies can carry MCP server `env` values. "
+            "Catalogued apart from `codex.config_backups`, which is the loose `config.toml.bak*` "
+            "files."
+        ),
+        distinguishes_from=("codex.config_backups",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.mention_usage",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_ARRAY,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/mention_usage.json",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes="A JSON array of strings. Usage state, not conversation content.",
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.tui_luna_reserve",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/tui-luna-reserve/<thread_id>.json",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "One small object per thread with `account_id`, `effort`, and `model`. `model` is a "
+            "slug, so a thread's model could be read here; agentgrep reads it from `turn_context` "
+            "instead."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.worktrees",
+        role=StoreRole.SOURCE_TREE,
+        format=StoreFormat.OPAQUE,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/worktrees/<id>/<repo>/",
+        env_overrides=("CODEX_HOME",),
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Git worktrees Codex creates for its threads: a short directory, then a full checkout "
+            "named after the repository. Source code, not history; over ten thousand files here."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
 )

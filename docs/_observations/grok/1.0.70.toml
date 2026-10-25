@@ -10,19 +10,14 @@ unclaimed = [
     { path_pattern = "${HOME}/.grok/bin", kind = "dir" },
     { path_pattern = "${HOME}/.grok/bundled", kind = "dir" },
     { path_pattern = "${HOME}/.grok/completions", kind = "dir" },
-    { path_pattern = "${HOME}/.grok/dashboard", kind = "dir" },
     { path_pattern = "${HOME}/.grok/docs", kind = "dir" },
     { path_pattern = "${HOME}/.grok/downloads", kind = "dir" },
     { path_pattern = "${HOME}/.grok/installed-plugins", kind = "dir" },
     { path_pattern = "${HOME}/.grok/last-copy.txt", kind = "file" },
-    { path_pattern = "${HOME}/.grok/long-running-background-tasks", kind = "dir" },
     { path_pattern = "${HOME}/.grok/marketplace-cache", kind = "dir" },
-    { path_pattern = "${HOME}/.grok/memory-v2", kind = "dir" },
     { path_pattern = "${HOME}/.grok/memtrace", kind = "dir" },
-    { path_pattern = "${HOME}/.grok/pager.toml", kind = "file" },
     { path_pattern = "${HOME}/.grok/projects", kind = "dir" },
     { path_pattern = "${HOME}/.grok/relocations", kind = "dir" },
-    { path_pattern = "${HOME}/.grok/settings_cache.json", kind = "file" },
     { path_pattern = "${HOME}/.grok/slash-mru.json", kind = "file" },
     { path_pattern = "${HOME}/.grok/tip_cursor.json", kind = "file" },
     { path_pattern = "${HOME}/.grok/trusted_folders.toml", kind = "file" },
@@ -40,7 +35,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-10-25
 platform = "linux"
-catalog_version = 40
+catalog_version = 41
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -315,6 +310,46 @@ source_count = 0
 id = "grok.campaigns_state"
 path_pattern = "${GROK_HOME or ${HOME}/.grok}/campaigns_state.json"
 role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.dashboard_db"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/dashboard/workspace.db"
+role = "app_state"
+format = "sqlite"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.background_tasks"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/long-running-background-tasks/<task>.{sh,trace}"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.memory_v2"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/memory-v2/{global,workspaces/<workspace>}/MEMORY.md"
+role = "persistent_memory"
+format = "md_frontmatter"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.pager_config"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/pager.toml"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "grok.settings_cache"
+path_pattern = "${GROK_HOME or ${HOME}/.grok}/settings_cache.json"
+role = "cache"
 format = "json_object"
 has_discovery = false
 source_count = 0

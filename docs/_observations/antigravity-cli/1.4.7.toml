@@ -1,17 +1,14 @@
 manifest_version = 1
 unclaimed = [
-    { path_pattern = "${HOME}/.gemini/antigravity-cli/annotations", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/bin", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/builtin", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/cli.log", kind = "file" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/conversation_summaries.db", kind = "file" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/crashes", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/installation_id", kind = "file" },
-    { path_pattern = "${HOME}/.gemini/antigravity-cli/jetbox_summaries_proto.pb", kind = "file" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/jetski_state.pbtxt", kind = "file" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/knowledge", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/last_check.timestamp", kind = "file" },
-    { path_pattern = "${HOME}/.gemini/antigravity-cli/plugin_data", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/presence", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/scratch", kind = "dir" },
     { path_pattern = "${HOME}/.gemini/antigravity-cli/settings.json", kind = "file" },
@@ -28,7 +25,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-10-25
 platform = "linux"
-catalog_version = 40
+catalog_version = 41
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -177,5 +174,29 @@ id = "antigravity-cli.mcp_tools"
 path_pattern = "${HOME}/.gemini/antigravity-cli/mcp/<server>/<tool>.json"
 role = "cache"
 format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-cli.annotations"
+path_pattern = "${HOME}/.gemini/antigravity-cli/annotations/<conversation_uuid>.pbtxt"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-cli.jetbox_summaries"
+path_pattern = "${HOME}/.gemini/antigravity-cli/jetbox_summaries_proto.pb"
+role = "cache"
+format = "protobuf"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "antigravity-cli.plugin_data"
+path_pattern = "${HOME}/.gemini/antigravity-cli/plugin_data/<plugin>/"
+role = "app_state"
+format = "opaque"
 has_discovery = false
 source_count = 0

@@ -456,4 +456,91 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
     ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.dashboard_db",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.SQLITE,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/dashboard/workspace.db",
+        env_overrides=("GROK_HOME",),
+        observed_version=_GROK_OBSERVED_VERSION,
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "SQLite database with `members` and `meta` tables, beside its `-wal` and `-shm` "
+            "sidecars. Dashboard state, not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.background_tasks",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/long-running-background-tasks/<task>.{sh,trace}"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version=_GROK_OBSERVED_VERSION,
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Shell scripts and `.trace` output files for background jobs the agent started. They "
+            "can quote commands and their output, so they stay unread."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.memory_v2",
+        role=StoreRole.PERSISTENT_MEMORY,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern=(
+            "${GROK_HOME or ${HOME}/.grok}/memory-v2/{global,workspaces/<workspace>}/MEMORY.md"
+        ),
+        env_overrides=("GROK_HOME",),
+        observed_version=_GROK_OBSERVED_VERSION,
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "The second-generation memory tree, beside `memory/`. Each of `global/` and "
+            "`workspaces/<workspace>/` holds a generated `MEMORY.md` index, `topics/`, `archive/`, "
+            "`observations/_inbox/<session>__t<turn>-<turn>__n<index>.md` notes, and the SQLite "
+            "files `index.sqlite` and `memory_state.sqlite`. `grok.memory` reads the older tree "
+            "only, so these notes are not searched."
+        ),
+        distinguishes_from=("grok.memory",),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.pager_config",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/pager.toml",
+        env_overrides=("GROK_HOME",),
+        observed_version=_GROK_OBSERVED_VERSION,
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "Pager preferences in a `[scrollback.scroll]` table. Not conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="grok",
+        store_id="grok.settings_cache",
+        role=StoreRole.CACHE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern="${GROK_HOME or ${HOME}/.grok}/settings_cache.json",
+        env_overrides=("GROK_HOME",),
+        observed_version=_GROK_OBSERVED_VERSION,
+        observed_at=_GROK_OBSERVED_AT,
+        schema_notes=(
+            "A signed copy of server-side settings: a `payload` string and its `signature`. Not "
+            "conversation content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
 )

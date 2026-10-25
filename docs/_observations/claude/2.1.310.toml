@@ -3,22 +3,12 @@ unclaimed = [
     { path_pattern = "${HOME}/.claude/.gitignore", kind = "file" },
     { path_pattern = "${HOME}/.claude/daemon.log", kind = "file" },
     { path_pattern = "${HOME}/.claude/gh-pr-status-cache.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/hooks", kind = "dir" },
-    { path_pattern = "${HOME}/.claude/policy-limits.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/policy-limits.json.signature.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/policy-limits.json.stamp.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/remote", kind = "dir" },
-    { path_pattern = "${HOME}/.claude/remote-settings.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/remote-settings.json.synced-at", kind = "file" },
     { path_pattern = "${HOME}/.claude/skills.pre-symlink.20260820045622", kind = "dir" },
     { path_pattern = "${HOME}/.claude/plugins/.last_inuse_sweep", kind = "file" },
     { path_pattern = "${HOME}/.claude/plugins/blocklist.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/plugins/installed_plugins.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/plugins/known_marketplaces.json", kind = "file" },
     { path_pattern = "${HOME}/.claude/plugins/plugin-catalog-cache.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/plugins/plugin-directory-cache-v2.json", kind = "file" },
-    { path_pattern = "${HOME}/.claude/plugins/synced", kind = "dir" },
-    { path_pattern = "${HOME}/.claude/state/mcp-discover-verdicts.json", kind = "file" },
 ]
 
 [agent]
@@ -29,7 +19,7 @@ version_source = "cli"
 [observation]
 observed_at = 2026-10-25
 platform = "linux"
-catalog_version = 40
+catalog_version = 41
 generator = "scripts/observe_stores.py"
 
 [[store]]
@@ -82,12 +72,12 @@ path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_projec
 role = "primary_chat"
 format = "jsonl"
 has_discovery = true
-source_count = 5680
+source_count = 5685
 discovers_as = [
     "claude.projects",
 ]
 discriminator = "type"
-records_sampled = 3500
+records_sampled = 3486
 
 [store.record_keys]
 agent-name = [
@@ -327,12 +317,12 @@ path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/projects/<encoded_projec
 role = "supplementary_chat"
 format = "jsonl"
 has_discovery = true
-source_count = 4473
+source_count = 4477
 discovers_as = [
     "claude.projects_subagents",
 ]
 discriminator = "type"
-records_sampled = 9112
+records_sampled = 8334
 
 [store.record_keys]
 api-request = [
@@ -832,6 +822,70 @@ source_count = 0
 [[store]]
 id = "claude.daemon"
 path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/daemon/"
+role = "app_state"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.hooks"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/hooks/<hook_script>"
+role = "app_state"
+format = "text"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.policy_limits"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{policy-limits.json,policy-limits.json.signature.json,policy-limits.json.stamp.json}"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.remote_settings"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{remote-settings.json,remote-settings.json.synced-at}"
+role = "app_state"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.remote"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/remote/<component>/"
+role = "cache"
+format = "opaque"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.plugin_directory_cache"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/plugin-directory-cache-v2.json"
+role = "cache"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.plugins_synced"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/plugins/synced/<account_org>/{.marketplaces.json,.last-complete-round}"
+role = "cache"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.mcp_discover_verdicts"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/state/mcp-discover-verdicts.json"
+role = "cache"
+format = "json_object"
+has_discovery = false
+source_count = 0
+
+[[store]]
+id = "claude.scratch_dirs"
+path_pattern = "${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/{.cc-writes,bridge-spawn,dev-mods,seed-admin,ssh}/"
 role = "app_state"
 format = "opaque"
 has_discovery = false

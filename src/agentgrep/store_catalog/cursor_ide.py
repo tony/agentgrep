@@ -183,4 +183,35 @@ _CURSOR_IDE_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=False,
         version_strategies=(VersionDetectionStrategy.SHAPE_INFERENCE,),
     ),
+    StoreDescriptor(
+        agent="cursor-ide",
+        store_id="cursor-ide.server_log",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor-server/.<commit>.log",
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
+        schema_notes=(
+            "The remote server's startup log for one build, named by the build's commit: the "
+            "address it bound and the extension host's port. Runtime state, not conversation "
+            "content."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="cursor-ide",
+        store_id="cursor-ide.server_token",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="${HOME}/.cursor-server/.<commit>.token",
+        observed_version=_CURSOR_IDE_OBSERVED_VERSION,
+        observed_at=_CURSOR_IDE_OBSERVED_AT,
+        schema_notes=(
+            "The connection token for one remote-server build, named by its commit. A credential, "
+            "so it is documented and never enumerated."
+        ),
+        coverage=StoreCoverage.PRIVATE,
+        search_by_default=False,
+    ),
 )
