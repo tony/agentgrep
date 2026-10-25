@@ -265,6 +265,23 @@ def test_windows_launcher_is_read_not_run(
     assert not ran.exists()
 
 
+def test_check_reports_unclaimed_path_changes() -> None:
+    """A client can add a directory without a version bump; ``check`` must still say so."""
+    script = _load_observer()
+    previous = {
+        "agent": {"app_version": "1.0.0"},
+        "unclaimed": [{"path_pattern": "${HOME}/.agent/old", "kind": "dir"}],
+    }
+    current = {
+        "agent": {"app_version": "1.0.0"},
+        "unclaimed": [{"path_pattern": "${HOME}/.agent/new", "kind": "dir"}],
+    }
+    assert script.diff_manifest(previous, current) == [
+        "${HOME}/.agent/new: newly unclaimed",
+        "${HOME}/.agent/old: no longer unclaimed",
+    ]
+
+
 def test_catalogue_rows_share_their_agent_observation_date() -> None:
     """A row with its own ``observed_at`` claims a check its module never made.
 

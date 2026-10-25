@@ -1025,6 +1025,18 @@ def diff_manifest(previous: dict[str, object], current: dict[str, object]) -> li
                 lines.append(f"{store_id}[{value}]: keys removed {gone}")
             if added:
                 lines.append(f"{store_id}[{value}]: keys added {added}")
+
+    # A client can add or drop a directory without a version bump, and only
+    # the unclaimed list records it.
+    old_unclaimed, new_unclaimed = (
+        {
+            str(entry["path_pattern"])
+            for entry in t.cast("list[dict[str, object]]", m.get("unclaimed", []))
+        }
+        for m in (previous, current)
+    )
+    lines.extend(f"{path}: newly unclaimed" for path in sorted(new_unclaimed - old_unclaimed))
+    lines.extend(f"{path}: no longer unclaimed" for path in sorted(old_unclaimed - new_unclaimed))
     return lines
 
 
