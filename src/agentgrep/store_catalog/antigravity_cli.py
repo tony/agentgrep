@@ -328,8 +328,9 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_ANTIGRAVITY_CLI_OBSERVED_AT,
         schema_notes=(
             "One text-proto file per conversation, holding a single `title` string: the "
-            "conversation's name. agentgrep does not read these, so every agy conversation "
-            "result carries the same fixed title."
+            "conversation's name, with C-style and octal UTF-8 escapes. agentgrep reads it as "
+            "the title of the conversation's database and transcript records; a conversation "
+            "without one keeps the fixed title."
         ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
