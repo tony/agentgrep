@@ -183,6 +183,50 @@ def test_unclaimed_listing_stops_at_an_unclaimed_directory(
     assert (f"${{HOME}}/{path}" in reported) is listed
 
 
+class EncodedHomeCase(t.NamedTuple):
+    """One way an agent encodes a project path under the home into a directory name."""
+
+    test_id: str
+    template: str
+
+
+ENCODED_HOME_CASES: tuple[EncodedHomeCase, ...] = (
+    EncodedHomeCase("dashed", "{dashed}-work-repo"),
+    EncodedHomeCase("leading-dash", "-{dashed}-work-repo"),
+    EncodedHomeCase("url-encoded", "{url}%2Fwork%2Frepo"),
+)
+
+
+@pytest.mark.parametrize(
+    list(EncodedHomeCase._fields),
+    ENCODED_HOME_CASES,
+    ids=[case.test_id for case in ENCODED_HOME_CASES],
+)
+def test_unclaimed_listing_hides_encoded_home_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    test_id: str,
+    template: str,
+) -> None:
+    """A project directory named after its encoded path must not name the user.
+
+    A row that mentions ``projects`` by name makes the walk descend into it, and
+    the project directories there encode the home path, username included.
+    """
+    name = template.format(
+        dashed=str(tmp_path).strip("/").replace("/", "-"),
+        url="%2F".join(str(tmp_path).split("/")),
+    )
+    (tmp_path / ".agent" / "projects" / name).mkdir(parents=True)
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    script = _load_observer()
+    probe = script.AgentProbe("agent", homes=(".agent",))
+    entries = script._unclaimed_entries(probe, ["${HOME}/.agent/projects/index.json"])
+    reported = {str(entry["path_pattern"]) for entry in entries}
+    assert "${HOME}/.agent/projects/<encoded_project>" in reported
+    assert not any(name in pattern for pattern in reported)
+
+
 def test_version_file_glob_reads_the_newest_match(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

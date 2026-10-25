@@ -508,6 +508,25 @@ def _claimed_prefixes(agent: str) -> list[str]:
     ]
 
 
+def _encoded_home_re() -> re.Pattern[str]:
+    """Match a directory name that encodes a path under the home directory.
+
+    Agents name per-project directories after the project's absolute path:
+    ``-home-user-work-repo`` for Claude Code, ``home-user-work-repo`` and
+    ``%2Fhome%2Fuser%2Fwork%2Frepo`` for Grok. Such a name carries the
+    username even after :func:`_tokenize_path` has replaced the home prefix.
+
+    Returns
+    -------
+    re.Pattern[str]
+        Pattern matching the dashed and URL-encoded forms of the home path.
+    """
+    home = str(pathlib.Path.home()).strip("/")
+    dashed = re.escape(home.replace("/", "-"))
+    url = re.escape("%2F" + home.replace("/", "%2F"))
+    return re.compile(rf"(?:^|-){dashed}(?:-|$)|{url}(?:%2F|$)", re.IGNORECASE)
+
+
 def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, object]]:
     """List paths under an agent home that no descriptor pattern mentions.
 
@@ -519,7 +538,8 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
     An unclaimed directory is listed once and never descended into. The names
     inside it — session ids, plugin names, telemetry files — identify
     instances on this machine rather than further gaps, and a committed
-    manifest must not carry them.
+    manifest must not carry them. For the same reason a directory named after
+    an encoded project path is listed as ``<encoded_project>``.
 
     Parameters
     ----------
@@ -552,6 +572,7 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
         and any(prefix.startswith(f"{root}/") and prefix.rstrip("/") != root for root in roots)
     ]
 
+    encoded_home = _encoded_home_re()
     entries: list[dict[str, object]] = []
     for home in probe.homes:
         root = pathlib.Path.home() / home
@@ -574,6 +595,8 @@ def _unclaimed_entries(probe: AgentProbe, claimed: list[str]) -> list[dict[str, 
                 is_dir = candidate.is_dir()
                 if is_dir:
                     unclaimed_dirs.append(candidate)
+                if encoded_home.search(leaf):
+                    token = f"{token.rsplit('/', 1)[0]}/<encoded_project>"
                 entries.append({"path_pattern": token, "kind": "dir" if is_dir else "file"})
     seen: set[str] = set()
     unique: list[dict[str, object]] = []
