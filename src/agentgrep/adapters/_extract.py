@@ -127,6 +127,7 @@ def iter_message_candidates(
     fallback_title: str | None = None,
     fallback_conversation_id: str | None = None,
     fallback_origin: RecordOrigin | None = None,
+    fallback_timestamp: str | None = None,
 ) -> cabc.Iterator[MessageCandidate]:
     """Recursively walk a JSON value and yield message candidates.
 
@@ -152,7 +153,7 @@ def iter_message_candidates(
                 role=role,
                 text=text,
                 title=extract_title(mapping) or fallback_title,
-                timestamp=extract_timestamp(mapping),
+                timestamp=extract_timestamp(mapping) or fallback_timestamp,
                 model=extract_model(mapping),
                 session_id=extract_session_id(mapping),
                 conversation_id=extract_conversation_id(mapping) or fallback_conversation_id,
@@ -164,6 +165,7 @@ def iter_message_candidates(
                 fallback_title=fallback_title,
                 fallback_conversation_id=fallback_conversation_id,
                 fallback_origin=origin,
+                fallback_timestamp=fallback_timestamp,
             )
     elif isinstance(value, list):
         for item in value:
@@ -172,6 +174,7 @@ def iter_message_candidates(
                 fallback_title=fallback_title,
                 fallback_conversation_id=fallback_conversation_id,
                 fallback_origin=fallback_origin,
+                fallback_timestamp=fallback_timestamp,
             )
 
 
