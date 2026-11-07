@@ -1,0 +1,3 @@
+{"version":3,"term":{"cols":170,"rows":10},"timestamp":1783888205,"idle_time_limit":1.0,"command":"agentgrep find codex -l && sleep 2","title":"agentgrep find","env":{"SHELL":"/bin/zsh"}}
+[0.327, "o", "codex\thistory_file\tcodex.history\tcodex.history_jsonl.v1\t~/.codex/history.jsonl\r\ncodex\tsession_file\tcodex.sessions\tcodex.sessions_jsonl.v1\t~/.codex/sessions/2026/07/10/rollout-2026-07-10T18-18-50-7d066a41-93de-64ca-a0ee-b37973ede930.jsonl\r\ncodex\tsession_file\tcodex.sessions\tcodex.sessions_jsonl.v1\t~/.codex/sessions/2026/07/11/rollout-2026-07-11T18-18-50-16d21e17-1108-6aab-e230-1ba80ea81435.jsonl\r\n"]
+[2.078, "x", "0"]

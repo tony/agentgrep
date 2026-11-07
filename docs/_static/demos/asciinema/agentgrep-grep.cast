@@ -1,0 +1,4 @@
+{"version":3,"term":{"cols":100,"rows":13},"timestamp":1783888205,"idle_time_limit":1.0,"command":"agentgrep grep -i timeout && sleep 2","title":"agentgrep grep","env":{"SHELL":"/bin/zsh"}}
+[0.344, "o", "\u001b[34mcursor-cli\u001b[0m  \u001b[34m2026-07-12T20:18:50.959430Z\u001b[0m  \u001b[38;5;177m~/.config/cursor/prompt_history.json\u001b[0m\r\nwhy is the \u001b[1;31mtimeout\u001b[0m not respected in the worker pool\r\n\r\n"]
+[0.000, "o", "\u001b[34mcodex\u001b[0m  \u001b[34m2026-07-12T17:18:50Z\u001b[0m  \u001b[38;5;177m~/.codex/history.jsonl\u001b[0m\r\nraise the request \u001b[1;31mtimeout\u001b[0m for the slow report endpoint\r\n\r\n"]
+[2.098, "x", "0"]
