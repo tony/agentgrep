@@ -137,9 +137,10 @@ WSL, none of this runs.
 The figures below come from one WSL host where `find` lists 382 Windows-side
 sources (most from a large Claude desktop install). "Before" is the main
 branch, which runs 0.1.0a54's code with updated dependencies, measured in the
-same session and harness run as "now". They answer three questions in turn: how many
-round trips a discovery pass makes on the mount, whether whole commands got
-slower, and how long an exhaustive search over the Windows side takes.
+same session and harness run as "now". They answer three questions in turn:
+how many round trips a discovery pass makes on the mount, whether whole
+commands got slower, and how long an exhaustive search over the Windows side
+takes.
 
 ### Operations on the mount
 
@@ -164,9 +165,9 @@ rows below show no slowdown from them.
 ### Wall-clock time
 
 The median of the whole command, with the range in brackets, from one
-harness run of 5 samples per row after 2 warm-ups. The mount-hidden rows ran with an empty directory
-bind-mounted over `/mnt/c`, standing in for a Linux machine. The host is
-shared, so differences under about 10% are noise:
+harness run of 5 samples per row after 2 warm-ups. The mount-hidden rows ran
+with an empty directory bind-mounted over `/mnt/c`, standing in for a Linux
+machine. The host is shared, so differences under about 10% are noise:
 
 | Command | Before | Now |
 | --- | --- | --- |
@@ -178,8 +179,9 @@ shared, so differences under about 10% are noise:
 `find` reads 3.7 times as many Windows sources in the same time: its medians
 differ by 0.04 s and its ranges overlap. No other row is slower. The two
 larger gaps (`search` with the mount, `find` without it) come from that single
-harness run on a busy machine, so they are not claimed as speedups. The {ref}`benchmark harness <benchmark>` reruns the
-comparison against the main branch:
+harness run on a busy machine, so they are not claimed as speedups. The
+{ref}`benchmark harness <benchmark>` reruns the comparison against the main
+branch:
 
 ```console
 $ uv run scripts/benchmark.py run \
@@ -190,12 +192,18 @@ $ uv run scripts/benchmark.py run \
 ### Exhaustive search
 
 An exhaustive search over the Windows-side Claude stores on the host above
-reads about 865 sources (276 MB, after skipping the copies of WSL-distro
-transcripts). Each figure is a single run on a shared machine:
+reads their transcripts after skipping the copies of WSL-distro transcripts
+(276 MB). Each figure is a single run on a shared machine:
 
-- The first run, while the Windows side read the files from disk, took about
-  100 s (at an earlier commit of this change, before ChatGPT title search).
-- A warm run of this version took about 19 s.
+| Run | Commit | Sources | Wall clock |
+| --- | --- | --- | --- |
+| First read, Windows side reading from disk | `eb20c18` (before ChatGPT title search) | 863 | about 100 s |
+| Warm, right after | `eb20c18` | 863 | about 35 s |
+| Warm | this version | 868 | about 19 s |
+
+The two warm runs are not comparable: they ran at different commits and
+under different machine load, so the drop from 35 s to 19 s is not claimed
+as a speedup.
 
 ### Cancelling or skipping the walk
 
@@ -217,7 +225,8 @@ results but still walks the mount.
 
 ## Python API
 
-{mod}`agentgrep.wsl` exposes the same lookups: {func}`~agentgrep.wsl.host_user_profiles`
+{mod}`agentgrep.wsl` exposes the same lookups:
+{func}`~agentgrep.wsl.host_user_profiles`
 lists the Windows profiles, and its path type is a {class}`pathlib.PosixPath`
 whose `str()` is the real path while `repr()` and `.display` hide the account
 name. {ref}`library-examples-wsl` has a runnable example.
