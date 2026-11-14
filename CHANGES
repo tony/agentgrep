@@ -84,6 +84,14 @@ their files. See {ref}`backend-chatgpt` for details.
 
 ### Fixes
 
+#### Encoded project folders no longer name the account (#185)
+
+Claude Code, Cursor, and Grok name project folders after the working
+directory, so paths in results carried the account name inside folder names
+such as `-home-<user>-work`. The home now prints as `~` in every encoded form
+(`-~-work`, `~%2Fwork`), and a Windows account as `%USERNAME%`; a printed path
+copied into a `path:` query or an MCP ref still resolves.
+
 #### `PrivatePath` names the real file on Python 3.14 (#185)
 
 On Python 3.14, {func}`os.fspath` of a `PrivatePath` returned its display form
