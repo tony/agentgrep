@@ -134,14 +134,20 @@ agent-mode ("Cowork") sessions. Cowork runs Claude Code once per session with
 its own home at `local-agent-mode-sessions/<account>/<org>/<session>/.claude`,
 so the files use the project transcript format above and are searched as
 `claude.projects`. The session's `audit.jsonl` and `.audit-key` sit outside
-that home and are never read, and the per-session `local_<uuid>.json` metadata,
-which carries account fields, is not indexed.
+that home and are never read.
+
+{storage:storeref}`claude.cowork.metadata` is the `local_<uuid>.json` file
+beside each Cowork session directory. It is opt-in (`--scope all`): the
+file's `initialMessage`, the first message the user typed, becomes a user
+prompt record, and its `title` a title record, both keyed by `cliSessionId`
+so they group with the session's transcript. The file's account fields and
+system prompt are never read.
 
 {storage:storeref}`claude.desktop_sessions` is the Code tab's session index,
 one `claude-code-sessions/<account>/<org>/local_<uuid>.json` per session. It
-is opt-in: each file becomes one title record whose `session_id` is the
-file's `cliSessionId`, the transcript's session id, so a title groups with
-its transcript. The record keeps `model`, the working directory as origin,
+is opt-in (`--scope all`): each file becomes one title record whose
+`session_id` is the file's `cliSessionId`, the transcript's session id, so a
+title groups with its transcript. The record keeps `model`, the working directory as origin,
 `completedTurns`, and, for sessions that ran in a WSL distro, the distro name
 and the transcript path inside it. The record text also
 carries the session's earlier titles (`previousTitles`), so a session the app

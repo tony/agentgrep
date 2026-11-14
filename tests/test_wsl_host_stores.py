@@ -105,6 +105,20 @@ def host_tree(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> HostTr
         ),
         encoding="utf-8",
     )
+    (profile / f"{_COWORK}.json").write_text(
+        json.dumps(
+            {
+                "sessionId": "local_s1",
+                "cliSessionId": "c1",
+                "title": "Synthetic Cowork title",
+                "initialMessage": "synthetic first Cowork message",
+                "createdAt": 1767225600000,
+                "accountName": "must not be copied",
+                "systemPrompt": "must not be copied",
+            },
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(wsl.USERS_ROOT_ENV, str(users))
     monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
     return HostTree(home=home, profile=profile)
@@ -182,6 +196,13 @@ STORE_CASES: tuple[StoreCase, ...] = (
         expected_count=1,
     ),
     StoreCase(
+        test_id="cowork-session-metadata",
+        agent="claude",
+        file_name="local_s1.json",
+        store="claude.cowork.metadata",
+        expected_count=1,
+    ),
+    StoreCase(
         test_id="windows-codex-rollout",
         agent="codex",
         file_name="rollout-2026-01-01T00-00-00-abc.jsonl",
@@ -249,6 +270,21 @@ def test_desktop_session_becomes_title_record(
     assert record.origin is not None
     assert record.origin.cwd == "/work/demo"
     assert "must not be copied" not in json.dumps(record.metadata)
+
+
+def test_cowork_first_message_becomes_prompt_record(host_tree: HostTree) -> None:
+    """A Cowork session file yields its first message as a user prompt before its title."""
+    source = next(s for s in _discover(host_tree, "claude") if s.store == "claude.cowork.metadata")
+    prompt, title = iter_source_records(source)
+    assert (prompt.kind, prompt.role, prompt.text, prompt.session_id) == (
+        "prompt",
+        "user",
+        "synthetic first Cowork message",
+        "c1",
+    )
+    assert prompt.timestamp == "2026-01-01T00:00:00Z"
+    assert (title.kind, title.text) == ("history", "Synthetic Cowork title")
+    assert "must not be copied" not in json.dumps([prompt.metadata, title.metadata])
 
 
 def test_display_form_resolves_to_its_own_profile(host_tree: HostTree) -> None:

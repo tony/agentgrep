@@ -218,19 +218,21 @@ Debug output and shell snapshots expose metadata-only file summaries.
 Backups, uploads, file history, context/security state, credentials,
 session environment, and cache payloads are catalogued or private
 according to sensitivity.
-The Claude desktop app adds three rows rooted at its app-data directory
+The Claude desktop app adds rows rooted at its app-data directory
 (`~/Library/Application Support/Claude`, `%APPDATA%/Claude`, or
 `$XDG_CONFIG_HOME/Claude`). `claude.cowork.session` and
 `claude.cowork.subagent` read each local agent-mode session's private
 Claude Code home, `local-agent-mode-sessions/<account>/<org>/<session>/.claude`,
 under the runtime stores `claude.projects` and `claude.projects_subagents`;
 the session's `audit.jsonl` and `.audit-key` sit outside that home and are
-never enumerated. `claude.desktop_sessions` is the Code tab's session
-index, parsed by `claude.desktop_session_json.v1` into one opt-in title
-record per session keyed by `cliSessionId`. On WSL, each Windows profile's
-`.claude` joins the default root, and a Windows-side copy under
-`projects/ssh-<id>/` is dropped when the local `projects` tree holds a
-transcript of the same file name.
+never enumerated. `claude.cowork.metadata` is the `local_<uuid>.json`
+file beside each session directory, and `claude.desktop_sessions` is the
+Code tab's session index; `claude.desktop_session_json.v1` parses both into
+opt-in records keyed by `cliSessionId`: a title record per session, and a
+user prompt record holding a Cowork session's `initialMessage`. On WSL,
+each Windows profile's `.claude` joins the default root, and a
+Windows-side copy under `projects/ssh-<id>/` is dropped when the local
+`projects` tree holds a transcript of the same file name.
 Claude source version detection uses `embedded_metadata` for transcript
 `version` fields, `shape_inference` for history records with `display`,
 `timestamp`, and `project`, task/todo/team JSON keys, settings and

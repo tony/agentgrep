@@ -17,8 +17,8 @@ WSL kernel, and only for directories that exist.
 | Agent | Windows location | Searched as | Default prompt search |
 | --- | --- | --- | --- |
 | Claude Code (run by Claude desktop) | `%USERPROFILE%/.claude/` | {doc}`claude` transcripts | `history.jsonl` if present |
-| Claude desktop Cowork | `%APPDATA%/Claude/local-agent-mode-sessions/` | {doc}`claude` transcripts | no, `--exhaustive` |
-| Claude desktop Code tab | `%APPDATA%/Claude/claude-code-sessions/` | session titles | no, opt-in inventory |
+| Claude desktop Cowork | `%APPDATA%/Claude/local-agent-mode-sessions/` | {doc}`claude` transcripts, first messages, titles | no; transcripts with `--exhaustive`, first messages and titles with `--scope all` |
+| Claude desktop Code tab | `%APPDATA%/Claude/claude-code-sessions/` | session titles | no, `--scope all` |
 | Codex desktop | `%USERPROFILE%/.codex/` | {doc}`codex` sessions and SQLite state | `history.jsonl` if present |
 | Cursor agent | `%USERPROFILE%/.cursor/projects/` | {doc}`cursor-cli` transcripts | `prompt_history.json` if present |
 | Cursor IDE | `%APPDATA%/Cursor/User/` | {doc}`cursor-ide` state databases | as on Linux |

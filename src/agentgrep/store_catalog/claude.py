@@ -419,6 +419,57 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="claude",
+        store_id="claude.cowork.metadata",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+            "<account_uuid>/<org_uuid>/local_<uuid>.json"
+        ),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+                "<account_uuid>/<org_uuid>/local_<uuid>.json"
+            ),
+            "win32": (
+                "%APPDATA%/Claude/local-agent-mode-sessions/<account_uuid>/<org_uuid>/"
+                "local_<uuid>.json"
+            ),
+        },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude desktop Cowork session records, one JSON file beside each "
+            "session directory. `initialMessage` is the first message the user "
+            "typed; `title`, `cliSessionId`, `cwd`, `model`, `createdAt`, and "
+            "`lastActivityAt` describe the session. The file also carries "
+            "`accountName`, `emailAddress`, and a long `systemPrompt`, which "
+            "are never read."
+        ),
+        distinguishes_from=("claude.cowork.session", "claude.desktop_sessions"),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        search_notes=(
+            "Opt-in: a title record and a prompt record holding the first "
+            "message, both keyed by `cliSessionId` so they group with the "
+            "session's transcript."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.cowork.metadata",
+                adapter_id="claude.desktop_session_json.v1",
+                data_version="claude.desktop_session_json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                root_key="claude_desktop",
+                home_subpath=("local-agent-mode-sessions",),
+                glob="*/*/local_*.json",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.desktop_logs",
         role=StoreRole.APP_STATE,
         format=StoreFormat.TEXT,

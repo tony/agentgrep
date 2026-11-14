@@ -353,17 +353,21 @@ def _display_text_path(value: object) -> str | None:
 def parse_claude_desktop_session_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
-    """Parse one Claude desktop Code-tab session file as a title record.
+    """Parse one Claude desktop session file as title and prompt records.
 
     Each ``claude-code-sessions/<account>/<org>/local_<uuid>.json`` describes
-    one Code-tab session. The record carries the session ``title`` as its
+    one Code-tab session, and each
+    ``local-agent-mode-sessions/<account>/<org>/local_<uuid>.json`` one Cowork
+    session. The record carries the session ``title`` as its
     text, followed by the session's earlier titles (``previousTitles``, which
     keep a user's own names after the app or the user renames the session), so
     a session is found by any name it has had. Its ``session_id`` is
     ``cliSessionId``, the id of the session's Claude Code transcript, so search
-    groups the title with that transcript when both are found. Only the keys
-    below are read; the file's other keys (permission state, tool snapshots,
-    model-written summaries, and so on) are never copied.
+    groups the title with that transcript when both are found. A Cowork
+    session file also yields a ``prompt`` record holding ``initialMessage``,
+    the first message the user typed. Only the keys below are read; the
+    file's other keys (account fields, permission state, tool snapshots,
+    model-written summaries, system prompts) are never copied.
 
     Parameters
     ----------
@@ -373,14 +377,16 @@ def parse_claude_desktop_session_file(
     Yields
     ------
     SearchRecord
-        One ``history`` record per titled session.
+        A ``prompt`` record for a session's first message, when the file
+        keeps one, then a ``history`` record for a titled session.
     """
     payload = read_json_file(source.path)
     if not isinstance(payload, dict):
         return
     mapping = t.cast("dict[str, object]", payload)
     title = as_optional_str(mapping.get("title"))
-    if not title:
+    initial_message = as_optional_str(mapping.get("initialMessage"))
+    if not title and not initial_message:
         return
     previous_value = mapping.get("previousTitles")
     previous_titles = [
@@ -393,6 +399,26 @@ def parse_claude_desktop_session_file(
     ]
     desktop_session_id = as_optional_str(mapping.get("sessionId"))
     session_id = as_optional_str(mapping.get("cliSessionId")) or desktop_session_id
+    if initial_message:
+        yield SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=initial_message,
+            title=title,
+            role="user",
+            timestamp=_unix_millis_to_isoformat(mapping.get("createdAt"))
+            or isoformat_from_mtime_ns(source.mtime_ns),
+            model=as_optional_str(mapping.get("model")),
+            session_id=session_id,
+            conversation_id=session_id,
+            metadata={"desktop_session_id": desktop_session_id} if desktop_session_id else {},
+            origin=_record_origin(cwd=_path_like_str(mapping.get("cwd"))),
+        )
+    if not title:
+        return
     wsl_config = mapping.get("wslConfig")
     distro = as_optional_str(wsl_config.get("distro")) if isinstance(wsl_config, dict) else None
     completed_turns = mapping.get("completedTurns")
