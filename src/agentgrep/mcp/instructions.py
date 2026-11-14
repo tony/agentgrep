@@ -15,7 +15,12 @@ _INSTR_HEADER = (
     "Antigravity CLI, Grok, Pi, OpenCode, and VS Code (GitHub Copilot Chat). "
     "On WSL, the Windows-side Claude, Codex, Cursor, and VS Code stores are "
     "searched too (prompt history by default, transcripts with exhaustive "
-    "effort). All tools are read-only and never spawn writes."
+    "effort). Their paths print as %USERPROFILE%/... or %APPDATA%/...: "
+    "path:%USERPROFILE%* keeps only those results and NOT path:%USERPROFILE%* "
+    "NOT path:%APPDATA%* drops them. Filters narrow results, not the walk over "
+    "the Windows mount; AGENTGREP_WSL_USERS_ROOT set to a missing directory in "
+    "the server's environment skips it. All tools are read-only and never spawn "
+    "writes."
 )
 
 _INSTR_SCOPE = (
