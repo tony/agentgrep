@@ -95,24 +95,44 @@ read once. Copies of sessions from other hosts are kept.
 ## Speed
 
 The Windows drive is a 9p network mount, where every `stat` is a round trip.
-Counts of filesystem operations on the mount for one discovery pass, taken on
-a WSL host with a large Claude desktop install, compare the latest release
-with this version:
-
-| Pass | Windows sources | `stat` calls | Directory scans | `fd` runs |
-| --- | --- | --- | --- | --- |
-| Prompt search, before | 1 | 39 | 2 | 0 |
-| Prompt search, now | 1 | 36 | 5 | 0 |
-| `find`, before | 103 | 327 | 51 | 0 |
-| `find`, now | 376 | 641 | 65 | 10 |
-
 The default prompt search reads only each profile's prompt-history files and
 skips the desktop app directories, so it does the same work as before. `find`
-and `--exhaustive` walk every Windows-side transcript tree; discovery overlaps
-the `stat` calls on the mount, and on that host (a shared machine, so the
-figure is indicative) `find`'s discovery took about 0.3 s longer than the
-release for 3.6 times as many Windows sources. A cancelled search stops the
-walk instead of finishing it in the background. Point
+and `--exhaustive` walk every Windows-side transcript tree and overlap the
+`stat` calls on the mount. Off WSL, none of this runs.
+
+The figures below come from one WSL host with a large Claude desktop install
+and compare 0.1.0a54 ("before") with this version. The host is shared, so
+treat timing differences under about 10% as noise.
+
+Filesystem operations on the Windows mount for one discovery pass, counted by
+wrapping `os.stat`, `os.scandir`, and `fd` calls on paths under the mount:
+
+| Pass | Windows sources | `stat` calls | `stat` per source | Directory scans | `fd` runs |
+| --- | --- | --- | --- | --- | --- |
+| Prompt search, before | 1 | 39 | 39 | 2 | 0 |
+| Prompt search, now | 1 | 36 | 36 | 5 | 0 |
+| `find`, before | 103 | 327 | 3.2 | 51 | 0 |
+| `find`, now | 376 | 641 | 1.7 | 65 | 10 |
+
+Wall-clock time of the whole command, median of 5 runs after 2 warm-ups:
+
+| Command | Before | Now |
+| --- | --- | --- |
+| `agentgrep find` | 2.86 s | 2.96 s |
+| `agentgrep search --limit 1` | 1.34 s | 1.32 s |
+
+`find` reads 3.6 times as many Windows sources for about 0.1 s more. The
+{ref}`benchmark harness <benchmark>` reruns the timing comparison against the
+main branch:
+
+```console
+$ uv run scripts/benchmark.py run \
+    --head-vs-trunk \
+    --commands find,search-limit-1
+```
+
+A cancelled search stops the walk, including a directory listing in
+progress, instead of finishing it in the background. Point
 `AGENTGREP_WSL_USERS_ROOT` at a missing directory to leave the Windows side
 out.
 
