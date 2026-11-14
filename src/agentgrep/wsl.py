@@ -355,8 +355,17 @@ def _restore_account(segment: str, profile: str) -> str:
     return segment.replace(f"Users-{USERNAME}", f"Users-{dashed}").replace(USERNAME, profile)
 
 
-_DRIVE_PROFILE = re.compile(r"^[A-Za-z]:[\\/](?i:Users)[\\/]([^\\/]+)(.*)$")
-"""A Windows drive path inside a profile, as agents record a working directory."""
+_DRIVE_PROFILE = re.compile(
+    r"^(?:file:/*|\\\\\?\\)?(?:/?[A-Za-z]:|/[A-Za-z](?=[\\/]))[\\/]+(?i:Users)[\\/]+"
+    r"([^\\/]+)(.*)$",
+)
+"""A Windows drive path inside a profile, in the spellings agents record.
+
+``C:\\Users\\<name>``, ``C:/Users/<name>``, ``/c:/Users/<name>`` (a decoded
+``file:`` URI, as VS Code stores workspace folders), ``file:///C:/Users/<name>``,
+``\\\\?\\C:\\Users\\<name>`` (a verbatim path), and ``/c/Users/<name>`` (Git Bash),
+with any run of separators.
+"""
 
 
 @functools.lru_cache(maxsize=4)

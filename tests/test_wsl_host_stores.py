@@ -1039,9 +1039,10 @@ def test_reencoded_account_name_is_hidden_and_resolves(
     The registry of profile names starts empty, as in a fresh process that
     opens a ref before any discovery, so the first display has to list the
     profiles itself. A working directory an agent on Windows recorded
-    (``C:\Users\<name>\w``) prints as ``%USERPROFILE%/w/``, as does one
-    recorded inside WSL on any drive (``/mnt/d/Users/<name>/w``), and that
-    printed form, pasted into a ``cwd:`` filter, matches the record.
+    (``C:\Users\<name>\w``, or a URI, verbatim, or Git Bash spelling of it)
+    prints as ``%USERPROFILE%/w/``, as does one recorded inside WSL on any
+    drive (``/mnt/d/Users/<name>/w``), and that printed form, pasted into a
+    ``cwd:`` filter, matches the record.
     """
     import threading
 
@@ -1070,6 +1071,13 @@ def test_reencoded_account_name_is_hidden_and_resolves(
         assert wsl.host_display_candidates(display) == (transcript,)
     origin = RecordOrigin(cwd=f"C:\\Users\\{profile}\\w")
     assert serialize_record_origin(origin) == {"cwd": "%USERPROFILE%/w/"}
+    for spelling in (
+        f"/c:/Users/{profile}/w",
+        f"file:///C:/Users/{profile}/w",
+        f"\\\\?\\C:\\Users\\{profile}\\w",
+        f"/c/Users/{profile}/w",
+    ):
+        assert serialize_record_origin(RecordOrigin(cwd=spelling)) == {"cwd": "%USERPROFILE%/w/"}
     monkeypatch.setattr(wsl, "mount_root", lambda *_: pathlib.PurePosixPath("/mnt"))
     wsl_side = RecordOrigin(cwd=f"/mnt/d/Users/{profile}/w")
     assert serialize_record_origin(wsl_side) == {"cwd": "%USERPROFILE%/w/"}
