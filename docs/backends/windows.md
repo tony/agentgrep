@@ -154,12 +154,19 @@ $ uv run scripts/benchmark.py run \
 ### Cancelling or skipping the walk
 
 A cancelled search stops the walk instead of finishing it in the background:
-a running directory listing ends, no new `stat` starts on the mount, and only
-the calls already in flight finish: at most 16, the size of the `stat` pool
-every search in the process shares. To leave the Windows side
-out entirely, point `AGENTGREP_WSL_USERS_ROOT` at a missing directory. A
-`NOT path:%USERPROFILE%` filter drops the Windows-side results but still
-walks the mount.
+the profile listing and any running directory listing end, no new `stat`
+starts on the mount, and only the calls already in flight finish: at most 16,
+the size of the `stat` pool every search in the process shares. The same holds
+for a cancelled MCP {tool}`find`, {tool}`list_sources`, {tool}`filter_sources`,
+{tool}`summarize_discovery`, or {tool}`recent_sessions` call and an
+`agentgrep://sources` read. To leave the Windows side out entirely, point
+`AGENTGREP_WSL_USERS_ROOT` at a missing directory. A `NOT path:%USERPROFILE%`
+filter drops the Windows-side results but still walks the mount.
+
+An exhaustive search over the Windows-side Claude stores on the host above
+reads 863 sources (276 MB, after skipping the copies of WSL-distro
+transcripts): about 100 s the first time, while the Windows side reads the
+files from disk, and about 35 s when run again.
 
 ## Python API
 
