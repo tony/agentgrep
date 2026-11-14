@@ -137,11 +137,12 @@ Windows-side transcript tree and overlap the `stat` calls on the mount. Off
 WSL, none of this runs.
 
 The figures below come from one WSL host where `find` lists 390 Windows-side
-sources (most from a large Claude desktop install) and compare the main
-branch ("before") with commit `a12b864` ("now"). They answer three questions
-in turn: how many round trips a discovery pass makes on the mount, whether
-whole commands got slower, and how long an exhaustive search over the Windows
-side takes.
+sources (most from a large Claude desktop install) and compare the main branch
+("before") with commit `a12b864` ("now"); later commits change no code that
+`find` or a prompt search runs on these paths. They answer three questions in
+turn: how many round trips a discovery pass makes on the mount, whether whole
+commands got slower, and how long an exhaustive search over the Windows side
+takes.
 
 ### Operations on the mount
 
