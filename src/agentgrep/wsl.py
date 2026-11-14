@@ -288,6 +288,25 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     return "/".join((USERPROFILE, *parts))
 
 
+def is_host_path(path: str | os.PathLike[str]) -> bool:
+    """Return whether ``path`` lies under the Windows users directory.
+
+    A string prefix test against :func:`users_root`, with no file access.
+    Callers use it to treat paths on the 9p Windows mount, where every
+    ``stat`` is a round trip, differently from local paths.
+
+    Examples
+    --------
+    >>> import os
+    >>> from unittest import mock
+    >>> from agentgrep.wsl import USERS_ROOT_ENV, is_host_path
+    >>> with mock.patch.dict(os.environ, {USERS_ROOT_ENV: "/mnt/c/Users"}):
+    ...     print(is_host_path("/mnt/c/Users/someone/.claude"), is_host_path("/home/someone"))
+    True False
+    """
+    return os.fspath(path).startswith(_users_root_text().rstrip("/") + "/")
+
+
 _DISPLAY_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (APPDATA, ("AppData", "Roaming")),
     (LOCALAPPDATA, ("AppData", "Local")),
@@ -683,6 +702,7 @@ __all__ = (
     "host_display_candidates",
     "host_profile_key",
     "host_user_profiles",
+    "is_host_path",
     "is_wsl",
     "mount_root",
     "users_root",
