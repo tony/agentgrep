@@ -83,6 +83,12 @@ OpenCode (anomalyco) SQLite session store, config, snapshots, and caches.
 VS Code GitHub Copilot Chat JSON transcripts and inline-edit history, including WSL cross-host stores.
 :::
 
+:::{grid-item-card} Windows and WSL
+:link: windows
+:link-type: doc
+Windows-side Claude desktop, Codex, Cursor, and VS Code history searched from a WSL distro.
+:::
+
 ::::
 
 ## Unsupported backends
@@ -291,5 +297,6 @@ grok
 pi
 opencode
 vscode
+windows
 unsupported/index
 ```

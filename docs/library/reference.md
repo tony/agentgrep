@@ -225,7 +225,7 @@ explicitly close the async generator, for example with
 ## Windows host paths (WSL)
 
 {mod}`agentgrep.wsl` locates the Windows-side stores from inside a WSL
-distro.
+distro; {doc}`/backends/windows` describes what discovery does with it.
 
 ```{eval-rst}
 .. automodule:: agentgrep.wsl

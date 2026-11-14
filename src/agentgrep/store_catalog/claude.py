@@ -108,6 +108,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/history.jsonl",
         env_overrides=("CLAUDE_CONFIG_DIR",),
+        platform_variants={"win32": "%USERPROFILE%/.claude/history.jsonl"},
         observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
@@ -152,6 +153,9 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
+        platform_variants={
+            "win32": "%USERPROFILE%/.claude/projects/<encoded_project>/<session_uuid>.jsonl"
+        },
         observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         upstream_ref="code.claude.com/docs/en/changelog",
@@ -203,6 +207,12 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>/subagents/<agent>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.claude/projects/<encoded_project>/<session_uuid>/"
+                "subagents/<agent>.jsonl"
+            ),
+        },
         observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(

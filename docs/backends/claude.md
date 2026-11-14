@@ -10,8 +10,9 @@ prompts from every eligible project transcript. Memory, todo, and plugin/skill
 stores may join explicit broad-scope search. Settings and shell snapshots
 remain inventory-only.
 
-Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`). The Claude
-desktop app adds its own directory, covered under
+Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`). On WSL, each
+Windows profile's `%USERPROFILE%/.claude` is searched too; see
+{doc}`windows`. The Claude desktop app adds its own directory, covered under
 {ref}`backend-claude-desktop`.
 
 `observed_version`: `claude-code v2.1.310` (observed 2026-10-25).

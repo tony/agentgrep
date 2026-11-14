@@ -78,6 +78,11 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl"
         ),
         env_overrides=("CODEX_HOME",),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.codex/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl"
+            ),
+        },
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref=("github.com/openai/codex@3fb81667/codex-rs/protocol/src/protocol.rs#L2929"),
@@ -136,6 +141,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/session_index.jsonl",
         env_overrides=("CODEX_HOME",),
+        platform_variants={"win32": "%USERPROFILE%/.codex/session_index.jsonl"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@3fb81667/codex-rs/rollout/src/session_index.rs",
@@ -168,6 +174,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/state_5.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        platform_variants={"win32": "%USERPROFILE%/.codex/state_5.sqlite"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@3fb81667/codex-rs/state/src/lib.rs#L95",
@@ -201,6 +208,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/logs_2.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        platform_variants={"win32": "%USERPROFILE%/.codex/logs_2.sqlite"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@3fb81667/codex-rs/state/src/lib.rs#L92",
@@ -234,6 +242,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/memories_1.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        platform_variants={"win32": "%USERPROFILE%/.codex/memories_1.sqlite"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
@@ -267,6 +276,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/thread_history_1.sqlite"
         ),
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        platform_variants={"win32": "%USERPROFILE%/.codex/thread_history_1.sqlite"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
@@ -294,6 +304,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/queue_1.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        platform_variants={"win32": "%USERPROFILE%/.codex/queue_1.sqlite"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
@@ -319,6 +330,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "${CODEX_HOME or ${HOME}/.codex}/attachments/<attachment_uuid>/pasted-text-<n>.txt"
         ),
         env_overrides=("CODEX_HOME",),
+        platform_variants={"win32": "%USERPROFILE%/.codex/attachments/<attachment_uuid>/"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
@@ -358,6 +370,7 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.SQLITE,
         path_pattern="${CODEX_SQLITE_HOME or ${CODEX_HOME or ${HOME}/.codex}}/goals_1.sqlite",
         env_overrides=("CODEX_HOME", "CODEX_SQLITE_HOME"),
+        platform_variants={"win32": "%USERPROFILE%/.codex/goals_1.sqlite"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
@@ -1169,6 +1182,11 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl.zst"
         ),
         env_overrides=("CODEX_HOME",),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.codex/sessions/YYYY/MM/DD/rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl.zst"
+            ),
+        },
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         upstream_ref="github.com/openai/codex@6aaac694/codex-rs/rollout/src/compression.rs#L371",
