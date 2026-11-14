@@ -42,6 +42,53 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### What's new
+
+#### Windows-side history is searched from WSL (#185)
+
+On WSL, agentgrep also searches the agents installed on Windows: each Windows
+profile's Claude Code, Codex, and Cursor homes join the search, beside the
+VS Code and Cursor IDE stores it already read there. A path inside a Windows
+profile prints as `%USERPROFILE%/…`, `%APPDATA%/…`, or `%LOCALAPPDATA%/…`
+instead of naming the Windows account, and a printed path pasted into a
+`path:` query matches. The copies Claude desktop keeps of WSL-distro
+transcripts are read once. See {ref}`backends-windows` for details.
+
+#### Claude desktop Cowork transcripts are searched (#185)
+
+The Claude desktop app keeps the Claude Code transcripts of its local
+agent-mode ("Cowork") sessions in its own directory, which no search reached.
+They are now searched with Claude Code's transcripts on macOS, Windows, and
+Linux, and from WSL. See {ref}`backend-claude-desktop` for details.
+
+#### Claude desktop Code-tab sessions are found by title (#185)
+
+Each Code-tab session file becomes an opt-in record carrying the session's
+title, model, and working directory, grouped with the session's transcript.
+See {ref}`backend-claude-desktop` for details.
+
+#### Windows host paths in Python (#185)
+
+{mod}`agentgrep.wsl` gives Windows-side locations a type: `WSLHostPath`, a
+{class}`pathlib.PosixPath` that opens and compares like any path while its
+`repr()` hides the account name, plus `WSLHostUserProfile`, `WSLHostAppData`,
+and `WSLHost` lookups. See {ref}`library-examples-wsl` for details.
+
+#### ChatGPT desktop is catalogued (#185)
+
+ChatGPT desktop's stores are documented but not searched: the macOS app's
+conversation files are encrypted and the Windows app keeps only a browser
+profile. See {ref}`backend-chatgpt` for details.
+
+### Fixes
+
+#### `PrivatePath` names the real file on Python 3.14 (#185)
+
+On Python 3.14, {func}`os.fspath` of a `PrivatePath` returned its display form
+(`~/…`), so `open()` on one opened a path relative to the working directory,
+and a `PrivatePath` never compared equal to the plain path of the same file.
+Both now use the real path.
+
 ## agentgrep 0.1.0a54 (2026-10-25)
 
 agentgrep 0.1.0a54 reads more of what agents store. Claude Code transcript
