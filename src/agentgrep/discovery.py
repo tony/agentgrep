@@ -13,6 +13,7 @@ import collections.abc as cabc
 import concurrent.futures
 import contextlib
 import contextvars
+import dataclasses
 import datetime
 import logging
 import os
@@ -869,7 +870,12 @@ def handles_from_discovery(
         key = (search_root, spec.glob)
         matches = listings.get(key) if listings is not None else None
         if matches is None:
-            matches = list_files_matching(search_root, spec.glob, backends.find_tool)
+            matches = list_files_matching(
+                search_root,
+                spec.glob,
+                backends.find_tool,
+                should_stop=_active_stop(),
+            )
             if listings is not None:
                 listings[key] = matches
         kept = [
@@ -923,24 +929,32 @@ def handles_from_discovery(
     return sources
 
 
-_DISCOVERY_STOP: contextvars.ContextVar[cabc.Callable[[], bool] | None] = contextvars.ContextVar(
-    "agentgrep_discovery_stop",
-    default=None,
-)
+@dataclasses.dataclass(slots=True)
+class DiscoveryStopState:
+    """Whether a :func:`discovery_stop` predicate actually cut a pass short."""
+
+    stopped: bool = False
+
+
+_DISCOVERY_STOP: contextvars.ContextVar[
+    tuple[cabc.Callable[[], bool], DiscoveryStopState] | None
+] = contextvars.ContextVar("agentgrep_discovery_stop", default=None)
 
 
 @contextlib.contextmanager
-def discovery_stop(should_stop: cabc.Callable[[], bool]) -> cabc.Generator[None]:
+def discovery_stop(should_stop: cabc.Callable[[], bool]) -> cabc.Generator[DiscoveryStopState]:
     """Let discovery in this context end early once ``should_stop()`` is true.
 
     The search engine abandons a discovery pass when the caller cancels or
     asks for an answer now, but the abandoned thread would keep walking the
     filesystem, which on the WSL 9p mount is seconds of round trips. Inside
     this context, discovery checks the predicate between catalogue rows and
-    roots and stops queuing ``stat`` calls, returning the sources found so far.
-    A context variable carries it, so ``asyncio.to_thread`` and
-    :func:`contextvars.copy_context` reach worker threads without changing any
-    discover function's signature.
+    roots, ends running file listings, and stops queuing ``stat`` calls,
+    returning the sources found so far. The yielded
+    :class:`DiscoveryStopState` says whether that happened, so a caller never
+    mistakes a partial result for a complete one. A context variable carries
+    the predicate, so ``asyncio.to_thread`` and :func:`contextvars.copy_context`
+    reach worker threads without changing any discover function's signature.
 
     Examples
     --------
@@ -951,21 +965,34 @@ def discovery_stop(should_stop: cabc.Callable[[], bool]) -> cabc.Generator[None]
     >>> _ = (home / ".claude" / "projects" / "p").mkdir(parents=True)
     >>> _ = (home / ".claude" / "projects" / "p" / "s.jsonl").write_text("{}")
     >>> none = BackendSelection(find_tool=None, grep_tool=None, json_tool=None)
-    >>> with discovery_stop(lambda: True):
-    ...     discover_sources(home, ("claude",), none, include_non_default=True)
+    >>> with discovery_stop(lambda: True) as state:
+    ...     print(discover_sources(home, ("claude",), none, include_non_default=True))
     []
+    >>> state.stopped
+    True
     """
-    token = _DISCOVERY_STOP.set(should_stop)
+    state = DiscoveryStopState()
+    token = _DISCOVERY_STOP.set((should_stop, state))
     try:
-        yield
+        yield state
     finally:
         _DISCOVERY_STOP.reset(token)
 
 
 def _discovery_stopped() -> bool:
     """Return whether the active :func:`discovery_stop` predicate asks to stop."""
-    should_stop = _DISCOVERY_STOP.get()
-    return should_stop is not None and should_stop()
+    active = _DISCOVERY_STOP.get()
+    if active is None:
+        return False
+    should_stop, state = active
+    if should_stop():
+        state.stopped = True
+    return state.stopped
+
+
+def _active_stop() -> cabc.Callable[[], bool] | None:
+    """Return a stop check for long-running calls, or ``None`` outside :func:`discovery_stop`."""
+    return _discovery_stopped if _DISCOVERY_STOP.get() is not None else None
 
 
 _SLOW_MOUNT_STAT_WORKERS = 16

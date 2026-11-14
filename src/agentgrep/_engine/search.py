@@ -86,9 +86,13 @@ def _discover_sources_abandoning_if_cancelled(
     try:
 
         def discover() -> list[SourceHandle]:
-            # Lets the pass end early once abandoned, instead of walking on.
-            with discovery_stop(control.answer_now_requested):
-                return discover_sources_for_search(home, query, backends, version_detail="none")
+            # Lets the pass end early once abandoned, instead of walking on; a
+            # pass that was cut short is abandoned, never returned as complete.
+            with discovery_stop(control.answer_now_requested) as state:
+                sources = discover_sources_for_search(home, query, backends, version_detail="none")
+            if state.stopped:
+                raise _DiscoveryAbandonedError
+            return sources
 
         future = executor.submit(discover)
         while True:

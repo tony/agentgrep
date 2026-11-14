@@ -301,3 +301,88 @@ def test_discovery_stop_ends_a_windows_walk_early(
     bulk = [s for s in sources if s.path.name.startswith("bulk-")]
     assert bulk == []
     assert len([path for path in calls if path.name.startswith("bulk-")]) < 40
+
+
+def test_file_listing_stops_mid_walk(tmp_path: pathlib.Path) -> None:
+    """A stop predicate ends a listing walk partway through the tree."""
+    from agentgrep.readers import list_files_matching
+
+    for index in range(50):
+        (tmp_path / f"d{index}").mkdir()
+        (tmp_path / f"d{index}" / "s.jsonl").write_text("{}", encoding="utf-8")
+    checks: list[int] = []
+
+    def stop() -> bool:
+        checks.append(1)
+        return len(checks) > 5
+
+    assert len(list_files_matching(tmp_path, "*.jsonl", None, should_stop=stop)) < 50
+    assert len(list_files_matching(tmp_path, "*.jsonl", None)) == 50
+
+
+def test_abandoned_search_stops_the_windows_walk(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A search cancelled during discovery is abandoned and its Windows walk stops early."""
+    import threading
+
+    from agentgrep import discovery
+    from agentgrep._engine import search as engine_search
+    from agentgrep.progress import SearchControl
+    from agentgrep.records import SearchQuery
+
+    for index in range(64):
+        _write_transcript(
+            host_tree.profile / f".claude/projects/C--Users-x-bulk/bulk-{index}.jsonl",
+            f"bulk-{index}",
+        )
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    calls: list[pathlib.Path] = []
+    real_mtime = discovery.file_mtime_ns
+
+    def gated(path: pathlib.Path) -> int:
+        if path.name.startswith("bulk-"):
+            calls.append(path)
+            started.set()
+            release.wait(5)
+        return real_mtime(path)
+
+    real_discover = engine_search.discover_sources_for_search
+
+    def tracked(*args: t.Any, **kwargs: t.Any) -> list[SourceHandle]:
+        try:
+            return real_discover(*args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(discovery, "file_mtime_ns", gated)
+    monkeypatch.setattr(engine_search, "discover_sources_for_search", tracked)
+    control = SearchControl()
+
+    def cancel_once_walking() -> None:
+        assert started.wait(5), "the Windows walk never started"
+        control.request_answer_now(reason="caller_cancelled")
+        release.set()
+
+    canceller = threading.Thread(target=cancel_once_walking, daemon=True)
+    canceller.start()
+    query = SearchQuery(
+        terms=("widget",),
+        scope="all",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("claude",),
+        limit=None,
+        effort="exhaustive",
+    )
+    with pytest.raises(engine_search._DiscoveryAbandonedError):
+        engine_search._discover_sources_abandoning_if_cancelled(
+            host_tree.home,
+            query,
+            _NO_BACKENDS,
+            control=control,
+        )
+    assert finished.wait(5), "the abandoned discovery never returned"
+    assert len(calls) < 64
