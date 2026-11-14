@@ -182,7 +182,9 @@ shared, so differences under about 10% are noise:
 | `agentgrep search --limit 1 libtmux`, mount hidden | 1.81 s (1.70–1.91) | 1.77 s (1.59–2.02) |
 
 No median is slower, so reading the Windows side costs no wall-clock time
-against the main branch on this host. The rows ran under heavy load from
+against the main branch on this host. With the mount hidden, `find` is faster
+(1.08 s against 1.44 s), but the ranges overlap, so that is not claimed as a
+speedup. The rows ran under heavy load from
 other work (load average 10 to 17), which is why they are slower in absolute
 terms than an idle machine would be. The {ref}`benchmark harness <benchmark>` gives a quicker
 comparison against the main branch, but it times one build after the other,
