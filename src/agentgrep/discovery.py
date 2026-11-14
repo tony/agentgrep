@@ -877,7 +877,9 @@ def handles_from_discovery(
                 backends.find_tool,
                 should_stop=_active_stop(),
             )
-            if listings is not None:
+            # A stopped walk is partial; memoizing it would hand a truncated
+            # listing to the next row that walks the same tree.
+            if listings is not None and not _discovery_stopped():
                 listings[key] = matches
         kept = [
             path
