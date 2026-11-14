@@ -87,6 +87,7 @@ def host_tree(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> HostTr
                 "sessionId": "local_d1",
                 "cliSessionId": "windows-1",
                 "title": "Synthetic session title",
+                "previousTitles": ["Earlier user title"],
                 "cwd": "/work/demo",
                 "model": "demo-model",
                 "createdAt": 1767225600000,
@@ -212,11 +213,16 @@ def test_windows_host_store_discovery(
 
 
 def test_desktop_session_becomes_title_record(host_tree: HostTree) -> None:
-    """A Code-tab session file yields one title record keyed by its transcript session."""
+    """A Code-tab session file yields one title record keyed by its transcript session.
+
+    The record text carries earlier titles too, so a renamed session is found by
+    either name.
+    """
     source = next(s for s in _discover(host_tree, "claude") if s.store == "claude.desktop_sessions")
     (record,) = iter_source_records(source)
-    assert (record.text, record.session_id, record.model) == (
+    assert (record.title, record.text, record.session_id, record.model) == (
         "Synthetic session title",
+        "Synthetic session title\nEarlier user title",
         "windows-1",
         "demo-model",
     )

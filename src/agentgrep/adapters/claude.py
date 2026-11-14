@@ -346,10 +346,13 @@ def parse_claude_desktop_session_file(
 
     Each ``claude-code-sessions/<account>/<org>/local_<uuid>.json`` describes
     one Code-tab session. The record carries the session ``title`` as its
-    text, and its ``session_id`` is ``cliSessionId``, the id of the session's
-    Claude Code transcript, so search groups the title with that transcript
-    when both are found. Only the keys below are read; the file's other keys
-    (permission state, tool snapshots, and so on) are never copied.
+    text, followed by the session's earlier titles (``previousTitles``, which
+    keep a user's own names after the app or the user renames the session), so
+    a session is found by any name it has had. Its ``session_id`` is
+    ``cliSessionId``, the id of the session's Claude Code transcript, so search
+    groups the title with that transcript when both are found. Only the keys
+    below are read; the file's other keys (permission state, tool snapshots,
+    model-written summaries, and so on) are never copied.
 
     Parameters
     ----------
@@ -368,6 +371,15 @@ def parse_claude_desktop_session_file(
     title = as_optional_str(mapping.get("title"))
     if not title:
         return
+    previous_value = mapping.get("previousTitles")
+    previous_titles = [
+        name
+        for name in (
+            as_optional_str(entry)
+            for entry in (previous_value if isinstance(previous_value, list) else [])
+        )
+        if name and name != title
+    ]
     desktop_session_id = as_optional_str(mapping.get("sessionId"))
     session_id = as_optional_str(mapping.get("cliSessionId")) or desktop_session_id
     wsl_config = mapping.get("wslConfig")
@@ -390,13 +402,15 @@ def parse_claude_desktop_session_file(
         metadata["transcript_unavailable"] = True
     if mapping.get("isArchived") is True:
         metadata["archived"] = True
+    if previous_titles:
+        metadata["previous_titles"] = previous_titles
     yield SearchRecord(
         kind="history",
         agent=source.agent,
         store=source.store,
         adapter_id=source.adapter_id,
         path=source.path,
-        text=title,
+        text="\n".join((title, *previous_titles)),
         title=title,
         role="assistant",
         timestamp=_unix_millis_to_isoformat(mapping.get("lastActivityAt"))
