@@ -867,13 +867,18 @@ async def test_mcp_discovery_walks_where_a_cancel_reaches(
     current = [""]
     real_listing = wsl.host_user_profiles
 
-    def listing(*args: t.Any, **kwargs: t.Any) -> tuple[wsl.WSLHostUserProfile, ...]:
-        stoppable.setdefault(current[0], kwargs.get("should_stop") is not None)
-        return real_listing(*args, **kwargs)
+    def listing(
+        root: str | None = None,
+        *,
+        require_wsl: bool = True,
+        should_stop: cabc.Callable[[], bool] | None = None,
+    ) -> tuple[wsl.WSLHostUserProfile, ...]:
+        stoppable.setdefault(current[0], should_stop is not None)
+        return real_listing(root, require_wsl=require_wsl, should_stop=should_stop)
 
     monkeypatch.setattr(wsl, "host_user_profiles", listing)
     monkeypatch.setenv("HOME", str(host_tree.home))
-    claude: dict[str, t.Any] = {"agent": "claude"}
+    claude: dict[str, object] = {"agent": "claude"}
     tools = {
         "find": claude,
         "list_sources": claude,
@@ -901,9 +906,14 @@ def test_one_profile_listing_per_pass(
     calls: list[int] = []
     real_listing = wsl.host_user_profiles
 
-    def listing(*args: t.Any, **kwargs: t.Any) -> tuple[wsl.WSLHostUserProfile, ...]:
+    def listing(
+        root: str | None = None,
+        *,
+        require_wsl: bool = True,
+        should_stop: cabc.Callable[[], bool] | None = None,
+    ) -> tuple[wsl.WSLHostUserProfile, ...]:
         calls.append(1)
-        return real_listing(*args, **kwargs)
+        return real_listing(root, require_wsl=require_wsl, should_stop=should_stop)
 
     monkeypatch.setattr(wsl, "host_user_profiles", listing)
     agents: tuple[AgentName, ...] = ("claude", "codex", "cursor-cli", "vscode", "cursor-ide")
