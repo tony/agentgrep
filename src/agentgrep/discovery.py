@@ -10,6 +10,7 @@ the adapters and below the engine.
 from __future__ import annotations
 
 import collections.abc as cabc
+import concurrent.futures
 import datetime
 import logging
 import os
@@ -800,6 +801,7 @@ def handles_from_discovery(
     *,
     project_dirs: ProjectDirCache | None = None,
     skip_path: cabc.Callable[[pathlib.Path], bool] | None = None,
+    listings: dict[tuple[pathlib.Path, str], list[pathlib.Path]] | None = None,
 ) -> list[SourceHandle]:
     """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
 
@@ -815,7 +817,10 @@ def handles_from_discovery(
     pass that owns it, since the directory layout it probed can change.
 
     ``skip_path`` drops glob matches before they are stat'ed, which matters
-    on a network mount where each ``stat`` is a round trip.
+    on a network mount where each ``stat`` is a round trip. ``listings`` is the
+    pass's memo of glob walks keyed by search root and pattern: sibling rows
+    such as a session store and its subagent store walk the same tree with the
+    same glob and differ only in their path-part filters.
     """
     sources: list[SourceHandle] = []
     search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
@@ -845,13 +850,21 @@ def handles_from_discovery(
     if spec.glob is not None and search_root.exists():
         required_parts = set(spec.path_parts_required)
         excluded_parts = set(spec.path_parts_excluded)
-        for path in list_files_matching(search_root, spec.glob, backends.find_tool):
-            if required_parts and not required_parts.issubset(path.parts):
-                continue
-            if excluded_parts and excluded_parts.intersection(path.parts):
-                continue
-            if skip_path is not None and skip_path(path):
-                continue
+        key = (search_root, spec.glob)
+        matches = listings.get(key) if listings is not None else None
+        if matches is None:
+            matches = list_files_matching(search_root, spec.glob, backends.find_tool)
+            if listings is not None:
+                listings[key] = matches
+        kept = [
+            path
+            for path in matches
+            if not (required_parts and not required_parts.issubset(path.parts))
+            and not (excluded_parts and excluded_parts.intersection(path.parts))
+            and not (skip_path is not None and skip_path(path))
+        ]
+        mtimes = _file_mtimes(kept, slow_mount=wsl.is_host_path(search_root))
+        for path, mtime_ns in zip(kept, mtimes, strict=True):
             sources.append(
                 SourceHandle(
                     agent=agent,
@@ -861,7 +874,7 @@ def handles_from_discovery(
                     path_kind=spec.path_kind,
                     source_kind=spec.source_kind,
                     search_root=search_root,
-                    mtime_ns=file_mtime_ns(path),
+                    mtime_ns=mtime_ns,
                     coverage=coverage,
                     origin_summary=_source_origin_summary(spec, path, project_dirs=project_dirs),
                 ),
@@ -890,6 +903,27 @@ def handles_from_discovery(
             )
 
     return sources
+
+
+_SLOW_MOUNT_STAT_WORKERS = 8
+"""Concurrent ``stat`` calls for files on the 9p Windows mount."""
+
+
+def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int]:
+    """Return each path's mtime, concurrently on the Windows mount.
+
+    A ``stat`` over the WSL 9p mount is a round trip of a few milliseconds
+    that releases the GIL, so a batch of them overlaps well in threads. On a
+    local disk the same call takes microseconds and a pool would only add
+    overhead, so local paths stay serial.
+    """
+    if not slow_mount or len(paths) < _SLOW_MOUNT_STAT_WORKERS * 2:
+        return [file_mtime_ns(path) for path in paths]
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=_SLOW_MOUNT_STAT_WORKERS,
+        thread_name_prefix="agentgrep-stat",
+    ) as pool:
+        return list(pool.map(file_mtime_ns, paths))
 
 
 _CURSOR_CLI_TRANSCRIPT_STORES: frozenset[str] = frozenset(
@@ -1157,6 +1191,7 @@ def discover_from_catalog(
     # filesystem, and a memo that outlived the walk would answer from a
     # directory layout that has since changed.
     project_dirs: ProjectDirCache = {}
+    listings: dict[tuple[pathlib.Path, str], list[pathlib.Path]] = {}
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
         coverage = descriptor.coverage_level
@@ -1189,6 +1224,7 @@ def discover_from_catalog(
                     coverage,
                     project_dirs=project_dirs,
                     skip_path=skip_path,
+                    listings=listings,
                 ):
                     if handle.path in seen_paths:
                         continue
@@ -1418,13 +1454,41 @@ def claude_cowork_roots(desktop_dirs: tuple[pathlib.Path, ...]) -> tuple[pathlib
     """
     roots: list[pathlib.Path] = []
     for desktop in desktop_dirs:
-        sessions = desktop / "local-agent-mode-sessions"
-        try:
-            homes = sorted(sessions.glob("*/*/*/.claude"))
-        except OSError:
-            continue
-        roots.extend(home for home in homes if home.is_dir())
+        for org in _child_dirs(desktop / "local-agent-mode-sessions", depth=2):
+            for session in _child_dirs(org, depth=1):
+                # Session directories are local_<uuid> or eight hex characters;
+                # skipping the rest saves a round trip each on the Windows mount.
+                if not _COWORK_SESSION_RE.fullmatch(session.name):
+                    continue
+                home = session / ".claude"
+                try:
+                    if home.is_dir():
+                        roots.append(home)
+                except OSError:
+                    continue
     return tuple(roots)
+
+
+_COWORK_SESSION_RE = re.compile(r"local_.+|[0-9a-f]{8}")
+
+
+def _child_dirs(root: pathlib.Path, *, depth: int) -> list[pathlib.Path]:
+    """Return the directories ``depth`` levels below ``root``, sorted per level."""
+    level = [root]
+    for _ in range(depth):
+        children: list[pathlib.Path] = []
+        for parent in level:
+            try:
+                with os.scandir(parent) as entries:
+                    children.extend(
+                        pathlib.Path(entry.path)
+                        for entry in entries
+                        if entry.is_dir(follow_symlinks=False)
+                    )
+            except OSError:
+                continue
+        level = sorted(children)
+    return level
 
 
 def mirrored_claude_transcript_filter(
