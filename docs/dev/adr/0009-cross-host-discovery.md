@@ -106,8 +106,9 @@ Discovery skips Windows copies of local transcripts before stat'ing them,
 resolves the desktop roots only when an admitted row reads them, overlaps
 `stat` calls on one shared 16-thread pool, and stops once the search engine
 abandons the pass ({func}`~agentgrep.discovery.discovery_stop`): no new `stat`
-starts, a running listing ends, and the pass is reported abandoned instead of
-returned partial.
+starts, and a running listing ends. The engine then reports the pass abandoned
+instead of returning it partial; a library caller using `discovery_stop`
+directly reads the yielded state's `stopped` flag.
 
 ## Scope
 
