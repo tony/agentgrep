@@ -1,14 +1,15 @@
 """ChatGPT desktop store descriptors for the agentgrep catalogue.
 
 Every row is catalog-only: the macOS app's conversation files look encrypted
-and the Windows app keeps only a Chromium profile, so agentgrep documents the
-locations and searches neither.
+and the Windows app keeps only a Chromium profile, so agentgrep lists the files
+for inventory (as metadata summaries) and never searches them.
 """
 
 from __future__ import annotations
 
 from agentgrep.store_catalog._common import _CHATGPT_OBSERVED_AT
 from agentgrep.stores import (
+    DiscoverySpec,
     StoreCoverage,
     StoreDescriptor,
     StoreFormat,
@@ -43,10 +44,21 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
             "of 30 sampled files parsed as JSON, UTF-8, zlib, raw deflate, gzip, "
             "bzip2, or lzma; entropy of the first 64 KiB was 7.76 to 8.00 bits per "
             "byte and every file started with different bytes, which fits "
-            "authenticated encryption. Documented location only; unsupported."
+            "authenticated encryption. Listed for inventory as metadata only; never searched."
         ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="chatgpt.conversations",
+                adapter_id="chatgpt.file_metadata_summary.v1",
+                data_version="chatgpt.opaque.v1",
+                path_kind="store_file",
+                source_kind="opaque",
+                root_key="chatgpt_macos",
+                glob="conversations-v3-*/*.data",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="chatgpt",
@@ -59,11 +71,22 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
         observed_at=_CHATGPT_OBSERVED_AT,
         schema_notes=(
             "macOS app, unsent prompt drafts (183 B to 1.8 KB), as opaque as the "
-            "conversation files. Documented location only; unsupported."
+            "conversation files. Listed for inventory as metadata only; never searched."
         ),
         distinguishes_from=("chatgpt.conversations",),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="chatgpt.drafts",
+                adapter_id="chatgpt.file_metadata_summary.v1",
+                data_version="chatgpt.opaque.v1",
+                path_kind="store_file",
+                source_kind="opaque",
+                root_key="chatgpt_macos",
+                glob="drafts-v2-*/*.data",
+            ),
+        ),
     ),
     StoreDescriptor(
         agent="chatgpt",
@@ -84,10 +107,21 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
             "(`IndexedDB`, `Local Storage`, `Session Storage`, `Preferences`, a "
             "two-byte `config.json`); searching the IndexedDB files as bytes for "
             '`"author"` or `conversation_id` found nothing, so conversations '
-            "are held server-side. Documented location only; unsupported."
+            "are held server-side. Listed for inventory as metadata only; never searched."
         ),
         distinguishes_from=("chatgpt.conversations",),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
+        discovery=(
+            DiscoverySpec(
+                store="chatgpt.web_profile",
+                adapter_id="chatgpt.file_metadata_summary.v1",
+                data_version="chatgpt.opaque.v1",
+                path_kind="store_file",
+                source_kind="opaque",
+                root_key="chatgpt_windows",
+                glob="IndexedDB/https_chatgpt.com_0.indexeddb.leveldb/*",
+            ),
+        ),
     ),
 )

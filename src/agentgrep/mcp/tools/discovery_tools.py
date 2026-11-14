@@ -19,6 +19,7 @@ from agentgrep.mcp._library import (
     FindRecordLike,
     agentgrep,
     normalize_agent_selection,
+    normalize_inventory_selection,
 )
 from agentgrep.mcp.models import (
     DiagnosticModel,
@@ -144,7 +145,7 @@ def _list_sources_sync(request: ListSourcesRequest) -> ListSourcesResponse:
     backends = agentgrep.select_backends()
     sources = agentgrep.discover_sources(
         pathlib.Path.home(),
-        normalize_agent_selection(request.agent),
+        normalize_inventory_selection(request.agent),
         backends,
         include_non_default=request.include_non_default or request.coverage_filter is not None,
     )

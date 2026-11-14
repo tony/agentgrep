@@ -192,16 +192,25 @@ def test_display_form_resolves_to_its_own_profile(host_tree: HostTree) -> None:
     assert len({find_record_fingerprint(r) for r in records}) == 2
 
 
-def test_chatgpt_desktop_is_inventory_only() -> None:
-    """ChatGPT desktop rows are documented but never discovered or searched."""
-    from agentgrep.records import AGENT_CHOICES
-    from agentgrep.store_catalog import CATALOG
+def test_chatgpt_desktop_is_listed_but_never_searched(host_tree: HostTree) -> None:
+    """Inventory lists ChatGPT desktop files as catalog-only; search discovery never does."""
+    from agentgrep.discovery import CHATGPT_DESKTOP_PACKAGE
+    from agentgrep.records import AGENT_CHOICES, INVENTORY_AGENTS
     from agentgrep.stores import StoreCoverage
 
-    rows = CATALOG.for_agent("chatgpt")
-    assert rows
+    files = [
+        host_tree.home / "Library/Application Support/com.openai.chat/conversations-v3-a/C1.data",
+        host_tree.profile
+        / f"AppData/Local/Packages/{CHATGPT_DESKTOP_PACKAGE}/LocalCache/Roaming/ChatGPT"
+        / "IndexedDB/https_chatgpt.com_0.indexeddb.leveldb/000001.log",
+    ]
+    for path in files:
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"\x00opaque")
+    assert "chatgpt" in INVENTORY_AGENTS
     assert "chatgpt" not in AGENT_CHOICES
-    for row in rows:
-        assert row.coverage_level is StoreCoverage.CATALOG_ONLY
-        assert row.discovery == ()
-        assert row.platform_variants
+    listed = discover_sources(host_tree.home, ("chatgpt",), _NO_BACKENDS, include_non_default=True)
+    assert sorted(s.path for s in listed) == sorted(files)
+    assert {s.coverage for s in listed} == {StoreCoverage.CATALOG_ONLY}
+    assert not any(_WINDOWS_USER in format_display_path(s.path) for s in listed)
+    assert discover_sources(host_tree.home, ("chatgpt",), _NO_BACKENDS) == []
