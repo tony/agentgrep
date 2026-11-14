@@ -23,7 +23,7 @@ WSL kernel, and only for directories that exist.
 | Cursor agent | `%USERPROFILE%/.cursor/projects/` | {doc}`cursor-cli` transcripts | `prompt_history.json` if present |
 | Cursor IDE | `%APPDATA%/Cursor/User/` | {doc}`cursor-ide` state databases | as on Linux |
 | VS Code Copilot Chat | `%APPDATA%/Code/User/` | {doc}`vscode` chat sessions | as on Linux |
-| ChatGPT desktop | `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_…/` | {doc}`chatgpt` conversation titles | no, conversation scope |
+| ChatGPT desktop | `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0/` | {doc}`chatgpt` conversation titles | no, conversation scope |
 
 The catalogue records each store's Windows path in its `win32` platform
 variant, which `get_store_descriptor` and the backend pages show.
@@ -31,8 +31,7 @@ variant, which `get_store_descriptor` and the backend pages show.
 Claude desktop's claude.ai chat client keeps only a rolling cache of a few
 recently opened conversations in Chromium IndexedDB, catalogued as
 {storage:storeref}`claude.desktop_chat_cache` and not searched; the full chat
-history stays on Anthropic's servers. ChatGPT desktop keeps no message text on
-disk; see {doc}`chatgpt`.
+history stays on Anthropic's servers.
 
 ## Other agents on Windows
 
@@ -65,19 +64,27 @@ variable that names it, the way a Linux path under your home starts with
 | `/mnt/c/Users/<name>/.codex/sessions/...` | `%USERPROFILE%/.codex/sessions/...` |
 | `/mnt/c/Users/<name>/.claude/projects/C--Users-<name>-work/...` | `%USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/...` |
 
-Agents name project folders after the working directory, so a project under
-the profile carries the account name in its folder name; that part is shown as
-`%USERNAME%`. The same rule covers the Linux side: the home directory inside
-an encoded folder name prints as `~` (`-home-<user>-work` as `-~-work`,
-Grok's `%2Fhome%2F<user>%2Fwork` as `~%2Fwork`), and a Windows account
-encoded into a Linux-side folder (`-mnt-c-Users-<name>-…`) as `%USERNAME%`.
+Agents also name project folders after the working directory, which can
+carry an account name. Those encoded names are rewritten the same way:
 
-The rewrite applies to text, JSON, NDJSON, the TUI, and MCP results.
-Opaque result refs still open the real file, and `find -a` prints real
-absolute paths in text output when a script needs them (JSON keeps the
-display form). Two limits: a single-component home
-such as `/root` encodes to a common word and is left as is, and a
-repository whose own name contains the account name keeps its name.
+| Encoded folder name | Shown as |
+| --- | --- |
+| `C--Users-<name>-work` (Windows profile) | `C--Users-%USERNAME%-work` |
+| `-mnt-c-Users-<name>-work` (Linux side) | `-mnt-c-Users-%USERNAME%-work` |
+| `-home-<user>-work` (Linux home) | `-~-work` |
+| `%2Fhome%2F<user>%2Fwork` (Grok) | `~%2Fwork` |
+
+The rewrite applies to text, JSON, NDJSON, the TUI, and MCP results. To reach
+the real file:
+
+- Opaque result refs open it.
+- `find -a` prints real absolute paths in text output; JSON keeps the display
+  form.
+
+Two cases are left as is:
+
+- A single-component home such as `/root` encodes to a common word.
+- A repository whose own name contains the account name keeps its name.
 
 A printed path works as a `path:` query, so the Windows-side results can be
 selected or left out. `%APPDATA%` and `%LOCALAPPDATA%` sit inside the
@@ -128,8 +135,9 @@ Windows-side transcript tree and overlap the `stat` calls on the mount. Off
 WSL, none of this runs.
 
 The figures below come from one WSL host where `find` lists 382 Windows-side
-sources (most from a large Claude desktop install) and compare 0.1.0a54
-("before") with this version. They answer three questions in turn: how many
+sources (most from a large Claude desktop install). "Before" is the main
+branch, which runs 0.1.0a54's code with updated dependencies, measured in the
+same session and harness run as "now". They answer three questions in turn: how many
 round trips a discovery pass makes on the mount, whether whole commands got
 slower, and how long an exhaustive search over the Windows side takes.
 
@@ -145,13 +153,18 @@ calls on paths under the mount, so the counts do not depend on machine load:
 | `find`, before | 103 | 327 | 3.2 | 51 | 0 |
 | `find`, now | 382 | 653 | 1.7 | 66 | 10 |
 
-Prompt search makes three more directory scans and three fewer `stat` calls
-than before; `find` makes about half as many `stat` calls per source.
+Prompt search makes three fewer `stat` calls and three more directory scans.
+All five scans list the Windows users directory, once for each backend that
+probes it (Claude, Codex, Cursor CLI, VS Code, and Cursor IDE, where 0.1.0a54
+probed only the last two); each is one round trip, and the `search --limit 1`
+rows below show no slowdown from them.
+
+`find` makes about half as many `stat` calls per source.
 
 ### Wall-clock time
 
-The median of the whole command, with the range in brackets, over 5 runs
-after 2 warm-ups. The mount-hidden rows ran with an empty directory
+The median of the whole command, with the range in brackets, from one
+harness run of 5 samples per row after 2 warm-ups. The mount-hidden rows ran with an empty directory
 bind-mounted over `/mnt/c`, standing in for a Linux machine. The host is
 shared, so differences under about 10% are noise:
 
@@ -162,10 +175,10 @@ shared, so differences under about 10% are noise:
 | `agentgrep find`, mount hidden | 1.50 s (1.40–1.58) | 0.94 s (0.93–1.01) |
 | `agentgrep search --limit 1`, mount hidden | 1.55 s (1.35–1.97) | 1.34 s (1.27–1.37) |
 
-`find` reads 3.7 times as many Windows sources in the same time, and no row
-is slower than before. The larger gaps (`search` with the mount, `find`
-without it) come from one run each on a busy shared machine, so they are not
-claimed as speedups. The {ref}`benchmark harness <benchmark>` reruns the
+`find` reads 3.7 times as many Windows sources in the same time: its medians
+differ by 0.04 s and its ranges overlap. No other row is slower. The two
+larger gaps (`search` with the mount, `find` without it) come from that single
+harness run on a busy machine, so they are not claimed as speedups. The {ref}`benchmark harness <benchmark>` reruns the
 comparison against the main branch:
 
 ```console
@@ -177,10 +190,12 @@ $ uv run scripts/benchmark.py run \
 ### Exhaustive search
 
 An exhaustive search over the Windows-side Claude stores on the host above
-reads 863 sources (276 MB, after skipping the copies of WSL-distro
-transcripts). One run took about 100 s while the Windows side read the files
-from disk, and one run right after took about 35 s; one run each, on a shared
-machine.
+reads about 865 sources (276 MB, after skipping the copies of WSL-distro
+transcripts). Each figure is a single run on a shared machine:
+
+- The first run, while the Windows side read the files from disk, took about
+  100 s (at an earlier commit of this change, before ChatGPT title search).
+- A warm run of this version took about 19 s.
 
 ### Cancelling or skipping the walk
 
