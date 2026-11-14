@@ -939,9 +939,13 @@ class DiscoveryStopState:
     stopped: bool = False
 
 
-_DISCOVERY_STOP: contextvars.ContextVar[
-    tuple[cabc.Callable[[], bool], DiscoveryStopState] | None
-] = contextvars.ContextVar("agentgrep_discovery_stop", default=None)
+_StopBinding = tuple[cabc.Callable[[], bool], DiscoveryStopState]
+"""A :func:`discovery_stop` predicate and the state that records it firing."""
+
+_DISCOVERY_STOP: contextvars.ContextVar[_StopBinding | None] = contextvars.ContextVar(
+    "agentgrep_discovery_stop",
+    default=None,
+)
 
 
 @contextlib.contextmanager
@@ -987,7 +991,7 @@ def _discovery_stopped() -> bool:
     return _stop_requested(_DISCOVERY_STOP.get())
 
 
-def _stop_requested(active: tuple[cabc.Callable[[], bool], DiscoveryStopState] | None) -> bool:
+def _stop_requested(active: _StopBinding | None) -> bool:
     """Check ``active``'s predicate, recording a stop in its state once it fires."""
     if active is None:
         return False
@@ -1042,19 +1046,30 @@ def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int] | 
         return [file_mtime_ns(path) for path in paths]
     # Pool threads do not inherit the context variable, so bind the stop here.
     active = _DISCOVERY_STOP.get()
-
-    def mtime_unless_stopped(path: pathlib.Path) -> int | None:
-        return None if _stop_requested(active) else file_mtime_ns(path)
-
     if len(paths) < _SLOW_MOUNT_MIN_BATCH:
-        serial: list[int] = []
-        for path in paths:
-            mtime = mtime_unless_stopped(path)
-            if mtime is None:
-                return None
-            serial.append(mtime)
-        return serial
-    futures = [_shared_stat_pool().submit(mtime_unless_stopped, path) for path in paths]
+        return _serial_mtimes(paths, active)
+    return _pooled_mtimes(paths, active)
+
+
+def _mtime_unless_stopped(path: pathlib.Path, active: _StopBinding | None) -> int | None:
+    """Return ``path``'s mtime, or ``None`` without a round trip once ``active`` fired."""
+    return None if _stop_requested(active) else file_mtime_ns(path)
+
+
+def _serial_mtimes(paths: list[pathlib.Path], active: _StopBinding | None) -> list[int] | None:
+    """Return each mtime in turn, or ``None`` once ``active`` fires."""
+    mtimes: list[int] = []
+    for path in paths:
+        mtime = _mtime_unless_stopped(path, active)
+        if mtime is None:
+            return None
+        mtimes.append(mtime)
+    return mtimes
+
+
+def _pooled_mtimes(paths: list[pathlib.Path], active: _StopBinding | None) -> list[int] | None:
+    """Return each mtime from the shared pool, or ``None`` once ``active`` fires."""
+    futures = [_shared_stat_pool().submit(_mtime_unless_stopped, path, active) for path in paths]
     mtimes: list[int] = []
     for future in futures:
         mtime = None if _stop_requested(active) else future.result()
