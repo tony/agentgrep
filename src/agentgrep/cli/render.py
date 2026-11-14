@@ -545,6 +545,16 @@ def _print_search_depth_hint(summary: RunSummary | None) -> None:
                 "conversations.",
                 file=sys.stderr,
             )
+    elif (exhaustive := actions.get("search.exhaustive")) and summary.completed_effort == "prompt":
+        # Offered alone after a prompt search when no requested agent has
+        # prompt history (ChatGPT); its patch widens the scope too.
+        flags = f"--scope {exhaustive.patch.scope} --exhaustive"
+        if exhaustive.patch.scope is None:
+            flags = "--exhaustive"
+        print(
+            f"Searched prompts only. Use {flags} to search all readable conversations.",
+            file=sys.stderr,
+        )
     elif "search.exhaustive" in actions:
         coverage = summary.coverage
         print(

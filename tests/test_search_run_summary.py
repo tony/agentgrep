@@ -723,6 +723,28 @@ def test_cli_text_explains_prompt_only_completion(
     ) in captured.err
 
 
+def test_cli_text_names_scope_for_chatgpt_prompt_search(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A ChatGPT-only prompt search points at the scope and depth that read its titles."""
+    summary = build_search_summary(
+        dataclasses.replace(_query(), agents=("chatgpt",)),
+        effort="prompt",
+        coverage=_empty_coverage(),
+        match_count=0,
+        elapsed_seconds=0.0,
+    )
+    monkeypatch.setattr(cli_render.sys.stderr, "isatty", lambda: True)
+
+    cli_render._print_search_depth_hint(summary)
+
+    assert capsys.readouterr().err == (
+        "Searched prompts only. Use --scope all --exhaustive to search all "
+        "readable conversations.\n"
+    )
+
+
 @pytest.mark.parametrize(
     "argv",
     [
