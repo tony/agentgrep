@@ -140,9 +140,16 @@ file's `cliSessionId`, the transcript's session id, so a title groups with
 its transcript. The record keeps `model`, the working directory as origin,
 `completedTurns`, and, for sessions that ran in a WSL distro, the distro name
 and the transcript path inside it. Code-tab transcripts themselves are
-ordinary Claude Code transcripts: a session run in a WSL distro writes to that
-distro's `~/.claude`, and a Windows-side session writes to
-`%USERPROFILE%/.claude`.
+ordinary Claude Code transcripts. The app (checked against Claude desktop
+5.11492.5) writes a local session's transcript to
+`projects/<encoded_cwd>/<cliSessionId>.jsonl` under Claude Code's
+configuration directory, `CLAUDE_CONFIG_DIR` or `~/.claude`, so on Windows
+that is `%USERPROFILE%/.claude`. A session run in a WSL distro or over SSH
+writes on that host, at the path the file records as
+`sshRemoteTranscriptPath`, and the app keeps a copy under
+`projects/ssh-<id>/`. Claude Code deletes transcripts older than
+`cleanupPeriodDays` (30 days by default); the app then sets
+`transcriptUnavailable`, and only the title record remains.
 
 ```console
 $ agentgrep find --agent claude

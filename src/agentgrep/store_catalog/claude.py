@@ -387,7 +387,11 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "inside a WSL distro add `wslConfig.distro` and "
             "`sshRemoteTranscriptPath`, the transcript's path inside that distro; "
             "Windows-side sessions write `<cliSessionId>.jsonl` under "
-            "`%USERPROFILE%/.claude/projects`. Some 50 further keys vary by app "
+            "`%USERPROFILE%/.claude/projects`; in general the app writes a local "
+            "session to `projects/<encoded_cwd>/<cliSessionId>.jsonl` under "
+            "Claude Code's configuration directory, and sets "
+            "`transcriptUnavailable` once Claude Code's `cleanupPeriodDays` sweep "
+            "(30 days by default) has deleted it. Some 50 further keys vary by app "
             "version. `scheduled-tasks.json` and `archived-sessions.idx` in the "
             "same directory are not sessions."
         ),
