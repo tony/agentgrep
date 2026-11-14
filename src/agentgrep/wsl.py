@@ -51,10 +51,8 @@ True
 
 from __future__ import annotations
 
-import configparser
 import dataclasses
 import functools
-import hashlib
 import hmac
 import os
 import pathlib
@@ -175,6 +173,8 @@ def _parse_mount_root(wsl_conf: str) -> pathlib.PurePosixPath:
     cannot change under a running process, and caching it keeps path display
     (which runs on the TUI's render path) free of file I/O.
     """
+    import configparser  # only WSL hosts read wsl.conf; keep it off import agentgrep
+
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     try:
         parser.read_string(pathlib.Path(wsl_conf).read_text(encoding="utf-8", errors="ignore"))
@@ -468,6 +468,8 @@ def host_profile_key(path: str | os.PathLike[str]) -> str | None:
     profile = text[len(root) + 1 :].partition("/")[0]
     if not profile or profile.casefold() in _SERVICE_PROFILES:
         return None
+    import hashlib  # only Windows-profile paths need it; keep it off import agentgrep
+
     digest = hmac.new(_profile_key_secret(), profile.casefold().encode(), hashlib.sha256)
     return digest.hexdigest()[:16]
 
