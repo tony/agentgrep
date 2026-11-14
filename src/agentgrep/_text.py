@@ -485,6 +485,21 @@ GREP_DESCRIPTION = build_description(
 )
 
 
+@functools.lru_cache(maxsize=4)
+def _home_for(home_env: str | None) -> str:
+    """Return the home directory for one ``$HOME`` value."""
+    return str(pathlib.Path.home())
+
+
+def _home_text() -> str:
+    """Return the home directory as a string, resolved once per ``$HOME`` value.
+
+    Path display runs once per printed path, and :meth:`pathlib.Path.home`
+    costs more than the rest of the rewrite.
+    """
+    return _home_for(os.environ.get("HOME"))
+
+
 class PrivatePath(PrivatePathBase):
     """Path subclass that hides account names in textual output.
 
@@ -519,7 +534,7 @@ class PrivatePath(PrivatePathBase):
         if value.startswith("~"):
             return value
 
-        home = str(pathlib.Path.home())
+        home = _home_text()
         if value == home:
             return "~"
 
