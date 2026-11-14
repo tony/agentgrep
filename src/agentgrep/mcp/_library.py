@@ -104,6 +104,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "claude.plans_text.v1",
     "claude.session_memory_text.v1",
     "claude.settings_json.v1",
+    "claude.desktop_session_json.v1",
     "claude.skills_text.v1",
     "claude.commands_text.v1",
     "claude.app_state_json_summary.v1",

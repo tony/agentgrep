@@ -348,6 +348,63 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="claude",
+        store_id="claude.desktop_sessions",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${HOME}/Library/Application Support/Claude/claude-code-sessions/"
+            "<account_uuid>/<org_uuid>/local_<uuid>.json"
+        ),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Claude/claude-code-sessions/"
+                "<account_uuid>/<org_uuid>/local_<uuid>.json"
+            ),
+            "win32": (
+                "%APPDATA%/Claude/claude-code-sessions/<account_uuid>/<org_uuid>/local_<uuid>.json"
+            ),
+        },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude desktop Code-tab session index, one JSON object per session: "
+            "`sessionId` (`local_<uuid>`), `cliSessionId` (the Claude Code "
+            "transcript's session id), `title`, `titleSource`, `cwd`, `originCwd`, "
+            "`model`, `effort`, `permissionMode`, `createdAt` and `lastActivityAt` "
+            "(Unix milliseconds), `completedTurns`, `isArchived`, and, when the "
+            "transcript cannot be read, `transcriptUnavailable: true`. Sessions run "
+            "inside a WSL distro add `wslConfig.distro` and "
+            "`sshRemoteTranscriptPath`, the transcript's path inside that distro; "
+            "Windows-side sessions write `<cliSessionId>.jsonl` under "
+            "`%USERPROFILE%/.claude/projects`. Some 50 further keys vary by app "
+            "version. `scheduled-tasks.json` and `archived-sessions.idx` in the "
+            "same directory are not sessions."
+        ),
+        distinguishes_from=("claude.projects.session", "claude.cowork.session"),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+        search_notes=(
+            "Indexed as one title record per session whose `session_id` is "
+            "`cliSessionId`, so a title groups with its transcript. Only the "
+            "keys above are read."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.desktop_sessions",
+                adapter_id="claude.desktop_session_json.v1",
+                data_version="claude.desktop_session_json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                root_key="claude_desktop",
+                home_subpath=("claude-code-sessions",),
+                glob="local_*.json",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.projects.memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.MARKDOWN_FRONTMATTER,

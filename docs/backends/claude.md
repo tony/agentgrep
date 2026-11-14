@@ -132,6 +132,17 @@ so the files use the project transcript format above and are searched as
 that home and are never read, and the per-session `local_<uuid>.json` metadata,
 which carries account fields, is not indexed.
 
+{storage:storeref}`claude.desktop_sessions` is the Code tab's session index,
+one `claude-code-sessions/<account>/<org>/local_<uuid>.json` per session. It
+is opt-in: each file becomes one title record whose `session_id` is the
+file's `cliSessionId`, the transcript's session id, so a title groups with
+its transcript. The record keeps `model`, the working directory as origin,
+`completedTurns`, and, for sessions that ran in a WSL distro, the distro name
+and the transcript path inside it. Code-tab transcripts themselves are
+ordinary Claude Code transcripts: a session run in a WSL distro writes to that
+distro's `~/.claude`, and a Windows-side session writes to
+`%USERPROFILE%/.claude`.
+
 ```console
 $ agentgrep find --agent claude
 ```

@@ -1252,7 +1252,7 @@ def discover_claude_sources(
     Honours ``CLAUDE_CONFIG_DIR`` and otherwise falls back to
     ``${HOME}/.claude``. The Claude desktop app directories (see
     :func:`claude_desktop_dirs`) add the local agent-mode ("Cowork")
-    transcripts. Path roots, globs, and adapter
+    transcripts and the Code-tab session index. Path roots, globs, and adapter
     metadata come from the ``claude.*`` rows of
     :data:`agentgrep.store_catalog.CATALOG`.
     """

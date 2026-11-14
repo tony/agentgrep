@@ -156,6 +156,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_ide.skills_text.v1",
         "claude.app_state_json_summary.v1",
         "claude.commands_text.v1",
+        "claude.desktop_session_json.v1",
         "claude.file_metadata_summary.v1",
         "claude.memory_text.v1",
         "claude.plans_text.v1",

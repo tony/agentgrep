@@ -16,6 +16,7 @@ import pytest
 
 from agentgrep import wsl
 from agentgrep._text import format_display_path
+from agentgrep.adapters import iter_source_records
 from agentgrep.discovery import discover_sources
 from agentgrep.records import AgentName, BackendSelection, SourceHandle
 
@@ -112,6 +113,7 @@ STORE_CASES: tuple[StoreCase, ...] = (
     StoreCase("cowork-on-windows-host", "claude", "cowork-1.jsonl", "claude.projects", 1),
     StoreCase("cowork-on-macos", "claude", "cowork-mac.jsonl", "claude.projects", 1),
     StoreCase("cowork-audit-log-skipped", "claude", "audit.jsonl", "claude.projects", 0),
+    StoreCase("desktop-session-index", "claude", "local_d1.json", "claude.desktop_sessions", 1),
 )
 
 
@@ -122,6 +124,20 @@ def test_windows_host_store_discovery(host_tree: HostTree, case: StoreCase) -> N
     matches = [s for s in sources if s.path.name == case.file_name and s.store == case.store]
     assert len(matches) == case.expected_count
     assert not any(_WINDOWS_USER in format_display_path(s.path) for s in sources)
+
+
+def test_desktop_session_becomes_title_record(host_tree: HostTree) -> None:
+    """A Code-tab session file yields one title record keyed by its transcript session."""
+    source = next(s for s in _discover(host_tree, "claude") if s.store == "claude.desktop_sessions")
+    (record,) = iter_source_records(source)
+    assert (record.text, record.session_id, record.model) == (
+        "Synthetic session title",
+        "windows-1",
+        "demo-model",
+    )
+    assert record.timestamp == "2026-01-01T00:01:00Z"
+    assert record.metadata["wsl_distro"] == "Demo-Distro"
+    assert "must not be copied" not in json.dumps(record.metadata)
 
 
 def test_display_form_resolves_to_its_own_profile(host_tree: HostTree) -> None:
