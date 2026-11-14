@@ -1501,6 +1501,8 @@ def _host_profile_dirs(name: str) -> tuple[pathlib.Path, ...]:
     """Return ``%USERPROFILE%/<name>`` for each Windows profile on WSL where it exists."""
     found: list[pathlib.Path] = []
     for profile in wsl.host_user_profiles():
+        if _discovery_stopped():
+            break
         candidate = profile / name
         try:
             if candidate.is_dir():
@@ -1556,6 +1558,8 @@ def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     )
     found: list[pathlib.Path] = []
     for candidate in dict.fromkeys(candidates):
+        if _discovery_stopped():
+            break
         try:
             if candidate.is_dir():
                 found.append(candidate)
@@ -1571,6 +1575,8 @@ def claude_cowork_roots(desktop_dirs: tuple[pathlib.Path, ...]) -> tuple[pathlib
     ``local-agent-mode-sessions/<account>/<org>/<session>/.claude``. Those
     homes hold ordinary Claude Code transcripts; ``audit.jsonl`` and
     ``.audit-key`` sit one level up, outside the home, and are never read.
+    Each session costs a round trip on the Windows mount, so inside
+    :func:`discovery_stop` the scan ends at the next session once it fires.
 
     Parameters
     ----------
@@ -1600,6 +1606,8 @@ def claude_cowork_roots(desktop_dirs: tuple[pathlib.Path, ...]) -> tuple[pathlib
                 # skipping the rest saves a round trip each on the Windows mount.
                 if not _COWORK_SESSION_RE.fullmatch(session.name):
                     continue
+                if _discovery_stopped():
+                    return tuple(roots)
                 home = session / ".claude"
                 try:
                     if home.is_dir():
@@ -1618,6 +1626,8 @@ def _child_dirs(root: pathlib.Path, *, depth: int) -> list[pathlib.Path]:
     for _ in range(depth):
         children: list[pathlib.Path] = []
         for parent in level:
+            if _discovery_stopped():
+                return []
             try:
                 with os.scandir(parent) as entries:
                     children.extend(

@@ -476,3 +476,22 @@ def test_profile_filter_selects_the_windows_side(
         if isinstance(event, FindRecordEmitted)
     }
     assert names & (_WINDOWS_SIDE | {"local-1.jsonl", "cowork-mac.jsonl"}) == expected
+
+
+def test_cowork_root_scan_stops_early(tmp_path: pathlib.Path) -> None:
+    """A stop ends the Cowork session scan, one round trip per session, partway through."""
+    from agentgrep.discovery import claude_cowork_roots, discovery_stop
+
+    for index in range(40):
+        (tmp_path / f"local-agent-mode-sessions/a/o/local_{index}/.claude").mkdir(parents=True)
+    checks: list[int] = []
+
+    def stop() -> bool:
+        checks.append(1)
+        return len(checks) > 5
+
+    with discovery_stop(stop) as state:
+        roots = claude_cowork_roots((tmp_path,))
+    assert state.stopped
+    assert len(roots) < 40
+    assert len(claude_cowork_roots((tmp_path,))) == 40
