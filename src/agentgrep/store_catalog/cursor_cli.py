@@ -191,11 +191,14 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         observed_version=_CURSOR_CLI_OBSERVED_VERSION,
         observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
-            "SQLite with `conversation_summaries(conversationId, title, tldr, "
-            "overview, summaryBullets, model, mode, updatedAt)` — title and prose "
-            "summaries of CLI agent chats, not raw transcripts. Some installs have "
-            "the table empty even when the CLI agent runs — the tracker may be "
-            "disabled or unused; agentgrep tolerates that silently."
+            "SQLite with seven tables. agentgrep reads "
+            "`conversation_summaries(conversationId, title, tldr, overview, "
+            "summaryBullets, model, mode, updatedAt)`: title and prose summaries "
+            "of CLI agent chats, not raw transcripts. On the Windows host checked "
+            "that table, `ai_code_hashes`, `ai_deleted_files`, and "
+            "`tracked_file_content` were empty and only `scored_commits` (git "
+            "commit metadata and messages, not chat) and `tracking_state` held "
+            "rows; an empty summaries table is tolerated silently."
         ),
         search_by_default=True,
         discovery=(

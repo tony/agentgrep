@@ -419,6 +419,55 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="claude",
+        store_id="claude.desktop_logs",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.TEXT,
+        path_pattern="%LOCALAPPDATA%/Claude/Logs/*.log",
+        platform_variants={"win32": "%LOCALAPPDATA%/Claude/Logs/*.log"},
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude desktop app logs on Windows: `main.log`, `ssh.log`, `mcp.log`, "
+            "`mcp-server-<name>.log`, `claude.ai-web.log`, `cowork_vm_node.log`, "
+            "`coworkd.log`, and `remote-control.log`, with `main` and `ssh` "
+            "rolled over at about 10 MiB into `*1.log` to `*4.log`; an older copy "
+            "sits in `%APPDATA%/Claude/logs`. Lines are "
+            "`YYYY-MM-DD HH:MM:SS [level][component] message`. They carry no "
+            "prompt text: message sends are logged as lengths and counts, and "
+            "the lines carry session ids, organization ids, and SSH details, so "
+            "the logs are documented and never read."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.desktop_chat_cache",
+        role=StoreRole.CACHE,
+        format=StoreFormat.LEVELDB,
+        path_pattern="%APPDATA%/Claude/IndexedDB/https_claude.ai_0.indexeddb.leveldb/",
+        platform_variants={
+            "win32": "%APPDATA%/Claude/IndexedDB/https_claude.ai_0.indexeddb.leveldb/",
+        },
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude desktop's claude.ai chat client, a Chromium IndexedDB. The "
+            "`claude-conversation-store` database keeps message trees "
+            "(`parent_message_uuid`, `human`/`assistant` messages with text, "
+            "thinking, and tool blocks) for the few conversations opened "
+            "recently, evicted by rule; the `keyval-store` database holds a "
+            "Snappy-compressed React Query cache whose `chat_conversation_list` "
+            "carries conversation names and summaries. Values are V8-serialized "
+            "inside Blink envelopes, some in blob files. The full chat history "
+            "stays on Anthropic's servers; this rolling cache is documented, not "
+            "searched."
+        ),
+        coverage=StoreCoverage.CATALOG_ONLY,
+        search_by_default=False,
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.projects.memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.MARKDOWN_FRONTMATTER,

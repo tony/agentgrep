@@ -326,18 +326,20 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         store_id="codex.attachments",
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.TEXT,
-        path_pattern=(
-            "${CODEX_HOME or ${HOME}/.codex}/attachments/<attachment_uuid>/pasted-text-<n>.txt"
-        ),
+        path_pattern=("${CODEX_HOME or ${HOME}/.codex}/attachments/<attachment_uuid>/<file>"),
         env_overrides=("CODEX_HOME",),
-        platform_variants={"win32": "%USERPROFILE%/.codex/attachments/<attachment_uuid>/"},
+        platform_variants={"win32": "%USERPROFILE%/.codex/attachments/<attachment_uuid>/<file>"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
-            "Plain-text spillover for pastes too large to inline in a turn, one "
-            "directory per attachment id. The directory name is an attachment id, "
-            "not a thread id, so an attachment does not name the session that used "
-            "it. Parity with `cursor-cli.uploads`."
+            "Pasted text and goal text kept out of the turn, one directory per "
+            "attachment id: `Pasted text.txt`, `pasted-text.txt`, "
+            "`pasted-text-<n>.txt`, `goal-objective.md`, and `image-<n>.png`, with "
+            "a top-level `pasted-text-attachments.json` manifest (`attachmentPaths`, "
+            "`pendingRemovalPaths`, `textExcerptsByPath`). The directory name is "
+            "an attachment id, not a thread id, so an attachment does not name the "
+            "session that used it. Documented; no discovery spec reads it yet. "
+            "Parity with `cursor-cli.uploads`."
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -456,11 +458,13 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.MARKDOWN_FRONTMATTER,
         path_pattern="${CODEX_HOME or ${HOME}/.codex}/memories/",
         env_overrides=("CODEX_HOME",),
+        platform_variants={"win32": "%USERPROFILE%/.codex/memories/"},
         observed_version=_CODEX_OBSERVED_VERSION,
         observed_at=_CODEX_OBSERVED_AT,
         schema_notes=(
-            "Persistent memory workspace: `MEMORY.md`, `memory_summary.md`, "
-            "`raw_memories.md`, rollout summaries, and skill memory folders."
+            "Persistent memory workspace, kept as a git repository: `MEMORY.md`, "
+            "`memory_summary.md`, `raw_memories.md`, `rollout_summaries/*.md`, and "
+            "skill memory folders. Model-written summaries, not typed prompts."
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
@@ -476,6 +480,42 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
                 path_kind="store_file",
                 source_kind="text",
                 home_subpath=("memories",),
+                glob="*.md",
+                path_parts_excluded=(".git",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="codex",
+        store_id="codex.memories_v2",
+        role=StoreRole.PERSISTENT_MEMORY,
+        format=StoreFormat.MARKDOWN_FRONTMATTER,
+        path_pattern="${CODEX_HOME or ${HOME}/.codex}/memories_v2/",
+        env_overrides=("CODEX_HOME",),
+        platform_variants={"win32": "%USERPROFILE%/.codex/memories_v2/"},
+        observed_version=_CODEX_OBSERVED_VERSION,
+        observed_at=_CODEX_OBSERVED_AT,
+        schema_notes=(
+            "Second-generation memory workspace, the directory Codex maps "
+            "`MemoryVersion::V2` to (codex-rs/protocol/src/memory_version.rs at "
+            "rust-v0.169.0): a git repository with `memory_summary.md` and "
+            "`rollout_summaries/*.md`, the same Markdown shape as `codex.memories`."
+        ),
+        distinguishes_from=("codex.memories",),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="codex.memories_v2",
+                adapter_id="codex.memories_text.v1",
+                data_version="codex.memories.markdown.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("memories_v2",),
                 glob="*.md",
                 path_parts_excluded=(".git",),
             ),

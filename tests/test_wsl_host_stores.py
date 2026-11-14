@@ -78,6 +78,9 @@ def host_tree(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> HostTr
         profile / ".cursor/projects/p/agent-transcripts/cursor-1/cursor-1.jsonl",
         "cursor-1",
     )
+    memory = profile / ".codex/memories_v2/memory_summary.md"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("# Summary\n\nsynthetic memory about widgets\n", encoding="utf-8")
     _write_transcript(users / "Public/.claude/projects/-x/public-1.jsonl", "public-1")
     session = profile / "AppData/Roaming/Claude/claude-code-sessions/acct/org/local_d1.json"
     session.parent.mkdir(parents=True)
@@ -180,6 +183,13 @@ STORE_CASES: tuple[StoreCase, ...] = (
         agent="codex",
         file_name="rollout-2026-01-01T00-00-00-abc.jsonl",
         store="codex.sessions",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="windows-codex-memories-v2",
+        agent="codex",
+        file_name="memory_summary.md",
+        store="codex.memories_v2",
         expected_count=1,
     ),
     StoreCase(
