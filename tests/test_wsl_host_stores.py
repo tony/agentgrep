@@ -603,3 +603,45 @@ def test_profile_filter_selects_the_windows_side(
         if isinstance(event, FindRecordEmitted)
     }
     assert names & (_WINDOWS_SIDE | {"local-1.jsonl", "cowork-mac.jsonl"}) == expected
+
+
+_FRONTENDS = ("agentgrep.cli", "agentgrep.ui", "agentgrep.mcp", "agentgrep.query")
+
+
+class BoundaryCase(t.NamedTuple):
+    """A core module and the import prefixes it must never reach (ADR 0010)."""
+
+    test_id: str
+    module: str
+    forbidden: tuple[str, ...]
+
+
+BOUNDARY_CASES: tuple[BoundaryCase, ...] = (
+    BoundaryCase(test_id="wsl-is-a-leaf", module="wsl", forbidden=("agentgrep",)),
+    BoundaryCase(test_id="text-below-frontends", module="_text", forbidden=_FRONTENDS),
+    BoundaryCase(test_id="readers-below-frontends", module="readers", forbidden=_FRONTENDS),
+    BoundaryCase(test_id="discovery-below-frontends", module="discovery", forbidden=_FRONTENDS),
+)
+
+
+@pytest.mark.parametrize(
+    list(BoundaryCase._fields),
+    BOUNDARY_CASES,
+    ids=[case.test_id for case in BOUNDARY_CASES],
+)
+def test_core_module_stays_headless(
+    test_id: str,
+    module: str,
+    forbidden: tuple[str, ...],
+) -> None:
+    """Windows-host support lives in the headless core, below every frontend."""
+    import ast
+
+    source = pathlib.Path(wsl.__file__).with_name(f"{module}.py").read_text(encoding="utf-8")
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            imported.update(f"{node.module}.{alias.name}" for alias in node.names)
+    assert not [name for name in imported if name.startswith(forbidden)]
