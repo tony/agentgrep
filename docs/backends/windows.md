@@ -140,7 +140,7 @@ calls on paths under the mount, so the counts do not depend on machine load:
 | Prompt search, before | 1 | 39 | 39 | 2 | 0 |
 | Prompt search, now | 1 | 36 | 36 | 5 | 0 |
 | `find`, before | 103 | 327 | 3.2 | 51 | 0 |
-| `find`, now | 376 | 641 | 1.7 | 65 | 10 |
+| `find`, now | 382 | 653 | 1.7 | 66 | 10 |
 
 Prompt search makes three more directory scans and three fewer `stat` calls
 than before; `find` makes about half as many `stat` calls per source.
@@ -148,22 +148,22 @@ than before; `find` makes about half as many `stat` calls per source.
 ### Wall-clock time
 
 The median of the whole command, with the range in brackets, over 5 runs
-after 2 warm-ups (10 after 3 for the mount-hidden `find`). The mount-hidden
-rows ran with an empty directory bind-mounted over `/mnt/c`, standing in for
-a Linux machine. The host is shared, so differences under about 10% are
-noise:
+after 2 warm-ups. The mount-hidden rows ran with an empty directory
+bind-mounted over `/mnt/c`, standing in for a Linux machine. The host is
+shared, so differences under about 10% are noise:
 
 | Command | Before | Now |
 | --- | --- | --- |
-| `agentgrep find` | 2.86 s (2.74–3.02) | 2.96 s (2.92–3.53) |
-| `agentgrep search --limit 1` | 1.34 s (1.32–1.49) | 1.32 s (1.25–1.35) |
-| `agentgrep find`, mount hidden | 0.98 s (0.86–1.31) | 1.00 s (0.83–1.31) |
-| `agentgrep search --limit 1`, mount hidden | 1.35 s (1.29–1.48) | 1.25 s (1.22–1.33) |
+| `agentgrep find` | 4.06 s (3.78–4.47) | 4.02 s (2.74–4.10) |
+| `agentgrep search --limit 1` | 1.77 s (1.63–2.36) | 1.29 s (1.20–1.33) |
+| `agentgrep find`, mount hidden | 1.50 s (1.40–1.58) | 0.94 s (0.93–1.01) |
+| `agentgrep search --limit 1`, mount hidden | 1.55 s (1.35–1.97) | 1.34 s (1.27–1.37) |
 
-Every difference is inside that noise: `find` reads 3.6 times as many Windows
-sources for a median 0.1 s more, and without the Windows side neither
-command shows a measurable change. The {ref}`benchmark harness <benchmark>`
-reruns the comparison against the main branch:
+`find` reads 3.7 times as many Windows sources in the same time, and no row
+is slower than before. The larger gaps (`search` with the mount, `find`
+without it) come from one run each on a busy shared machine, so they are not
+claimed as speedups. The {ref}`benchmark harness <benchmark>` reruns the
+comparison against the main branch:
 
 ```console
 $ uv run scripts/benchmark.py run \
