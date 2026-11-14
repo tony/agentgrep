@@ -14,8 +14,7 @@ import typing as t
 
 import pytest
 
-from agentgrep import wsl
-from agentgrep._chromium_storage import local_storage_values
+from agentgrep import _chromium_storage as chromium_storage, wsl
 from agentgrep.adapters import iter_source_records
 from agentgrep.discovery import CHATGPT_DESKTOP_PACKAGE, discover_sources
 from agentgrep.records import BackendSelection
@@ -140,6 +139,7 @@ class ConversationListCase(t.NamedTuple):
 
 _KEY = _ORIGIN + _storage_string(_HISTORY_KEY)
 _SECRET = _ORIGIN + _storage_string("client-correlated-secret")
+_SECRET_VALUE = _storage_string("s3cr3t-value")
 _OLD = _history_value([_item("c1", "Draft the widget plan", "2026-09-02T00:00:00.000000Z")])
 _NEW = _history_value(
     [
@@ -152,14 +152,14 @@ _NEW = _history_value(
 CONVERSATION_LIST_CASES: tuple[ConversationListCase, ...] = (
     ConversationListCase(
         test_id="write-ahead-log",
-        files=(("000003.log", 1, ((_KEY, _OLD), (_SECRET, _storage_string("x")))),),
+        files=(("000003.log", 1, ((_KEY, _OLD), (_SECRET, _SECRET_VALUE))),),
         expected=frozenset({"Draft the widget plan"}),
     ),
     ConversationListCase(
         test_id="snappy-table-newer-than-log",
         files=(
             ("000003.log", 1, ((_KEY, _OLD),)),
-            ("000005.ldb", 7, ((_KEY, _NEW), (_SECRET, _storage_string("x")))),
+            ("000005.ldb", 7, ((_KEY, _NEW), (_SECRET, _SECRET_VALUE))),
         ),
         expected=frozenset({"Widget launch plan", "Résumé ✓ 日本語"}),
     ),
@@ -237,17 +237,18 @@ def test_conversation_list_becomes_title_records(
     monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
 
     (source,) = discover_sources(tmp_path / "home", ("chatgpt",), _NO_BACKENDS)
+    decoded: list[bytes] = []
+    real_decode = chromium_storage._decode_storage_string
+
+    def spy(raw: bytes) -> str | None:
+        decoded.append(raw)
+        return real_decode(raw)
+
+    monkeypatch.setattr(chromium_storage, "_decode_storage_string", spy)
     records = list(iter_source_records(source))
     assert {record.title for record in records} == expected
     assert all(record.session_id == record.conversation_id for record in records)
-    assert local_storage_values(leveldb, "https://chatgpt.com", lambda key: True).keys() <= {
-        _HISTORY_KEY,
-        _HISTORY_KEY + "-without-projects",
-        "client-correlated-secret",
-    }
-    assert set(
-        local_storage_values(leveldb, "https://chatgpt.com", lambda key: key == _HISTORY_KEY),
-    ) <= {_HISTORY_KEY}
+    assert _SECRET_VALUE not in decoded
 
 
 class DamagedStoreCase(t.NamedTuple):

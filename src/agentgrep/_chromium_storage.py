@@ -256,19 +256,23 @@ def _table_entries(raw: bytes) -> cabc.Iterator[_Entry]:
             yield internal_key[:-8], value if is_put else None, trailer >> 8
 
 
-def read_leveldb(directory: pathlib.Path, *, key_prefix: bytes = b"") -> dict[bytes, bytes]:
+def read_leveldb(
+    directory: pathlib.Path,
+    *,
+    keep_key: cabc.Callable[[bytes], bool] | None = None,
+) -> dict[bytes, bytes]:
     """Return the live key/value pairs of a LevelDB directory, read-only.
 
     Every ``*.log`` and ``*.ldb`` file is read and the newest entry per key
-    (by sequence number) wins; deleted keys are left out. Only keys starting
-    with ``key_prefix`` are kept, so memory holds just the entries asked for.
+    (by sequence number) wins; deleted keys are left out. Only keys that
+    ``keep_key`` accepts are held, so memory never retains other values.
 
     Parameters
     ----------
     directory : pathlib.Path
         A LevelDB directory, such as Chromium's ``Local Storage/leveldb``.
-    key_prefix : bytes
-        Keep only keys with this prefix; empty keeps every key.
+    keep_key : Callable[[bytes], bool] | None
+        Returns true for the raw keys to keep; ``None`` keeps every key.
 
     Returns
     -------
@@ -300,7 +304,7 @@ def read_leveldb(directory: pathlib.Path, *, key_prefix: bytes = b"") -> dict[by
             continue
         try:
             for key, value, sequence in reader(raw):
-                if not key.startswith(key_prefix):
+                if keep_key is not None and not keep_key(key):
                     continue
                 current = latest.get(key)
                 if current is None or sequence >= current[0]:
@@ -368,12 +372,22 @@ def local_storage_values(
     {}
     """
     prefix = b"_" + origin.encode() + b"\x00"
+    decisions: dict[bytes, bool] = {}
+
+    def accepted(raw_key: bytes) -> bool:
+        if raw_key not in decisions:
+            name = (
+                _decode_storage_string(raw_key[len(prefix) :])
+                if raw_key.startswith(prefix)
+                else None
+            )
+            decisions[raw_key] = name is not None and keep(name)
+        return decisions[raw_key]
+
     values: dict[str, str] = {}
-    for raw_key, raw_value in read_leveldb(directory, key_prefix=prefix).items():
+    for raw_key, raw_value in read_leveldb(directory, keep_key=accepted).items():
         key = _decode_storage_string(raw_key[len(prefix) :])
-        if key is None or not keep(key):
-            continue
         value = _decode_storage_string(raw_value)
-        if value is not None:
+        if key is not None and value is not None:
             values[key] = value
     return values
