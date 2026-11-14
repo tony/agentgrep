@@ -10,8 +10,10 @@ modification time only.
 
 from __future__ import annotations
 
+import datetime
 import functools
 import json
+import math
 import typing as t
 
 from agentgrep._chromium_storage import local_storage_values
@@ -60,6 +62,25 @@ def _item_time(item: dict[str, object], key: str) -> str | None:
     return value if isinstance(value, str) and value else _unix_to_isoformat(value)
 
 
+def _item_order(item: dict[str, object]) -> float:
+    """Return an item's ``update_time`` as epoch seconds for newest-wins, ``-inf`` if unknown.
+
+    Comparing the ISO strings would misorder an epoch value rendered without a
+    fraction (``...:20Z``) against an API string with one (``...:20.900000Z``).
+    """
+    value = item.get("update_time")
+    if isinstance(value, bool):
+        return -math.inf
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return datetime.datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return -math.inf
+    return -math.inf
+
+
 def parse_chatgpt_conversation_list(source: SourceHandle) -> cabc.Iterator[SearchRecord]:
     """Parse ChatGPT desktop's cached conversation list as one title record each.
 
@@ -68,7 +89,10 @@ def parse_chatgpt_conversation_list(source: SourceHandle) -> cabc.Iterator[Searc
     without taking its lock. Only the conversation-list keys are decoded: the
     store's other entries (session data, device ids, secrets) are never read.
     Each conversation id appears in several cached snapshots; the newest one
-    (by ``update_time``) wins.
+    (by ``update_time``) wins. The list is the app's cache, not the account's
+    history: it keeps every conversation any cached snapshot lists (one per
+    account and per projects view), so a conversation deleted or moved off
+    the first page since the app last refreshed can still appear.
 
     Parameters
     ----------
@@ -97,9 +121,7 @@ def parse_chatgpt_conversation_list(source: SourceHandle) -> cabc.Iterator[Searc
             if not conversation_id or not as_optional_str(item.get("title")):
                 continue
             current = newest.get(conversation_id)
-            if current is None or (_item_time(item, "update_time") or "") >= (
-                _item_time(current, "update_time") or ""
-            ):
+            if current is None or _item_order(item) >= _item_order(current):
                 newest[conversation_id] = item
     for conversation_id, item in newest.items():
         title = as_optional_str(item.get("title")) or ""

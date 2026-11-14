@@ -172,6 +172,30 @@ CONVERSATION_LIST_CASES: tuple[ConversationListCase, ...] = (
         expected=frozenset({"Draft the widget plan"}),
     ),
     ConversationListCase(
+        test_id="mixed-time-formats",
+        files=(
+            (
+                "000003.log",
+                1,
+                (
+                    (
+                        _KEY,
+                        _history_value(
+                            [{"id": "c1", "title": "Epoch title", "update_time": 1757000000}],
+                        ),
+                    ),
+                    (
+                        _ORIGIN + _storage_string(_HISTORY_KEY + "-without-projects"),
+                        _history_value(
+                            [_item("c1", "ISO title", "2025-09-04T15:33:20.900000Z")],
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        expected=frozenset({"ISO title"}),
+    ),
+    ConversationListCase(
         test_id="deleted-list",
         files=(
             ("000003.log", 1, ((_KEY, _OLD),)),
@@ -218,6 +242,7 @@ def test_conversation_list_becomes_title_records(
     assert all(record.session_id == record.conversation_id for record in records)
     assert local_storage_values(leveldb, "https://chatgpt.com", lambda key: True).keys() <= {
         _HISTORY_KEY,
+        _HISTORY_KEY + "-without-projects",
         "client-correlated-secret",
     }
     assert set(
