@@ -139,11 +139,8 @@ WSL, none of this runs.
 
 The figures below come from one WSL host where `find` lists 390 Windows-side
 sources (most from a large Claude desktop install) and compare the main branch
-("before") with commit `a12b864` ("now"). Later commits add a string
-comparison per source to search planning and a pattern match per printed path;
-printing a path still costs less than on the main branch (9 to 11 µs against
-14 to 19 µs for the 8,750 paths `find libtmux` prints). They answer three questions in
-turn: how many round trips a discovery pass makes on the mount, whether whole
+("before") with commit `a38e03b` ("now"). They answer three questions in turn:
+how many round trips a discovery pass makes on the mount, whether whole
 commands got slower, and how long an exhaustive search over the Windows side
 takes.
 
@@ -180,16 +177,16 @@ shared, so differences under about 10% are noise:
 
 | Command | Before | Now |
 | --- | --- | --- |
-| `agentgrep find libtmux` | 4.19 s (3.82–4.39) | 3.99 s (3.79–4.62) |
-| `agentgrep search --limit 1 libtmux` | 2.74 s (2.10–2.95) | 2.49 s (1.89–3.08) |
-| `agentgrep find libtmux`, mount hidden | 1.44 s (1.14–1.88) | 1.08 s (0.98–1.50) |
-| `agentgrep search --limit 1 libtmux`, mount hidden | 1.81 s (1.70–1.91) | 1.77 s (1.59–2.02) |
+| `agentgrep find libtmux` | 3.77 s (3.53–3.96) | 3.76 s (3.54–4.14) |
+| `agentgrep search --limit 1 libtmux` | 1.68 s (1.53–2.21) | 1.61 s (1.55–1.96) |
+| `agentgrep find libtmux`, mount hidden | 1.00 s (0.91–1.16) | 0.83 s (0.78–0.96) |
+| `agentgrep search --limit 1 libtmux`, mount hidden | 1.61 s (1.42–1.82) | 1.59 s (1.41–2.11) |
 
 No median is slower, so reading the Windows side costs no wall-clock time
 against the main branch on this host. With the mount hidden, `find` is faster
-(1.08 s against 1.44 s), but the ranges overlap, so that is not claimed as a
+(0.83 s against 1.00 s), but the ranges overlap, so that is not claimed as a
 speedup. The rows ran under heavy load from
-other work (load average 10 to 17), which is why they are slower in absolute
+other work (load average 9 to 16), which is why they are slower in absolute
 terms than an idle machine would be. The {ref}`benchmark harness <benchmark>` gives a quicker
 comparison against the main branch, but it times one build after the other,
 so a change in machine load can hide or invent a gap of this size:
