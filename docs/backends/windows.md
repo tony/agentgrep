@@ -136,12 +136,12 @@ skips the desktop app directories. `find` and `--exhaustive` walk every
 Windows-side transcript tree and overlap the `stat` calls on the mount. Off
 WSL, none of this runs.
 
-The figures below come from one WSL host where `find` lists 389 Windows-side
+The figures below come from one WSL host where `find` lists 390 Windows-side
 sources (most from a large Claude desktop install) and compare the main
-branch ("before") with this version. They answer three questions in turn:
-how many round trips a discovery pass makes on the mount, whether whole
-commands got slower, and how long an exhaustive search over the Windows side
-takes.
+branch ("before") with commit `a12b864` ("now"). They answer three questions
+in turn: how many round trips a discovery pass makes on the mount, whether
+whole commands got slower, and how long an exhaustive search over the Windows
+side takes.
 
 ### Operations on the mount
 
@@ -151,14 +151,14 @@ calls on paths under the mount, so the counts do not depend on machine load:
 | Pass | Windows sources | `stat` calls | `stat` per source | Directory scans | `fd` runs |
 | --- | --- | --- | --- | --- | --- |
 | Prompt search, before | 1 | 39 | 39 | 2 | 0 |
-| Prompt search, now | 1 | 36 | 36 | 5 | 0 |
+| Prompt search, now | 1 | 24 | 24 | 1 | 0 |
 | `find`, before | 103 | 327 | 3.2 | 51 | 0 |
-| `find`, now | 389 | 280 | 0.7 | 67 | 10 |
+| `find`, now | 390 | 261 | 0.7 | 61 | 10 |
 
-Prompt search makes three fewer `stat` calls and three more directory scans.
-All five scans list the Windows users directory, once for each backend that
-probes it (Claude, Codex, Cursor CLI, VS Code, and Cursor IDE); each is one
-round trip, and the `search --limit 1` rows below show no slowdown from them.
+Prompt search makes 15 fewer `stat` calls and one fewer directory scan: the
+backends that probe the Windows side (Claude, Codex, Cursor CLI, VS Code, and
+Cursor IDE) share one listing of the Windows users directory per discovery
+pass.
 
 `find` lists 3.8 times as many Windows sources with fewer `stat` calls: it
 never shows a modification time, so it skips the `stat` that reads one unless
@@ -176,13 +176,15 @@ shared, so differences under about 10% are noise:
 
 | Command | Before | Now |
 | --- | --- | --- |
-| `agentgrep find libtmux` | 3.39 s (3.23–3.88) | 3.47 s (3.22–4.04) |
-| `agentgrep search --limit 1 libtmux` | 1.55 s (1.27–2.08) | 1.56 s (1.30–1.70) |
-| `agentgrep find libtmux`, mount hidden | 0.83 s (0.76–1.10) | 0.72 s (0.68–1.09) |
-| `agentgrep search --limit 1 libtmux`, mount hidden | 1.17 s (1.13–1.30) | 1.18 s (1.15–1.39) |
+| `agentgrep find libtmux` | 4.19 s (3.82–4.39) | 3.99 s (3.79–4.62) |
+| `agentgrep search --limit 1 libtmux` | 2.74 s (2.10–2.95) | 2.49 s (1.89–3.08) |
+| `agentgrep find libtmux`, mount hidden | 1.44 s (1.14–1.88) | 1.08 s (0.98–1.50) |
+| `agentgrep search --limit 1 libtmux`, mount hidden | 1.81 s (1.70–1.91) | 1.77 s (1.59–2.02) |
 
-Every row is within that noise, so this version is not slower while it reads
-the Windows side. The {ref}`benchmark harness <benchmark>` gives a quicker
+No median is slower, so reading the Windows side costs no wall-clock time
+against the main branch on this host. The rows ran under heavy load from
+other work (load average 10 to 17), which is why they are slower in absolute
+terms than an idle machine would be. The {ref}`benchmark harness <benchmark>` gives a quicker
 comparison against the main branch, but it times one build after the other,
 so a change in machine load can hide or invent a gap of this size:
 
