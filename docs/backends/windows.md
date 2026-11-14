@@ -53,7 +53,8 @@ encoded into a Linux-side folder (`-mnt-c-Users-<name>-…`) as `%USERNAME%`.
 
 The rewrite applies to text, JSON, NDJSON, the TUI, and MCP results.
 Opaque result refs still open the real file, and `find -a` prints real
-absolute paths when a script needs them. Two limits: a single-component home
+absolute paths in text output when a script needs them (JSON keeps the
+display form). Two limits: a single-component home
 such as `/root` encodes to a common word and is left as is, and a
 repository whose own name contains the account name keeps its name.
 
