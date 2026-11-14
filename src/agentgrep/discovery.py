@@ -90,6 +90,29 @@ def discover_sources(
     conversation-content role fallback; search can disable it explicitly when
     a prompt-only read policy must not enumerate app state.
     """
+    with _profile_listing_memo():
+        return _discover_sources(
+            home,
+            agents,
+            backends,
+            include_non_default=include_non_default,
+            version_detail=version_detail,
+            store_roles=store_roles,
+            allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+        )
+
+
+def _discover_sources(
+    home: pathlib.Path,
+    agents: tuple[AgentName, ...],
+    backends: BackendSelection,
+    *,
+    include_non_default: bool,
+    version_detail: DiscoveryVersionDetail,
+    store_roles: DiscoveryStoreRoles,
+    allow_conversation_content_role_fallback: bool,
+) -> list[SourceHandle]:
+    """Run :func:`discover_sources` inside the caller's profile-listing memo."""
     discovered: list[SourceHandle] = []
     for agent in agents:
         if agent == "codex":
@@ -298,6 +321,21 @@ def discover_listed_sources(
     >>> [(s.store, s.coverage.value) for s in discover_listed_sources(home, ("chatgpt",), none)]
     [('chatgpt.conversations', 'catalog_only')]
     """
+    with _profile_listing_memo():
+        return _discover_listed_sources(
+            home, agents, backends, version_detail=version_detail, store_roles=store_roles
+        )
+
+
+def _discover_listed_sources(
+    home: pathlib.Path,
+    agents: tuple[AgentName, ...],
+    backends: BackendSelection,
+    *,
+    version_detail: DiscoveryVersionDetail,
+    store_roles: DiscoveryStoreRoles,
+) -> list[SourceHandle]:
+    """Run :func:`discover_listed_sources`; both of its passes share one profile listing."""
     listed = tuple(agent for agent in agents if agent in CATALOG_LISTED_AGENTS)
     others = tuple(agent for agent in agents if agent not in CATALOG_LISTED_AGENTS)
     sources = (
@@ -1699,9 +1737,40 @@ def discover_claude_sources(
 _CLAUDE_TRANSCRIPT_STORES = frozenset({"claude.projects", "claude.projects_subagents"})
 
 
+_PROFILE_LISTING: contextvars.ContextVar[list[tuple[wsl.WSLHostUserProfile, ...]] | None] = (
+    contextvars.ContextVar("agentgrep_profile_listing", default=None)
+)
+"""The current discovery pass's profile listing, once made (an empty list until then)."""
+
+
+@contextlib.contextmanager
+def _profile_listing_memo() -> cabc.Generator[None]:
+    """Share one Windows profile listing across a discovery pass.
+
+    Every backend that probes the Windows side asks for the profiles, and each
+    listing is a directory scan plus one ``stat`` per profile on the 9p mount.
+    A nested pass (``find`` runs two) reuses the outer pass's listing.
+    """
+    if _PROFILE_LISTING.get() is not None:
+        yield
+        return
+    token = _PROFILE_LISTING.set([])
+    try:
+        yield
+    finally:
+        _PROFILE_LISTING.reset(token)
+
+
 def _host_profiles() -> tuple[wsl.WSLHostUserProfile, ...]:
-    """List the Windows profiles on WSL, ending early once discovery is told to stop."""
-    return wsl.host_user_profiles(should_stop=_active_stop())
+    """List the Windows profiles on WSL once per pass, ending early once discovery stops."""
+    memo = _PROFILE_LISTING.get()
+    if memo:
+        return memo[0]
+    profiles = wsl.host_user_profiles(should_stop=_active_stop())
+    # A stopped listing is partial; keep it out of the memo.
+    if memo is not None and not _discovery_stopped():
+        memo.append(profiles)
+    return profiles
 
 
 def _existing_dirs(paths: cabc.Iterable[pathlib.Path]) -> tuple[pathlib.Path, ...]:

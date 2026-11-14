@@ -835,6 +835,28 @@ async def test_cancelled_discovery_thread_stops_the_windows_walk(
     assert len(calls) <= discovery._SLOW_MOUNT_STAT_WORKERS
 
 
+def test_one_profile_listing_per_pass(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every backend probing the Windows side shares one profile listing per discovery pass.
+
+    Each listing is a directory scan plus a ``stat`` per profile on the 9p mount.
+    """
+    calls: list[int] = []
+    real_listing = wsl.host_user_profiles
+
+    def listing(*args: t.Any, **kwargs: t.Any) -> tuple[wsl.WSLHostUserProfile, ...]:
+        calls.append(1)
+        return real_listing(*args, **kwargs)
+
+    monkeypatch.setattr(wsl, "host_user_profiles", listing)
+    agents: tuple[AgentName, ...] = ("claude", "codex", "cursor-cli", "vscode", "cursor-ide")
+    sources = discover_sources(host_tree.home, agents, _NO_BACKENDS, include_non_default=True)
+    assert {s.agent for s in sources} >= {"claude", "codex", "cursor-cli"}
+    assert len(calls) == 1
+
+
 class FindStatCase(t.NamedTuple):
     """A find query and whether discovery must stat Windows-side files for it."""
 
