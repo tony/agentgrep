@@ -144,9 +144,9 @@ skips the desktop app directories. `find` and `--exhaustive` walk every
 Windows-side transcript tree and overlap the `stat` calls on the mount. Off
 WSL, none of this runs.
 
-The figures below come from one WSL host where `find` lists 390 Windows-side
+The figures below come from one WSL host where `find` lists 391 Windows-side
 sources (most from a large Claude desktop install) and compare the main branch
-("before") with commit `a38e03b` ("now"). They answer three questions in turn:
+("before") with commit `c07f6f1` ("now"). They answer three questions in turn:
 how many round trips a discovery pass makes on the mount, whether whole
 commands got slower, and how long an exhaustive search over the Windows side
 takes.
@@ -161,7 +161,7 @@ calls on paths under the mount, so the counts do not depend on machine load:
 | Prompt search, before | 1 | 39 | 39 | 2 | 0 |
 | Prompt search, now | 1 | 24 | 24 | 1 | 0 |
 | `find`, before | 103 | 327 | 3.2 | 51 | 0 |
-| `find`, now | 390 | 261 | 0.7 | 61 | 10 |
+| `find`, now | 391 | 262 | 0.7 | 61 | 10 |
 
 Prompt search makes 15 fewer `stat` calls and one fewer directory scan: the
 backends that probe the Windows side (Claude, Codex, Cursor CLI, VS Code, and
@@ -184,16 +184,16 @@ shared, so differences under about 10% are noise:
 
 | Command | Before | Now |
 | --- | --- | --- |
-| `agentgrep find libtmux` | 3.77 s (3.53–3.96) | 3.76 s (3.54–4.14) |
-| `agentgrep search --limit 1 libtmux` | 1.68 s (1.53–2.21) | 1.61 s (1.55–1.96) |
-| `agentgrep find libtmux`, mount hidden | 1.00 s (0.91–1.16) | 0.83 s (0.78–0.96) |
-| `agentgrep search --limit 1 libtmux`, mount hidden | 1.61 s (1.42–1.82) | 1.59 s (1.41–2.11) |
+| `agentgrep find libtmux` | 4.76 s (4.15–6.20) | 4.61 s (3.87–4.82) |
+| `agentgrep search --limit 1 libtmux` | 2.53 s (1.93–3.25) | 2.36 s (2.02–2.98) |
+| `agentgrep find libtmux`, mount hidden | 1.56 s (1.29–1.80) | 1.35 s (1.17–1.58) |
+| `agentgrep search --limit 1 libtmux`, mount hidden | 2.34 s (1.62–3.55) | 2.29 s (1.68–3.53) |
 
 No median is slower, so reading the Windows side costs no wall-clock time
 against the main branch on this host. With the mount hidden, `find` is faster
-(0.83 s against 1.00 s), but the ranges overlap, so that is not claimed as a
+(1.35 s against 1.56 s), but the ranges overlap, so that is not claimed as a
 speedup. The rows ran under heavy load from
-other work (load average 9 to 16), which is why they are slower in absolute
+other work (load average 12 to 21), which is why they are slower in absolute
 terms than an idle machine would be. The {ref}`benchmark harness <benchmark>` gives a quicker
 comparison against the main branch, but it times one build after the other,
 so a change in machine load can hide or invent a gap of this size:
@@ -212,9 +212,9 @@ reads their transcripts after skipping the copies of WSL-distro transcripts
 
 | Run | Commit | Sources | Wall clock |
 | --- | --- | --- | --- |
-| First read, Windows side reading from disk | `eb20c18` (before ChatGPT title search) | 863 | about 100 s |
-| Warm, right after | `eb20c18` | 863 | about 35 s |
-| Warm | `bc697fb` (with ChatGPT title search) | 868 | about 19 s |
+| First read, Windows side reading from disk | `72caeb9` (before ChatGPT title search) | 863 | about 100 s |
+| Warm, right after | `72caeb9` | 863 | about 35 s |
+| Warm | `4b56837` (with ChatGPT title search) | 868 | about 19 s |
 
 The two warm runs are not comparable: they ran at different commits and
 under different machine load, so the drop from 35 s to 19 s is not claimed
