@@ -2,10 +2,11 @@
 
 # ChatGPT desktop
 
-agentgrep searches ChatGPT desktop's conversation titles on Windows. Neither
-app keeps message text on disk in a form another program can read: the
-Windows app caches only the conversation list, and the macOS app encrypts its
-conversation files with a key that only OpenAI's own code can read.
+agentgrep searches ChatGPT desktop's conversation titles and scheduled-task
+prompts on Windows. Neither app keeps message text on disk in a form another
+program can read: the Windows app caches only the conversation list and the
+scheduled-task list, and the macOS app encrypts its conversation files with a
+key that only OpenAI's own code can read.
 
 Base paths: `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0/LocalCache/Roaming/ChatGPT`
 (Windows, reached from WSL through each Windows profile) and
@@ -25,8 +26,19 @@ time, project id, and archive, star, and temporary-chat flags in its
 metadata. Only the conversation-list keys are decoded; the store's session
 data and secrets are never read.
 
-The list counts as conversation content, so a conversation-scope or
-broad-scope search reads it (a conversation scope runs at exhaustive effort
+{storage:storeref}`chatgpt.http_cache` reads the app's Chromium HTTP cache,
+in Chromium's blockfile format, the same way: without Chromium and without
+its lock. Three cached responses are read: the conversation list, each
+project's conversation list (project conversations the Local Storage list
+leaves out), and the scheduled-task list. Conversations become title records
+as above, and each scheduled task with a prompt becomes a user prompt record
+holding the text the user scheduled; a task's model output is not read. Every
+other cached response, account and session data among them, is never read
+past its URL. The bodies are Brotli-compressed, which the `brotli` package
+decodes.
+
+Both stores count as conversation content, so a conversation-scope or
+broad-scope search reads them (a conversation scope runs at exhaustive effort
 unless told otherwise; targeted effort does not read the list):
 
 ```console

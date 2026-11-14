@@ -99,7 +99,12 @@ Local Storage caches the conversation list, which agentgrep searches by title
 holds open, so agentgrep reads its log and table files directly in pure Python
 (Snappy blocks included) instead of opening it with a LevelDB library, which
 would take the app's lock. Only the conversation-list keys are decoded; the
-store's session data and secrets are never read.
+store's session data and secrets are never read. The app's HTTP cache, in
+Chromium's blockfile format, is read the same way (`chatgpt.http_cache`): its
+index, entry blocks, and external files are parsed directly, only the
+conversation-list and scheduled-task responses are read past their URL, and
+their Brotli bodies are decoded with the `brotli` package, imported only when
+such a body is read.
 
 ### Windows paths never name the account
 

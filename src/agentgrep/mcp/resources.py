@@ -55,6 +55,7 @@ _FORMAT_DESCRIPTIONS: dict[str, str] = {
     "md_frontmatter": "Markdown with YAML/JSON frontmatter blocks.",
     "protobuf": "Binary protobuf payload.",
     "leveldb": "Chromium LevelDB web storage, read without a native library.",
+    "chromium_cache": "Chromium blockfile HTTP cache, read without Chromium.",
     "opaque": "Format not parsed by agentgrep.",
 }
 

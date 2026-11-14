@@ -780,6 +780,11 @@ BOUNDARY_CASES: tuple[BoundaryCase, ...] = (
         module="_chromium_storage",
         forbidden=("agentgrep",),
     ),
+    BoundaryCase(
+        test_id="chromium-cache-is-a-leaf",
+        module="_chromium_cache",
+        forbidden=("agentgrep",),
+    ),
     BoundaryCase(test_id="text-below-frontends", module="_text", forbidden=_FRONTENDS),
     BoundaryCase(test_id="readers-below-frontends", module="readers", forbidden=_FRONTENDS),
     BoundaryCase(test_id="discovery-below-frontends", module="discovery", forbidden=_FRONTENDS),

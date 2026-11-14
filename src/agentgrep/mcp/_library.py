@@ -111,6 +111,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "claude.desktop_session_json.v1",
     "chatgpt.file_metadata_summary.v1",
     "chatgpt.local_storage_conversation_list.v1",
+    "chatgpt.http_cache_json.v1",
     "claude.skills_text.v1",
     "claude.commands_text.v1",
     "claude.app_state_json_summary.v1",

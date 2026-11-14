@@ -175,6 +175,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_ide.skills_text.v1",
         "claude.app_state_json_summary.v1",
         "chatgpt.file_metadata_summary.v1",
+        "chatgpt.http_cache_json.v1",
         "chatgpt.local_storage_conversation_list.v1",
         "claude.commands_text.v1",
         "claude.desktop_session_json.v1",
@@ -900,6 +901,7 @@ CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
 CONVERSATION_CONTENT_STORES: frozenset[str] = frozenset(
     {
         "chatgpt.conversation_list",
+        "chatgpt.http_cache",
         "codex.state_db",
         "pi.context_mode_db",
     },

@@ -23,7 +23,7 @@ WSL kernel, and only for directories that exist.
 | Cursor agent | `%USERPROFILE%/.cursor/projects/` | {doc}`cursor-cli` transcripts | `prompt_history.json` if present |
 | Cursor IDE | `%APPDATA%/Cursor/User/` | {doc}`cursor-ide` state databases | as on Linux |
 | VS Code Copilot Chat | `%APPDATA%/Code/User/` | {doc}`vscode` chat sessions | as on Linux |
-| ChatGPT desktop | `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0/` | {doc}`chatgpt` conversation titles | no, conversation scope |
+| ChatGPT desktop | `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0/` | {doc}`chatgpt` conversation titles, scheduled-task prompts | no, conversation scope |
 
 The catalogue records each store's Windows path in its `win32` platform
 variant, which `get_store_descriptor` and the backend pages show.

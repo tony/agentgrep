@@ -427,7 +427,11 @@ def remember_source_scan(
 
 
 _CACHE_EXEMPT_ADAPTERS: frozenset[str] = frozenset(
-    {"claude.history_jsonl.v1", "chatgpt.local_storage_conversation_list.v1"},
+    {
+        "claude.history_jsonl.v1",
+        "chatgpt.local_storage_conversation_list.v1",
+        "chatgpt.http_cache_json.v1",
+    },
 )
 """Adapters whose record text depends on files outside ``source.path``.
 

@@ -137,6 +137,48 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="chatgpt",
+        store_id="chatgpt.http_cache",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.CHROMIUM_CACHE,
+        path_pattern=f"{_WINDOWS_ROOT}/Cache/Cache_Data/",
+        platform_variants={"win32": f"{_WINDOWS_ROOT}/Cache/Cache_Data/"},
+        observed_version=_CHATGPT_OBSERVED_VERSION,
+        observed_at=_CHATGPT_OBSERVED_AT,
+        schema_notes=(
+            "Windows app, Chromium blockfile HTTP cache (`index`, `data_0` to "
+            "`data_3`, external `f_<n>` files); bodies are `content-encoding: br`. "
+            "Three cached API responses are read: `/backend-api/conversations` "
+            "(`{items, total, limit, offset}`, items as in "
+            "`chatgpt.conversation_list`), `/backend-api/gizmos/<project>/conversations` "
+            "(`{items, cursor}`, project conversations the Local Storage list "
+            "leaves out), and `/backend-api/tasks` (`{tasks, cursor}`; each task's "
+            "`prompt` is the text the user scheduled, `messages` and "
+            "`final_message` are model output and are not read). Other entries, "
+            "including `/api/auth/session` and account responses, are never read "
+            "past their URL."
+        ),
+        distinguishes_from=("chatgpt.conversation_list", "chatgpt.web_profile"),
+        coverage=StoreCoverage.DEFAULT_SEARCH,
+        search_by_default=False,
+        search_notes=(
+            "Title records keyed by conversation id, newest snapshot per id, and a "
+            "user prompt record per scheduled task with a prompt. Exhaustive or "
+            "broad-scope search reads it; prompt search does not."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="chatgpt.http_cache",
+                adapter_id="chatgpt.http_cache_json.v1",
+                data_version="chatgpt.http_cache_json.v1",
+                path_kind="store_file",
+                source_kind="opaque",
+                root_key="chatgpt_windows",
+                files=("Cache/Cache_Data/index",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="chatgpt",
         store_id="chatgpt.web_profile",
         role=StoreRole.CACHE,
         format=StoreFormat.OPAQUE,

@@ -71,7 +71,9 @@ described in {doc}`/backends/windows`.
 `format` names the on-disk encoding. {attr}`~agentgrep.stores.StoreFormat.LEVELDB`
 marks Chromium web storage (ChatGPT desktop's Local Storage), which agentgrep
 reads in pure Python, without a LevelDB library and without taking the owning
-app's lock.
+app's lock. {attr}`~agentgrep.stores.StoreFormat.CHROMIUM_CACHE` marks a
+Chromium blockfile HTTP cache (ChatGPT desktop's `Cache/Cache_Data`), read the
+same way.
 
 ## Coverage levels
 

@@ -311,6 +311,12 @@ def _root_prefilter_terms(term: str, *, regex: bool) -> tuple[str, ...]:
     return tuple(variants)
 
 
+_CHATGPT_DIRECTORY_ADAPTERS: frozenset[str] = frozenset(
+    {"chatgpt.local_storage_conversation_list.v1", "chatgpt.http_cache_json.v1"},
+)
+"""ChatGPT desktop adapters that read a whole store directory behind a pointer file."""
+
+
 def direct_source_matches(
     source: SourceHandle,
     query: SearchQuery,
@@ -340,10 +346,11 @@ def direct_source_matches(
             # unconditional; the record matcher filters after expansion.
             matched = True
             return matched  # Preserve matched for profiling in finally.
-        if source.adapter_id == "chatgpt.local_storage_conversation_list.v1":
-            # The source path is LevelDB's CURRENT pointer; the titles sit in
-            # sibling log and Snappy table files, often as UTF-16, so no grep
-            # over the path can see them. The record matcher decides.
+        if source.adapter_id in _CHATGPT_DIRECTORY_ADAPTERS:
+            # The source path is a pointer file (LevelDB's CURRENT, the HTTP
+            # cache's index); the titles sit in sibling files, compressed or
+            # UTF-16, so no grep over the path can see them. The record
+            # matcher decides.
             matched = True
             return matched  # Preserve matched for profiling in finally.
         if source.source_kind == "sqlite":

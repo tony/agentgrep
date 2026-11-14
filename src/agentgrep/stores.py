@@ -32,6 +32,7 @@ class StoreFormat(enum.StrEnum):
     MARKDOWN_FRONTMATTER = "md_frontmatter"
     PROTOBUF = "protobuf"
     LEVELDB = "leveldb"
+    CHROMIUM_CACHE = "chromium_cache"
     OPAQUE = "opaque"
 
 
