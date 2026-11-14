@@ -1704,19 +1704,27 @@ def _host_profiles() -> tuple[wsl.WSLHostUserProfile, ...]:
     return wsl.host_user_profiles(should_stop=_active_stop())
 
 
-def _host_profile_dirs(name: str) -> tuple[pathlib.Path, ...]:
-    """Return ``%USERPROFILE%/<name>`` for each Windows profile on WSL where it exists."""
+def _existing_dirs(paths: cabc.Iterable[pathlib.Path]) -> tuple[pathlib.Path, ...]:
+    """Return the directories among ``paths`` that exist, ending once discovery stops.
+
+    Each check is a round trip on the Windows mount, so the stop is consulted
+    before every one, and a path that cannot be stat'ed counts as missing.
+    """
     found: list[pathlib.Path] = []
-    for profile in _host_profiles():
+    for path in paths:
         if _discovery_stopped():
             break
-        candidate = profile / name
         try:
-            if candidate.is_dir():
-                found.append(candidate)
+            if path.is_dir():
+                found.append(path)
         except OSError:
             continue
     return tuple(found)
+
+
+def _host_profile_dirs(name: str) -> tuple[pathlib.Path, ...]:
+    """Return ``%USERPROFILE%/<name>`` for each Windows profile on WSL where it exists."""
+    return _existing_dirs(profile / name for profile in _host_profiles())
 
 
 def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
@@ -1755,21 +1763,17 @@ def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     ['Library/Application Support/Claude']
     """
     xdg_config = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
-    candidates: list[pathlib.Path] = [
+    native = (
         home / "Library" / "Application Support" / "Claude",
         home / "AppData" / "Roaming" / "Claude",
         xdg_config / "Claude",
-    ]
-    candidates.extend(path for profile in _host_profiles() for path in profile.app_dirs("Claude"))
-    found: list[pathlib.Path] = []
-    for candidate in dict.fromkeys(candidates):
+    )
+    found = list(_existing_dirs(dict.fromkeys(native)))
+    for profile in _host_profiles():
         if _discovery_stopped():
             break
-        try:
-            if candidate.is_dir():
-                found.append(candidate)
-        except OSError:
-            continue
+        # app_dirs already returns only directories that exist.
+        found.extend(path for path in profile.app_dirs("Claude") if path not in found)
     return tuple(found)
 
 
@@ -1960,8 +1964,9 @@ def discover_chatgpt_sources(
     )
     roots: dict[str, DiscoveryRoot] = {"chatgpt_macos": (), "chatgpt_windows": ()}
     if "chatgpt_macos" in wanted:
-        macos = home / "Library" / "Application Support" / "com.openai.chat"
-        roots["chatgpt_macos"] = (macos,) if macos.is_dir() else ()
+        roots["chatgpt_macos"] = _existing_dirs(
+            (home / "Library" / "Application Support" / "com.openai.chat",),
+        )
     if "chatgpt_windows" in wanted:
         windows = [
             home
@@ -1977,7 +1982,7 @@ def discover_chatgpt_sources(
                 for profile in _host_profiles()
             ),
         ]
-        roots["chatgpt_windows"] = tuple(path for path in windows if path.is_dir())
+        roots["chatgpt_windows"] = _existing_dirs(windows)
     if not any(roots.values()):
         return []
     return discover_from_catalog(
