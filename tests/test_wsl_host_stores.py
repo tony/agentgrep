@@ -385,7 +385,8 @@ def test_abandoned_search_stops_the_windows_walk(
             control=control,
         )
     assert finished.wait(5), "the abandoned discovery never returned"
-    assert len(calls) < 64
+    # Only the stats already in flight when the search was cancelled ran.
+    assert len(calls) <= discovery._SLOW_MOUNT_STAT_WORKERS
 
 
 def test_stopped_listing_is_not_memoized(tmp_path: pathlib.Path) -> None:
