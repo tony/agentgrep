@@ -3,8 +3,8 @@
 # Windows and WSL
 
 When agentgrep runs inside a WSL distro, it also searches the agents
-installed on the Windows side. Claude desktop, Codex desktop, Cursor, and
-VS Code keep their history under the Windows profile, which the distro sees
+installed on the Windows side. Claude desktop, Codex desktop, Cursor,
+VS Code, and ChatGPT desktop keep their history under the Windows profile, which the distro sees
 under `/mnt/c/Users/<name>/`. agentgrep finds each profile, adds its stores
 to the same search, and prints the paths without the Windows account name.
 
@@ -22,14 +22,34 @@ WSL kernel, and only for directories that exist.
 | Cursor agent | `%USERPROFILE%/.cursor/projects/` | {doc}`cursor-cli` transcripts | `prompt_history.json` if present |
 | Cursor IDE | `%APPDATA%/Cursor/User/` | {doc}`cursor-ide` state databases | as on Linux |
 | VS Code Copilot Chat | `%APPDATA%/Code/User/` | {doc}`vscode` chat sessions | as on Linux |
+| ChatGPT desktop | `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0/LocalCache/Roaming/ChatGPT/Local Storage/` | {doc}`chatgpt` conversation titles | no, conversation scope |
 
 The catalogue records each store's Windows path in its `win32` platform
 variant, which `get_store_descriptor` and the backend pages show.
 
-Two desktop apps keep nothing agentgrep can read. Claude desktop holds
-claude.ai chats only as a Chromium cache, and ChatGPT desktop is a
-Chromium profile on Windows and encrypted files on macOS; see
-{doc}`unsupported/chatgpt`.
+Claude desktop's claude.ai chat client keeps only a rolling cache of a few
+recently opened conversations in Chromium IndexedDB, catalogued as
+{storage:storeref}`claude.desktop_chat_cache` and not searched; the full chat
+history stays on Anthropic's servers. ChatGPT desktop keeps no message text on
+disk; see {doc}`chatgpt`.
+
+## Other agents on Windows
+
+Gemini CLI, Grok, Pi, OpenCode, and Antigravity CLI were not installed on the
+Windows host checked. Their Windows locations come from each tool's source,
+which resolves its directory from the user's home on Windows as on Linux:
+
+| Agent | Windows location | Override |
+| --- | --- | --- |
+| Gemini CLI | `%USERPROFILE%/.gemini/` | `GEMINI_CLI_HOME` (the home that holds `.gemini`) |
+| Grok | `%USERPROFILE%/.grok/` | `GROK_HOME` |
+| Pi | `%USERPROFILE%/.pi/agent/` | `PI_CODING_AGENT_DIR` |
+| OpenCode | `%USERPROFILE%/.local/share/opencode/`, `%USERPROFILE%/.local/state/opencode/` | `XDG_DATA_HOME`, `XDG_STATE_HOME` |
+| Antigravity CLI | `%USERPROFILE%/.gemini/antigravity-cli/` (inferred: closed source) | none documented |
+
+Gemini CLI, Antigravity CLI, and Antigravity IDE all write under
+`%USERPROFILE%/.gemini`, so that directory alone does not show which is
+installed. The backend pages list each store's `win32` path.
 
 ## Paths in output
 
