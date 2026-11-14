@@ -25,11 +25,12 @@ time, project id, and archive, star, and temporary-chat flags in its
 metadata. Only the conversation-list keys are decoded; the store's session
 data and secrets are never read.
 
-The list counts as conversation content, so a conversation-scope search
-reads it:
+The list counts as conversation content, so a conversation-scope or
+broad-scope search reads it (a conversation scope runs at exhaustive effort
+unless told otherwise; targeted effort does not read the list):
 
 ```console
-$ agentgrep search --agent chatgpt --scope conversations --exhaustive deploy
+$ agentgrep search --agent chatgpt --scope conversations deploy
 ```
 
 A result looks like this in `--json` output (values are illustrative):
@@ -53,7 +54,7 @@ The printed path works as a `path:` query, so the ChatGPT titles can be
 picked out of a broader search:
 
 ```console
-$ agentgrep search --scope all --exhaustive 'path:%LOCALAPPDATA%/Packages/OpenAI.ChatGPT* deploy'
+$ agentgrep search --scope all 'path:%LOCALAPPDATA%/Packages/OpenAI.ChatGPT* deploy'
 ```
 
 The cache holds the conversations the sidebar showed when the app last ran;

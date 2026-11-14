@@ -15,8 +15,8 @@ _INSTR_HEADER = (
     "Antigravity CLI, Grok, Pi, OpenCode, VS Code (GitHub Copilot Chat), and "
     "ChatGPT desktop (conversation titles only). "
     "On WSL, the Windows-side Claude, Codex, Cursor, VS Code, and ChatGPT stores are "
-    "searched too (prompt history by default, transcripts with exhaustive "
-    "effort). All tools are read-only and never spawn writes."
+    "searched too, the same way as their Linux counterparts. All tools are "
+    "read-only and never spawn writes."
 )
 
 _INSTR_SCOPE = (
@@ -34,9 +34,10 @@ _INSTR_SCOPE = (
     "UNSUPPORTED for search — its conversation transcripts are encrypted, so "
     "agentgrep cannot read them. ChatGPT desktop ('chatgpt') keeps no message "
     "text agentgrep can read: its Windows app caches only the conversation list, "
-    "searched by title with scope='conversations' or 'all' and "
-    "effort='exhaustive', and its macOS conversation files are encrypted with a "
-    "key no other program can read, so find() lists them as catalog_only.\n"
+    "searched by title with scope='conversations' or 'all' (not with "
+    "effort='targeted'), and its macOS conversation files are encrypted with a "
+    "key no other program can read, so find() lists them with "
+    "metadata.coverage='catalog_only'.\n"
     "Antigravity is two agent ids and they are not equally searchable: "
     "'antigravity-cli' has searchable prompt history plus opt-in conversation "
     "records, while 'antigravity-ide' is catalogued for storage inventory only "

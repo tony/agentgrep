@@ -385,7 +385,7 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
                 description=(
                     "Limit search to one agent or search all agents. 'chatgpt' holds "
                     "conversation titles only, reached with scope='conversations' or "
-                    "'all' and effort='exhaustive'."
+                    "'all'; effort='targeted' does not read them."
                 ),
             ),
         ] = "all",

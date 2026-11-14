@@ -212,7 +212,11 @@ def register(mcp: FastMCP) -> None:
         name="find",
         tags=READONLY_TAGS | {"discovery"},
         annotations=TOOL_ANNOTATIONS,
-        description="Find known agent stores, session files, and SQLite databases.",
+        description=(
+            "Find known agent stores, session files, and SQLite databases. Rows "
+            "search never reads, such as ChatGPT desktop's encrypted macOS files, "
+            "carry metadata.coverage='catalog_only'."
+        ),
     )
     async def find_tool(
         pattern: t.Annotated[
