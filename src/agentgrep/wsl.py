@@ -359,6 +359,12 @@ _DRIVE_PROFILE = re.compile(r"^[A-Za-z]:[\\/](?i:Users)[\\/]([^\\/]+)(.*)$")
 """A Windows drive path inside a profile, as agents record a working directory."""
 
 
+@functools.lru_cache(maxsize=4)
+def _mount_profile_pattern(mount: str) -> re.Pattern[str]:
+    """Match a profile path on any DrvFs drive under automount root ``mount``."""
+    return re.compile(rf"^{re.escape(mount)}/[A-Za-z]/(?i:Users)/([^/]+)(.*)$")
+
+
 def _variable_form(profile: str, parts: list[str]) -> str:
     """Join a profile-relative path onto the Windows variable that names its root."""
     parts = [_redact_account(part, profile) for part in parts]
@@ -378,8 +384,9 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     ``%LOCALAPPDATA%`` for ``AppData/Local``, and ``%USERPROFILE%`` for the
     rest of the profile. The account name inside an encoded project folder
     (``C--Users-<name>-work``) becomes ``%USERNAME%``, so the Windows account
-    name never reaches output. Both forms of a profile path are rewritten:
-    the WSL mount form under :func:`users_root`, and the drive form
+    name never reaches output. Every form of a profile path is rewritten:
+    the WSL mount form under :func:`users_root` or under any drive of the
+    automount root (``/mnt/d/Users/<name>``), and the drive form
     (``C:\Users\<name>``) that agents running on Windows record as a
     working directory. Both print with ``/``, so a printed path pastes into a
     query unchanged.
@@ -413,6 +420,7 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     ...         "/home/someone/.claude",
     ...         "C:\\Users\\Some One\\work",
     ...         "C:/Users/someone/AppData/Roaming/Code",
+    ...         "/mnt/d/Users/someone/work",
     ...     ):
     ...         print(display_host_path(path))
     %APPDATA%/Code/User
@@ -423,6 +431,7 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     None
     %USERPROFILE%/work
     %APPDATA%/Code
+    %USERPROFILE%/work
     """
     text = os.fspath(path)
     drive = _DRIVE_PROFILE.match(text)
@@ -432,9 +441,15 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
             return None
         return _variable_form(profile, [part for part in re.split(r"[\\/]", tail) if part])
     root = _users_root_text().rstrip("/")
-    if not text.startswith(root + "/"):
-        return None
-    profile, _, tail = text[len(root) + 1 :].partition("/")
+    if text.startswith(root + "/"):
+        profile, _, tail = text[len(root) + 1 :].partition("/")
+    else:
+        # A working directory recorded inside WSL names the profile through
+        # the drive mount, on any drive, whatever users root is configured.
+        mounted = _mount_profile_pattern(str(mount_root()).rstrip("/")).match(text)
+        if mounted is None:
+            return None
+        profile, tail = mounted.group(1), mounted.group(2).lstrip("/")
     if not profile or profile.casefold() in _SERVICE_PROFILES:
         return None
     return _variable_form(profile, tail.split("/") if tail else [])
