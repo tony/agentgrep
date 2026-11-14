@@ -32,8 +32,35 @@ reads it:
 $ agentgrep search --agent chatgpt --scope conversations --exhaustive deploy
 ```
 
+A result looks like this in `--json` output (values are illustrative):
+
+```json
+{
+  "kind": "history",
+  "agent": "chatgpt",
+  "store": "chatgpt.conversation_list",
+  "path": "%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0/LocalCache/Roaming/ChatGPT/Local Storage/leveldb/CURRENT",
+  "text": "Plan the widget launch",
+  "title": "Plan the widget launch",
+  "role": "assistant",
+  "timestamp": "2026-09-25T10:15:02.123456Z",
+  "session_id": "68d1c0aa-0000-0000-0000-000000000000",
+  "metadata": {"created_at": "2026-09-12T08:00:00.000000Z", "starred": true}
+}
+```
+
+The printed path works as a `path:` query, so the ChatGPT titles can be
+picked out of a broader search:
+
+```console
+$ agentgrep search --scope all --exhaustive 'path:%LOCALAPPDATA%/Packages/OpenAI.ChatGPT* deploy'
+```
+
 The cache holds the conversations the sidebar showed when the app last ran;
-older conversations and every message body stay on OpenAI's servers.
+older conversations and every message body stay on OpenAI's servers. Because
+it is a cache, it can still list a conversation deleted or moved off the first
+page since the app last refreshed: agentgrep keeps every conversation any
+cached snapshot lists, newest title per conversation.
 
 ## Stores
 

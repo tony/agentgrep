@@ -3,10 +3,11 @@
 # Windows and WSL
 
 When agentgrep runs inside a WSL distro, it also searches the agents
-installed on the Windows side. Claude desktop, Codex desktop, Cursor,
-VS Code, and ChatGPT desktop keep their history under the Windows profile, which the distro sees
-under `/mnt/c/Users/<name>/`. agentgrep finds each profile, adds its stores
-to the same search, and prints the paths without the Windows account name.
+installed on the Windows side. Claude desktop, Codex desktop, Cursor, VS Code,
+and ChatGPT desktop keep their history under the Windows profile, which the
+distro sees under `/mnt/c/Users/<name>/`. agentgrep finds each profile, adds
+its stores to the same search, and prints the paths without the Windows
+account name.
 
 Detection is automatic: the probe runs only when `/proc/version` names a
 WSL kernel, and only for directories that exist.
@@ -22,7 +23,7 @@ WSL kernel, and only for directories that exist.
 | Cursor agent | `%USERPROFILE%/.cursor/projects/` | {doc}`cursor-cli` transcripts | `prompt_history.json` if present |
 | Cursor IDE | `%APPDATA%/Cursor/User/` | {doc}`cursor-ide` state databases | as on Linux |
 | VS Code Copilot Chat | `%APPDATA%/Code/User/` | {doc}`vscode` chat sessions | as on Linux |
-| ChatGPT desktop | `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0/LocalCache/Roaming/ChatGPT/Local Storage/` | {doc}`chatgpt` conversation titles | no, conversation scope |
+| ChatGPT desktop | `%LOCALAPPDATA%/Packages/OpenAI.ChatGPT-Desktop_…/` | {doc}`chatgpt` conversation titles | no, conversation scope |
 
 The catalogue records each store's Windows path in its `win32` platform
 variant, which `get_store_descriptor` and the backend pages show.
@@ -126,9 +127,11 @@ skips the desktop app directories. `find` and `--exhaustive` walk every
 Windows-side transcript tree and overlap the `stat` calls on the mount. Off
 WSL, none of this runs.
 
-The figures come from one WSL host where `find` lists 17,471 sources, 376 of
-them on the Windows side (most from a large Claude desktop install), and
-compare 0.1.0a54 ("before") with this version.
+The figures below come from one WSL host where `find` lists 382 Windows-side
+sources (most from a large Claude desktop install) and compare 0.1.0a54
+("before") with this version. They answer three questions in turn: how many
+round trips a discovery pass makes on the mount, whether whole commands got
+slower, and how long an exhaustive search over the Windows side takes.
 
 ### Operations on the mount
 
@@ -171,22 +174,31 @@ $ uv run scripts/benchmark.py run \
     --commands find,search-limit-1
 ```
 
-### Cancelling or skipping the walk
-
-A cancelled search stops the walk instead of finishing it in the background:
-the profile listing and any running directory listing end, no new `stat`
-starts on the mount, and only the calls already in flight finish: at most 16,
-the size of the `stat` pool every search in the process shares. The same holds
-for a cancelled MCP {tool}`find`, {tool}`list_sources`, {tool}`filter_sources`,
-{tool}`summarize_discovery`, or {tool}`recent_sessions` call and an
-`agentgrep://sources` read. To leave the Windows side out entirely, point
-`AGENTGREP_WSL_USERS_ROOT` at a missing directory. A `NOT path:%USERPROFILE%`
-filter drops the Windows-side results but still walks the mount.
+### Exhaustive search
 
 An exhaustive search over the Windows-side Claude stores on the host above
 reads 863 sources (276 MB, after skipping the copies of WSL-distro
-transcripts): about 100 s the first time, while the Windows side reads the
-files from disk, and about 35 s when run again.
+transcripts). One run took about 100 s while the Windows side read the files
+from disk, and one run right after took about 35 s; one run each, on a shared
+machine.
+
+### Cancelling or skipping the walk
+
+A cancelled search stops the walk instead of finishing it in the background:
+
+- The profile listing and any running directory listing end, and no new
+  `stat` starts on the mount.
+- Only the calls already in flight finish: at most 16, the size of the `stat`
+  pool every search in the process shares. A single directory listing step
+  cannot be interrupted, only the walk between steps.
+- The same holds when an MCP client cancels {tool}`find`,
+  {tool}`list_sources`, {tool}`filter_sources`, {tool}`summarize_discovery`,
+  {tool}`recent_sessions`, {tool}`inspect_result`, or
+  {tool}`inspect_record_sample`, or an `agentgrep://sources` read.
+
+To leave the Windows side out entirely, point `AGENTGREP_WSL_USERS_ROOT` at a
+missing directory. A `NOT path:%USERPROFILE%` filter drops the Windows-side
+results but still walks the mount.
 
 ## Python API
 
