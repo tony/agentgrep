@@ -120,30 +120,61 @@ assert drive_path.as_windows(pathlib.PurePosixPath("/mnt")) == pathlib.PureWindo
 On WSL, a `path:` predicate in {tool}`search`'s `terms` keeps only the
 Windows-side results. Paths in the response print as `%USERPROFILE%/…`,
 `%APPDATA%/…`, or `%LOCALAPPDATA%/…`, and `path:%USERPROFILE%` covers all
-three:
-
-```json
-{
-  "tool": "search",
-  "arguments": {
-    "terms": ["path:%USERPROFILE%", "deploy"],
-    "agent": "claude",
-    "effort": "exhaustive"
-  }
-}
-```
-
-Pass a result's `ref` to {tool}`inspect_result`. The ref records which
+three. Pass a result's `ref` to {tool}`inspect_result`: the ref records which
 profile the result came from, so it opens the real file even when two Windows
-profiles hold the same display path:
+profiles hold the same display path.
 
-```json
-{
-  "tool": "inspect_result",
-  "arguments": {
-    "ref": "<ref from a search result>"
-  }
+This example runs both calls through FastMCP's in-process client against a
+scratch Windows profile, standing in for a WSL distro so it runs anywhere:
+
+```python
+import asyncio
+import json
+import os
+import pathlib
+import tempfile
+from unittest import mock
+
+from fastmcp import Client
+
+from agentgrep import wsl
+from agentgrep.mcp.server import build_mcp_server
+
+users = pathlib.Path(tempfile.mkdtemp()) / "Users"
+transcript = users / "someone" / ".claude" / "projects" / "-work" / "s1.jsonl"
+transcript.parent.mkdir(parents=True)
+prompt = {
+    "type": "user",
+    "uuid": "u1",
+    "sessionId": "s1",
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "message": {"role": "user", "content": "deploy the windows build"},
 }
+transcript.write_text(json.dumps(prompt) + "\n", encoding="utf-8")
+
+
+async def windows_side_search() -> None:
+    async with Client(build_mcp_server()) as client:
+        found = await client.call_tool(
+            "search",
+            {
+                "terms": ["path:%USERPROFILE%", "deploy"],
+                "agent": "claude",
+                "effort": "exhaustive",
+            },
+        )
+        (result,) = found.structured_content["results"]
+        assert result["path"] == "%USERPROFILE%/.claude/projects/-work/s1.jsonl"
+        opened = await client.call_tool("inspect_result", {"ref": result["ref"]})
+        (record,) = opened.structured_content["records"]
+        assert record["text"] == "deploy the windows build"
+
+
+with (
+    mock.patch.dict(os.environ, {wsl.USERS_ROOT_ENV: str(users)}),
+    mock.patch.object(wsl, "is_wsl", return_value=True),
+):
+    asyncio.run(windows_side_search())
 ```
 
 Put `NOT path:%USERPROFILE%` in `terms` to drop the Windows side instead.
