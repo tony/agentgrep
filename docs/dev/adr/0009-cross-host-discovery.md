@@ -38,9 +38,11 @@ over `src/agentgrep` was empty before this work, and `sys.platform` reports
 
 ## Decision
 
-agentgrep discovers VS Code chat across the host boundary, and maps remote
-workspace URIs back to local paths, while keeping single-root home discovery
-the default for every other backend.
+agentgrep discovers agent stores across the host boundary, and maps remote
+workspace URIs back to local paths. On WSL, the Windows-side VS Code and
+Cursor IDE chat, each Windows profile's Claude Code, Codex, and Cursor homes,
+and the Claude desktop app directory join discovery; every other root stays
+home-based.
 
 ### Discovery roots are computed, not just declared
 
@@ -77,12 +79,44 @@ A transcript's project directory is resolved from its sibling `workspace.json`
 to their path component. The result is attached as the record's `cwd` metadata
 so a WSL-remote chat reports `/home/you/work/proj` rather than a storage hash.
 
+### Windows-side homes join discovery
+
+Claude desktop runs Claude Code on Windows for sessions outside a WSL distro,
+and Codex desktop and Cursor keep their homes in the Windows profile. On WSL,
+each profile's `.claude`, `.codex`, and Cursor home is added as an extra root
+beside the Linux one, and `%APPDATA%/Claude` is probed for Cowork sessions and
+the Code-tab session index. {mod}`agentgrep.wsl` owns the host model:
+`WSLHostPath`, a {class}`pathlib.PosixPath` whose `str()`, {func}`os.fspath`,
+equality, and hash stay the real path, plus the profile and app-data role
+objects. It imports no other agentgrep module, so every layer can use it
+(ADR 0010), and a test keeps it that way.
+
+### Windows paths never name the account
+
+A path inside a Windows profile displays as `%USERPROFILE%/…`, `%APPDATA%/…`,
+or `%LOCALAPPDATA%/…`, and an account name inside an encoded project folder as
+`%USERNAME%`. `path:` queries and MCP refs map a display form back to every
+profile, and refs and fingerprints carry an opaque per-profile key, so two
+profiles' copies of one file stay distinct.
+
+### Walks over the 9p mount are pruned, overlapped, and cancellable
+
+Each `stat` over the Windows mount is a round trip, measured at about 1.7 ms.
+Discovery skips Windows copies of local transcripts before stat'ing them,
+resolves the desktop roots only when an admitted row reads them, overlaps
+`stat` calls on one shared 16-thread pool, and stops once the search engine
+abandons the pass ({func}`~agentgrep.discovery.discovery_stop`): no new `stat`
+starts, a running listing ends, and the pass is reported abandoned instead of
+returned partial.
+
 ## Scope
 
 This ADR governs cross-host store discovery and remote-workspace path mapping.
-It applies to the VS Code and Cursor IDE backends today (both VS Code-style,
-persisting WSL-remote chat client-side on the Windows host) and to any future
-backend whose UI and project live on different filesystems. It does not change the execution engine
+It applies to the VS Code and Cursor IDE backends (both VS Code-style,
+persisting WSL-remote chat client-side on the Windows host), to the
+Windows-side Claude Code, Codex, and Cursor CLI homes and the Claude desktop
+app directory on WSL, and to any future backend whose UI and project live on
+different filesystems. It does not change the execution engine
 (ADR 0004), introduce native code (ADR 0003), or alter the catalogue schema —
 the catalogue stays declarative; only the discovery function computes roots.
 
@@ -99,6 +133,12 @@ the catalogue stays declarative; only the discovery function computes roots.
 - Because the cross-host root escapes `$HOME`, the test harness neutralizes it
   by default so hermetic `find` tests never read the developer's real chat
   history; a dedicated test exercises the bridge against a synthetic mount.
+- No output names a Windows account: Windows-side paths display through
+  {mod}`agentgrep.wsl`, and a displayed path still resolves in `path:` queries
+  and MCP refs.
+- A Windows-side copy of a local transcript is read once.
+- Discovery over the Windows mount honours `discovery_stop`, so an abandoned
+  search makes no further round trips beyond the `stat` calls in flight.
 
 ## Consequences
 
@@ -129,11 +169,15 @@ the `inline-chat-history` key and leaves the `secret://…` keys in the same
 database untouched. ADR 0003 owns the native boundary, which this ADR does not
 touch — discovery stays pure Python. ADR 0004 owns planning and execution,
 which are unchanged: cross-host roots are resolved during discovery and flow
-through the existing source/handle pipeline.
+through the existing source/handle pipeline, and the engine's cancellation
+reaches discovery through `discovery_stop`. ADR 0010 owns module layering;
+{mod}`agentgrep.wsl` sits at its leaves.
 
 ## Final position
 
 agentgrep keeps home-rooted single-filesystem discovery as the default and adds
-a bounded, auto-detected, overridable bridge for the one case that needs it —
-WSL editing where the chat lives on the Windows host — together with the
-remote-URI mapping that makes those results name a real project directory.
+a bounded, auto-detected, overridable bridge for the cases that need it — WSL
+editing where the chat lives on the Windows host, and agents whose homes live
+in the Windows profile — together with the remote-URI mapping that makes those
+results name a real project directory and a display form that never names the
+Windows account.
