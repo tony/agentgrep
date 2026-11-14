@@ -101,18 +101,18 @@ read once. Copies of sessions from other hosts are kept.
 
 The Windows drive is a 9p network mount, where every `stat` is a round trip.
 The default prompt search reads only each profile's prompt-history files and
-skips the desktop app directories; that costs three more directory scans and
-three fewer `stat` calls than before. `find` and `--exhaustive` walk every
+skips the desktop app directories. `find` and `--exhaustive` walk every
 Windows-side transcript tree and overlap the `stat` calls on the mount. Off
 WSL, none of this runs.
 
-The figures below come from one WSL host where `find` lists 17,471 sources,
-376 of them on the Windows side (most from a large Claude desktop install),
-and compare 0.1.0a54 ("before") with this version. The host is shared, so
-treat timing differences under about 10% as noise.
+The figures come from one WSL host where `find` lists 17,471 sources, 376 of
+them on the Windows side (most from a large Claude desktop install), and
+compare 0.1.0a54 ("before") with this version.
 
-Filesystem operations on the Windows mount for one discovery pass, counted by
-wrapping `os.stat`, `os.scandir`, and `fd` calls on paths under the mount:
+### Operations on the mount
+
+One discovery pass, counted by wrapping `os.stat`, `os.scandir`, and `fd`
+calls on paths under the mount, so the counts do not depend on machine load:
 
 | Pass | Windows sources | `stat` calls | `stat` per source | Directory scans | `fd` runs |
 | --- | --- | --- | --- | --- | --- |
@@ -121,9 +121,16 @@ wrapping `os.stat`, `os.scandir`, and `fd` calls on paths under the mount:
 | `find`, before | 103 | 327 | 3.2 | 51 | 0 |
 | `find`, now | 376 | 641 | 1.7 | 65 | 10 |
 
-Wall-clock time of the whole command, median with the range in brackets. The
-"mount hidden" rows ran with an empty directory bind-mounted over `/mnt/c`,
-which stands in for a Linux machine:
+Prompt search makes three more directory scans and three fewer `stat` calls
+than before; `find` makes about half as many `stat` calls per source.
+
+### Wall-clock time
+
+The median of the whole command, with the range in brackets, over 5 runs
+after 2 warm-ups (10 after 3 for the mount-hidden `find`). The mount-hidden
+rows ran with an empty directory bind-mounted over `/mnt/c`, standing in for
+a Linux machine. The host is shared, so differences under about 10% are
+noise:
 
 | Command | Before | Now |
 | --- | --- | --- |
@@ -132,11 +139,10 @@ which stands in for a Linux machine:
 | `agentgrep find`, mount hidden | 0.98 s (0.86–1.31) | 1.00 s (0.83–1.31) |
 | `agentgrep search --limit 1`, mount hidden | 1.35 s (1.29–1.48) | 1.25 s (1.22–1.33) |
 
-Each row is 5 runs after 2 warm-ups, except the mount-hidden `find`, at 10
-runs after 3. `find` reads 3.6 times as many Windows sources for about 0.1 s
-more, and without the Windows side both commands cost what they did. The
-{ref}`benchmark harness <benchmark>` reruns the timing comparison against the
-main branch:
+Every difference is inside that noise: `find` reads 3.6 times as many Windows
+sources for a median 0.1 s more, and without the Windows side neither
+command shows a measurable change. The {ref}`benchmark harness <benchmark>`
+reruns the comparison against the main branch:
 
 ```console
 $ uv run scripts/benchmark.py run \
@@ -144,10 +150,14 @@ $ uv run scripts/benchmark.py run \
     --commands find,search-limit-1
 ```
 
-A cancelled search stops the walk, including a directory listing in
-progress, instead of finishing it in the background. Point
-`AGENTGREP_WSL_USERS_ROOT` at a missing directory to leave the Windows side
-out.
+### Cancelling or skipping the walk
+
+A cancelled search stops the walk instead of finishing it in the background:
+a running directory listing ends, no new `stat` starts on the mount, and only
+the calls already in flight, at most 16, finish. To leave the Windows side
+out entirely, point `AGENTGREP_WSL_USERS_ROOT` at a missing directory. A
+`NOT path:%USERPROFILE%` filter drops the Windows-side results but still
+walks the mount.
 
 ## Python API
 
