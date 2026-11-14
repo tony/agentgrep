@@ -708,6 +708,16 @@ BOUNDARY_CASES: tuple[BoundaryCase, ...] = (
     BoundaryCase(test_id="text-below-frontends", module="_text", forbidden=_FRONTENDS),
     BoundaryCase(test_id="readers-below-frontends", module="readers", forbidden=_FRONTENDS),
     BoundaryCase(test_id="discovery-below-frontends", module="discovery", forbidden=_FRONTENDS),
+    BoundaryCase(
+        test_id="chatgpt-adapter-below-frontends",
+        module="adapters/chatgpt",
+        forbidden=_FRONTENDS,
+    ),
+    BoundaryCase(
+        test_id="chatgpt-catalog-below-frontends",
+        module="store_catalog/chatgpt",
+        forbidden=_FRONTENDS,
+    ),
 )
 
 
@@ -724,7 +734,7 @@ def test_core_module_stays_headless(
     """Windows-host support lives in the headless core, below every frontend."""
     import ast
 
-    source = pathlib.Path(wsl.__file__).with_name(f"{module}.py").read_text(encoding="utf-8")
+    source = (pathlib.Path(wsl.__file__).parent / f"{module}.py").read_text(encoding="utf-8")
     imported: set[str] = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
