@@ -500,11 +500,39 @@ def _home_text() -> str:
     return _home_for(os.environ.get("HOME"))
 
 
+_FOREIGN_HOME = re.compile(
+    r"^(?:[\\/]{2}(?:\?[\\/]UNC[\\/])?(?i:wsl\.localhost|wsl\$)[\\/][^\\/]+)?"
+    r"(?P<home>[\\/]home[\\/][^\\/]+|[\\/]root|/Users/(?!Shared(?:/|$))[^/]+)(?=[\\/]|$)",
+)
+"""Another account's home: ``/home/<user>``, ``/root``, ``/Users/<user>``, or a
+WSL distro's home seen from Windows (``\\\\wsl.localhost\\<distro>\\home\\<user>``)."""
+
+
+def display_path_text(value: str) -> str | None:
+    """Return how path display shows ``value``, or ``None`` when it shows it unchanged.
+
+    A string-level view of :class:`PrivatePath` for values that only look like
+    paths, such as a working directory recorded on another host.
+
+    Examples
+    --------
+    >>> from agentgrep._text import display_path_text
+    >>> display_path_text("/home/someone-else/work")
+    '~/work'
+    >>> display_path_text("/srv/data") is None
+    True
+    """
+    shown = PrivatePath._collapse_home(value)
+    return None if shown == value else shown
+
+
 class PrivatePath(PrivatePathBase):
     """Path subclass that hides account names in textual output.
 
-    ``str()`` and ``repr()`` collapse the home directory to ``~`` and, on WSL,
-    a Windows profile to ``%USERPROFILE%``/``%APPDATA%``/``%LOCALAPPDATA%``
+    ``str()`` and ``repr()`` collapse the home directory to ``~``, another
+    account's home (another user, or a WSL distro's home seen from Windows) to
+    ``~`` as well, and a Windows profile to
+    ``%USERPROFILE%``/``%APPDATA%``/``%LOCALAPPDATA%``
     (see :func:`agentgrep.wsl.display_host_path`). The home directory inside an
     agent's encoded project folder (``-home-<user>-work``) shows as ``-~-work``
     (see :func:`redact_encoded_paths`). :func:`os.fspath`,
@@ -546,6 +574,12 @@ class PrivatePath(PrivatePathBase):
             home_with_separator = home + separator
             if value.startswith(home_with_separator):
                 return "~" + redact_encoded_paths(value[len(home) :], home)
+
+        foreign = _FOREIGN_HOME.match(value)
+        if foreign is not None:
+            other_home = foreign.group("home").replace("\\", "/")
+            rest = value[foreign.end() :].replace("\\", "/")
+            return "~" + redact_encoded_paths(rest, other_home)
 
         return redact_encoded_paths(display_host_path(value) or value, home)
 

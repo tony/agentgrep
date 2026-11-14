@@ -23,6 +23,7 @@ import typing as t
 import urllib.parse
 
 from agentgrep import wsl
+from agentgrep._text import display_path_text
 from agentgrep.records import RecordOrigin, SearchRecord, SourceOriginSummary
 
 if t.TYPE_CHECKING:
@@ -254,9 +255,10 @@ class OriginPredicate:
 
     def _path_matches(self, value: str) -> bool:
         # A path inside a Windows profile prints as %USERPROFILE%... whichever
-        # way it was recorded, so both sides are also compared in that form: a
-        # filter copied from output, or written in any spelling, matches.
-        display = wsl.display_host_path(value)
+        # way it was recorded, and another account's home as ~, so both sides
+        # are also compared in that form: a filter copied from output, or
+        # written in any spelling, matches.
+        display = display_path_text(value)
         values = (value,) if display is None else (value, display)
         if self.is_glob:
             return any(
@@ -265,7 +267,7 @@ class OriginPredicate:
                 for variant in self.variants
             )
         variants = self.variants + tuple(
-            shown for variant in self.variants if (shown := wsl.display_host_path(variant))
+            shown for variant in self.variants if (shown := display_path_text(variant))
         )
         return any(
             _path_is_equal_or_descendant(

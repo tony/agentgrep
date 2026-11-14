@@ -942,6 +942,37 @@ def test_profile_key_without_machine_id_is_not_guessable(
     assert key != guess
 
 
+def test_accounts_off_the_users_root_are_hidden(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile on another drive, another user's home, and a WSL path seen from Windows.
+
+    None of them prints the account name: the drive's profile is recognized
+    inside an encoded folder, and both homes print as ``~``.
+    """
+    import threading
+
+    from agentgrep.origin_serializers import serialize_record_origin
+    from agentgrep.records import RecordOrigin
+
+    mount = tmp_path / "mnt"
+    (mount / "c/Users/someone").mkdir(parents=True)
+    (mount / "d/Users/Other Person").mkdir(parents=True)
+    monkeypatch.setattr(wsl, "mount_root", lambda *_: pathlib.PurePosixPath(mount))
+    monkeypatch.setenv(wsl.USERS_ROOT_ENV, str(mount / "c/Users"))
+    monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
+    monkeypatch.setattr(wsl, "_KNOWN_PROFILE_NAMES", set())
+    monkeypatch.setattr(wsl, "_known_profile_names_sorted", ())
+    monkeypatch.setattr(wsl, "_profiles_listed", threading.Event())
+    monkeypatch.setattr(wsl, "_other_drives_read", threading.Event())
+    assert wsl.host_user_profiles()
+    folder = pathlib.Path.home() / ".claude/projects/-mnt-d-Users-Other-Person-proj/s.jsonl"
+    assert format_display_path(folder) == "~/.claude/projects/-mnt-d-Users-%USERNAME%-proj/s.jsonl"
+    for cwd in ("/home/other-user/work", "\\\\wsl.localhost\\Distro\\home\\other-user\\work"):
+        assert serialize_record_origin(RecordOrigin(cwd=cwd)) == {"cwd": "~/work/"}
+
+
 class FindStatCase(t.NamedTuple):
     """A find query and whether discovery must stat Windows-side files for it."""
 

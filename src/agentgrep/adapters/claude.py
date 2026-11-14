@@ -9,7 +9,7 @@ import re
 import sqlite3
 import typing as t
 
-from agentgrep._text import format_display_path, redact_encoded_paths
+from agentgrep._text import format_display_path
 from agentgrep.adapters._common import (
     _path_like_str,
     _record_origin,
@@ -340,16 +340,12 @@ def parse_claude_settings_file(
     )
 
 
-_FOREIGN_HOME_RE = re.compile(r"^(/home/[^/]+|/root|/Users/[^/]+)(?=/)")
-"""The home that opens a path on another host or distro."""
-
-
 def _display_text_path(value: object) -> str | None:
     """Return a path string from a session file in the privacy-safe display form.
 
     A WSL-distro or SSH session's transcript path names that host's home,
-    which need not be the local one; it is shown with that home as ``~``, and
-    with the home hidden inside the encoded project folder too.
+    which need not be the local one; path display shows any account's home as
+    ``~``, inside the encoded project folder too.
 
     Examples
     --------
@@ -358,13 +354,7 @@ def _display_text_path(value: object) -> str | None:
     '~/.claude/projects/-~-w/s.jsonl'
     """
     text = as_optional_str(value)
-    if not text:
-        return None
-    foreign = _FOREIGN_HOME_RE.match(text)
-    if foreign is not None:
-        home = foreign.group(1)
-        return "~" + redact_encoded_paths(text[len(home) :], home)
-    return format_display_path(text)
+    return format_display_path(text) if text else None
 
 
 def parse_claude_desktop_session_file(

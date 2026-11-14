@@ -268,6 +268,8 @@ def host_user_profiles(
         if is_profile:
             profiles.append(WSLHostUserProfile(entry))
             _remember_profile_name(entry.name)
+    if root is None:
+        _read_other_drive_profile_names()
     _profiles_listed.set()
     return tuple(profiles)
 
@@ -312,14 +314,52 @@ def known_profile_names() -> tuple[str, ...]:
 def _read_profile_names() -> None:
     """Record the profile names under the users root in one directory read."""
     if is_wsl():
-        try:
-            with os.scandir(_users_root_text()) as entries:
-                for entry in entries:
-                    if entry.name.casefold() not in _SERVICE_PROFILES and entry.is_dir():
-                        _remember_profile_name(entry.name)
-        except OSError:
-            pass
+        _remember_users_in(_users_root_text())
+        _read_other_drive_profile_names()
     _profiles_listed.set()
+
+
+def _remember_users_in(users: str) -> None:
+    """Record each profile directory name under one ``Users`` directory."""
+    try:
+        with os.scandir(users) as entries:
+            for entry in entries:
+                if entry.name.casefold() not in _SERVICE_PROFILES and entry.is_dir():
+                    _remember_profile_name(entry.name)
+    except OSError:
+        pass
+
+
+_other_drives_read = threading.Event()
+"""Set once the ``Users`` directories of the other drives have been read."""
+
+
+def _read_other_drive_profile_names() -> None:
+    """Record the profile names on every other mounted drive, once per process.
+
+    Agents name project folders after working directories on any drive, so a
+    profile on ``D:`` can appear inside an encoded folder name even though
+    discovery searches only the users root. This runs only when the users
+    root is ``<automount root>/<drive>/Users``; a users root set elsewhere
+    names the whole Windows side to look at.
+    """
+    if _other_drives_read.is_set():
+        return
+    _other_drives_read.set()
+    mount = str(mount_root()).rstrip("/")
+    users = _users_root_text().rstrip("/")
+    if not re.fullmatch(rf"{re.escape(mount)}/[A-Za-z]/(?i:Users)", users):
+        return
+    try:
+        with os.scandir(mount or "/") as entries:
+            drives = sorted(
+                entry.path for entry in entries if len(entry.name) == 1 and entry.name.isalpha()
+            )
+    except OSError:
+        return
+    for drive in drives:
+        if f"{drive}/Users" != users:
+            _remember_users_in(f"{drive}/Users")
 
 
 def encoded_account_forms(name: str) -> tuple[str, str]:
