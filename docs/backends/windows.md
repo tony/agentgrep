@@ -58,17 +58,22 @@ such as `/root` encodes to a common word and is left as is, and a
 repository whose own name contains the account name keeps its name.
 
 A printed path works as a `path:` query, so the Windows-side results can be
-selected or left out. Only the Windows side:
+selected or left out. `%APPDATA%` and `%LOCALAPPDATA%` sit inside the
+profile, so `path:%USERPROFILE%` covers them too. Only the Windows side:
 
 ```console
-$ agentgrep find 'path:%USERPROFILE%* OR path:%APPDATA%*'
+$ agentgrep find 'path:%USERPROFILE%'
 ```
 
 Everything except the Windows side:
 
 ```console
-$ agentgrep search 'NOT path:%USERPROFILE%* NOT path:%APPDATA%* deploy'
+$ agentgrep search 'NOT path:%USERPROFILE% deploy'
 ```
+
+Over MCP, the same predicates go in {tool}`search`'s `terms`, and a returned
+`ref` opens the real file through {tool}`inspect_result`; see
+{ref}`library-examples-mcp-windows`.
 
 ## Choosing the Windows users directory
 
@@ -96,11 +101,13 @@ read once. Copies of sessions from other hosts are kept.
 
 The Windows drive is a 9p network mount, where every `stat` is a round trip.
 The default prompt search reads only each profile's prompt-history files and
-skips the desktop app directories, so it does the same work as before. `find`
-and `--exhaustive` walk every Windows-side transcript tree and overlap the
-`stat` calls on the mount. Off WSL, none of this runs.
+skips the desktop app directories; that costs three more directory scans and
+three fewer `stat` calls than before. `find` and `--exhaustive` walk every
+Windows-side transcript tree and overlap the `stat` calls on the mount. Off
+WSL, none of this runs.
 
-The figures below come from one WSL host with a large Claude desktop install
+The figures below come from one WSL host where `find` lists 17,471 sources,
+376 of them on the Windows side (most from a large Claude desktop install),
 and compare 0.1.0a54 ("before") with this version. The host is shared, so
 treat timing differences under about 10% as noise.
 
@@ -114,14 +121,20 @@ wrapping `os.stat`, `os.scandir`, and `fd` calls on paths under the mount:
 | `find`, before | 103 | 327 | 3.2 | 51 | 0 |
 | `find`, now | 376 | 641 | 1.7 | 65 | 10 |
 
-Wall-clock time of the whole command, median of 5 runs after 2 warm-ups:
+Wall-clock time of the whole command, median with the range in brackets. The
+"mount hidden" rows ran with an empty directory bind-mounted over `/mnt/c`,
+which stands in for a Linux machine:
 
 | Command | Before | Now |
 | --- | --- | --- |
-| `agentgrep find` | 2.86 s | 2.96 s |
-| `agentgrep search --limit 1` | 1.34 s | 1.32 s |
+| `agentgrep find` | 2.86 s (2.74–3.02) | 2.96 s (2.92–3.53) |
+| `agentgrep search --limit 1` | 1.34 s (1.32–1.49) | 1.32 s (1.25–1.35) |
+| `agentgrep find`, mount hidden | 0.98 s (0.86–1.31) | 1.00 s (0.83–1.31) |
+| `agentgrep search --limit 1`, mount hidden | 1.35 s (1.29–1.48) | 1.25 s (1.22–1.33) |
 
-`find` reads 3.6 times as many Windows sources for about 0.1 s more. The
+Each row is 5 runs after 2 warm-ups, except the mount-hidden `find`, at 10
+runs after 3. `find` reads 3.6 times as many Windows sources for about 0.1 s
+more, and without the Windows side both commands cost what they did. The
 {ref}`benchmark harness <benchmark>` reruns the timing comparison against the
 main branch:
 

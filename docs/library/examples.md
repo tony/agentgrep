@@ -113,6 +113,41 @@ assert str(drive_path) == "/mnt/c/Users"
 assert drive_path.as_windows(pathlib.PurePosixPath("/mnt")) == pathlib.PureWindowsPath("C:/Users")
 ```
 
+(library-examples-mcp-windows)=
+
+## MCP Windows-side search
+
+On WSL, a `path:` predicate in {tool}`search`'s `terms` keeps only the
+Windows-side results. Paths in the response print as `%USERPROFILE%/…`,
+`%APPDATA%/…`, or `%LOCALAPPDATA%/…`, and `path:%USERPROFILE%` covers all
+three:
+
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "terms": ["path:%USERPROFILE%", "deploy"],
+    "agent": "claude",
+    "effort": "exhaustive"
+  }
+}
+```
+
+Pass a result's `ref` to {tool}`inspect_result`. The ref records which
+profile the result came from, so it opens the real file even when two Windows
+profiles hold the same display path:
+
+```json
+{
+  "tool": "inspect_result",
+  "arguments": {
+    "ref": "<ref from a search result>"
+  }
+}
+```
+
+Put `NOT path:%USERPROFILE%` in `terms` to drop the Windows side instead.
+
 ## MCP discovery call
 
 Call {tool}`find` when a client needs source metadata before choosing a search:
