@@ -110,10 +110,26 @@ class StoreCase(t.NamedTuple):
 
 
 STORE_CASES: tuple[StoreCase, ...] = (
+    StoreCase(
+        "local-transcript-not-duplicated-by-mirror", "claude", "local-1.jsonl", "claude.projects", 1
+    ),
+    StoreCase("mirror-of-other-host-kept", "claude", "remote-only.jsonl", "claude.projects", 1),
+    StoreCase("windows-claude-code-session", "claude", "windows-1.jsonl", "claude.projects", 1),
     StoreCase("cowork-on-windows-host", "claude", "cowork-1.jsonl", "claude.projects", 1),
     StoreCase("cowork-on-macos", "claude", "cowork-mac.jsonl", "claude.projects", 1),
     StoreCase("cowork-audit-log-skipped", "claude", "audit.jsonl", "claude.projects", 0),
+    StoreCase("service-profile-skipped", "claude", "public-1.jsonl", "claude.projects", 0),
     StoreCase("desktop-session-index", "claude", "local_d1.json", "claude.desktop_sessions", 1),
+    StoreCase(
+        "windows-codex-rollout",
+        "codex",
+        "rollout-2026-01-01T00-00-00-abc.jsonl",
+        "codex.sessions",
+        1,
+    ),
+    StoreCase(
+        "windows-cursor-transcript", "cursor-cli", "cursor-1.jsonl", "cursor-cli.transcripts", 1
+    ),
 )
 
 

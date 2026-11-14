@@ -9,6 +9,7 @@ the adapters and below the engine.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import datetime
 import logging
 import os
@@ -798,6 +799,7 @@ def handles_from_discovery(
     coverage: StoreCoverage,
     *,
     project_dirs: ProjectDirCache | None = None,
+    skip_path: cabc.Callable[[pathlib.Path], bool] | None = None,
 ) -> list[SourceHandle]:
     """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
 
@@ -811,6 +813,9 @@ def handles_from_discovery(
     One project directory backs every transcript of every session it ran, so
     the decode is worth remembering — but only for as long as the discovery
     pass that owns it, since the directory layout it probed can change.
+
+    ``skip_path`` drops glob matches before they are stat'ed, which matters
+    on a network mount where each ``stat`` is a round trip.
     """
     sources: list[SourceHandle] = []
     search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
@@ -844,6 +849,8 @@ def handles_from_discovery(
             if required_parts and not required_parts.issubset(path.parts):
                 continue
             if excluded_parts and excluded_parts.intersection(path.parts):
+                continue
+            if skip_path is not None and skip_path(path):
                 continue
             sources.append(
                 SourceHandle(
@@ -1117,6 +1124,7 @@ def discover_from_catalog(
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
     allow_conversation_content_role_fallback: bool = True,
+    skip_path: cabc.Callable[[pathlib.Path], bool] | None = None,
 ) -> list[SourceHandle]:
     """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
 
@@ -1132,7 +1140,8 @@ def discover_from_catalog(
     for it. ``store_roles`` restricts enumeration before any filesystem walk,
     which lets search avoid stores its scope cannot consume. The fallback flag
     controls whether conversation roles can also reach allowlisted app-state
-    rows; see :func:`descriptor_admits_store_roles`.
+    rows; see :func:`descriptor_admits_store_roles`. ``skip_path`` is passed
+    to :func:`handles_from_discovery`.
     """
     from agentgrep.store_catalog import CATALOG
 
@@ -1179,6 +1188,7 @@ def discover_from_catalog(
                     backends,
                     coverage,
                     project_dirs=project_dirs,
+                    skip_path=skip_path,
                 ):
                     if handle.path in seen_paths:
                         continue
@@ -1215,16 +1225,24 @@ def discover_codex_sources(
 
     Honours the ``CODEX_HOME`` environment variable (see upstream
     ``codex-rs/utils/home-dir/src/lib.rs``); falls back to ``${HOME}/.codex``
-    when unset or empty. Path roots, globs, file lists, and adapter metadata
-    come from the ``codex.*`` rows of
+    when unset or empty. On WSL, each Windows profile's ``.codex`` (where
+    Codex desktop keeps its sessions) is searched too. Path roots, globs, file
+    lists, and adapter metadata come from the ``codex.*`` rows of
     :data:`agentgrep.store_catalog.CATALOG`.
     """
     root = resolve_env_root("CODEX_HOME", home / ".codex")
-    if not root.exists():
+    host_roots = _host_profile_dirs(".codex")
+    local_roots = (root,) if root.exists() else ()
+    if not local_roots and not host_roots:
         return []
-    sqlite_root = resolve_codex_sqlite_root(root)
-    roots: dict[str, DiscoveryRoot] = {"default": root, "codex_sqlite": sqlite_root}
-    if include_non_default:
+    # A Windows-side home keeps its SQLite files beside the sessions; the
+    # Linux ``CODEX_SQLITE_HOME`` and ``sqlite_home`` settings do not apply to it.
+    sqlite_roots = tuple(resolve_codex_sqlite_root(path) for path in local_roots) + host_roots
+    roots: dict[str, DiscoveryRoot] = {
+        "default": local_roots + host_roots,
+        "codex_sqlite": sqlite_roots,
+    }
+    if include_non_default and local_roots:
         roots["codex_project"] = _codex_project_roots(root, backends)
     return discover_from_catalog(
         home,
@@ -1250,14 +1268,16 @@ def discover_claude_sources(
     """Discover Claude Code and Claude desktop sources.
 
     Honours ``CLAUDE_CONFIG_DIR`` and otherwise falls back to
-    ``${HOME}/.claude``. The Claude desktop app directories (see
-    :func:`claude_desktop_dirs`) add the local agent-mode ("Cowork")
-    transcripts and the Code-tab session index. Path roots, globs, and adapter
-    metadata come from the ``claude.*`` rows of
-    :data:`agentgrep.store_catalog.CATALOG`.
+    ``${HOME}/.claude``. On WSL, each Windows profile's ``.claude`` (where
+    Claude desktop runs Claude Code for Windows-side sessions) is searched
+    too. The Claude desktop app directories (see :func:`claude_desktop_dirs`)
+    add the local agent-mode ("Cowork") transcripts and the Code-tab session
+    index. Path roots, globs, and adapter metadata come from the ``claude.*``
+    rows of :data:`agentgrep.store_catalog.CATALOG`.
     """
     root = resolve_env_root("CLAUDE_CONFIG_DIR", home / ".claude")
     local_roots = (root,) if root.exists() else ()
+    host_roots = _host_profile_dirs(".claude")
     # The desktop roots cost a walk over the Windows mount on WSL; skip them
     # when no admitted row reads them (prompt-only search admits none).
     wanted = admitted_root_keys(
@@ -1267,7 +1287,7 @@ def discover_claude_sources(
         allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
     desktop_dirs = claude_desktop_dirs(home) if wanted & {"claude_desktop", "claude_cowork"} else ()
-    if not local_roots and not desktop_dirs:
+    if not local_roots and not host_roots and not desktop_dirs:
         return []
     roots: dict[str, DiscoveryRoot] = {
         "default": local_roots,
@@ -1276,16 +1296,46 @@ def discover_claude_sources(
     }
     if include_non_default and local_roots:
         roots["claude_project"] = _claude_project_roots(root, backends)
-    return discover_from_catalog(
-        home,
-        "claude",
-        roots,
-        backends,
-        include_non_default=include_non_default,
-        version_detail=version_detail,
-        store_roles=store_roles,
-        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
-    )
+
+    def discover(
+        pass_roots: dict[str, DiscoveryRoot],
+        skip_path: cabc.Callable[[pathlib.Path], bool] | None = None,
+    ) -> list[SourceHandle]:
+        return discover_from_catalog(
+            home,
+            "claude",
+            pass_roots,
+            backends,
+            include_non_default=include_non_default,
+            version_detail=version_detail,
+            store_roles=store_roles,
+            allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+            skip_path=skip_path,
+        )
+
+    # Local roots first, so the Windows pass can skip copies of local
+    # transcripts before stat'ing them over the 9p mount.
+    sources = discover(roots)
+    if host_roots:
+        skip = mirrored_claude_transcript_filter(sources, root / "projects")
+        sources.extend(discover({"default": host_roots}, skip))
+    return sources
+
+
+_CLAUDE_TRANSCRIPT_STORES = frozenset({"claude.projects", "claude.projects_subagents"})
+
+
+def _host_profile_dirs(name: str) -> tuple[pathlib.Path, ...]:
+    """Return ``%USERPROFILE%/<name>`` for each Windows profile on WSL where it exists."""
+    found: list[pathlib.Path] = []
+    for profile in wsl.host_user_profiles():
+        candidate = profile / name
+        try:
+            if candidate.is_dir():
+                found.append(candidate)
+        except OSError:
+            continue
+    return tuple(found)
 
 
 def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
@@ -1377,6 +1427,57 @@ def claude_cowork_roots(desktop_dirs: tuple[pathlib.Path, ...]) -> tuple[pathlib
     return tuple(roots)
 
 
+def mirrored_claude_transcript_filter(
+    local_sources: list[SourceHandle],
+    local_projects: pathlib.Path,
+) -> cabc.Callable[[pathlib.Path], bool]:
+    """Return a predicate that spots Windows-side copies of local transcripts.
+
+    Claude desktop runs WSL-distro sessions inside the distro and keeps a copy
+    of each transcript under ``%USERPROFILE%/.claude/projects/ssh-<id>/`` on
+    Windows, with subagent files flattened into the same directory. The
+    predicate is true for a file in such a directory whose name matches a
+    transcript discovered under ``local_projects``; copies of sessions from
+    other hosts stay.
+
+    Parameters
+    ----------
+    local_sources : list[SourceHandle]
+        Sources already discovered from the local Claude home.
+    local_projects : pathlib.Path
+        The local Claude home's ``projects`` directory.
+
+    Returns
+    -------
+    collections.abc.Callable[[pathlib.Path], bool]
+        ``True`` for a path to skip.
+
+    Examples
+    --------
+    >>> import pathlib
+    >>> from agentgrep.discovery import mirrored_claude_transcript_filter
+    >>> skip = mirrored_claude_transcript_filter([], pathlib.Path("/home/u/.claude/projects"))
+    >>> skip(pathlib.Path("/mnt/c/Users/u/.claude/projects/ssh-a/s1.jsonl"))
+    False
+    """
+    prefix = f"{local_projects}{os.sep}"
+    local_names = frozenset(
+        source.path.name
+        for source in local_sources
+        if source.store in _CLAUDE_TRANSCRIPT_STORES and str(source.path).startswith(prefix)
+    )
+
+    def is_mirrored_copy(path: pathlib.Path) -> bool:
+        parent = path.parent
+        return (
+            path.name in local_names
+            and parent.name.startswith("ssh-")
+            and parent.parent.name == "projects"
+        )
+
+    return is_mirrored_copy
+
+
 def discover_cursor_cli_sources(
     home: pathlib.Path,
     backends: BackendSelection,
@@ -1390,13 +1491,16 @@ def discover_cursor_cli_sources(
 
     Covers the terminal agent's transcripts under ``~/.cursor/projects``,
     the AI-tracking SQLite, and the lowercase ``~/.config/cursor`` home
-    (prompt history and chat ``store.db`` blobs). Driven entirely by the
-    ``cursor-cli.*`` catalogue rows.
+    (prompt history and chat ``store.db`` blobs). On WSL, each Windows
+    profile is searched as a second home, which reaches the transcripts of
+    Cursor running on Windows. Driven entirely by the ``cursor-cli.*``
+    catalogue rows.
     """
+    profiles = tuple(profile.path for profile in wsl.host_user_profiles())
     return discover_from_catalog(
         home,
         "cursor-cli",
-        home,
+        {"default": (home, *profiles)},
         backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
