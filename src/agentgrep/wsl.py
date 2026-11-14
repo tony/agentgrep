@@ -479,12 +479,18 @@ def host_display_candidates(
     ...     (path,) = host_display_candidates("%APPDATA%/Claude")
     ...     print(path.relative_to(users).as_posix(), repr(path))
     someone/AppData/Roaming/Claude WSLHostPath('%APPDATA%/Claude')
+    >>> with mock.patch.dict(os.environ, {USERS_ROOT_ENV: str(users)}):
+    ...     (pattern,) = host_display_candidates("%USERPROFILE%*")
+    ...     print(pattern.relative_to(users).as_posix())
+    someone/*
     >>> host_display_candidates("~/notes")
     ()
     """
     for token, parts in _DISPLAY_TOKENS:
-        if text == token or text.startswith(f"{token}/"):
-            tail = [part for part in text[len(token) :].split("/") if part]
+        rest = text.removeprefix(token)
+        # The token ends at a separator, or at a glob so path:%USERPROFILE%* works.
+        if rest != text and (not rest or rest.startswith(("/", "*", "?", "["))):
+            tail = [part for part in rest.split("/") if part]
             return tuple(
                 profile.path.joinpath(
                     *parts,
