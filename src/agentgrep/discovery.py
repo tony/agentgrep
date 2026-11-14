@@ -15,6 +15,7 @@ import contextlib
 import contextvars
 import dataclasses
 import datetime
+import functools
 import logging
 import os
 import pathlib
@@ -1452,28 +1453,22 @@ def discover_claude_sources(
     if include_non_default and local_roots:
         roots["claude_project"] = _claude_project_roots(root, backends)
 
-    def discover(
-        pass_roots: dict[str, DiscoveryRoot],
-        skip_path: cabc.Callable[[pathlib.Path], bool] | None = None,
-    ) -> list[SourceHandle]:
-        return discover_from_catalog(
-            home,
-            "claude",
-            pass_roots,
-            backends,
-            include_non_default=include_non_default,
-            version_detail=version_detail,
-            store_roles=store_roles,
-            allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
-            skip_path=skip_path,
-        )
-
+    catalog_pass = functools.partial(
+        discover_from_catalog,
+        home,
+        "claude",
+        backends=backends,
+        include_non_default=include_non_default,
+        version_detail=version_detail,
+        store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+    )
     # Local roots first, so the Windows pass can skip copies of local
     # transcripts before stat'ing them over the 9p mount.
-    sources = discover(roots)
+    sources = catalog_pass(roots)
     if host_roots:
         skip = mirrored_claude_transcript_filter(sources, root / "projects")
-        sources.extend(discover({"default": host_roots}, skip))
+        sources.extend(catalog_pass({"default": host_roots}, skip_path=skip))
     return sources
 
 
