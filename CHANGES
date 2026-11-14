@@ -76,9 +76,10 @@ and `WSLHost` lookups. See {ref}`library-examples-wsl` for details.
 
 #### ChatGPT desktop is catalogued (#185)
 
-ChatGPT desktop's stores are documented but not searched: the macOS app's
-conversation files are encrypted and the Windows app keeps only a browser
-profile. See {ref}`backend-chatgpt` for details.
+ChatGPT desktop's stores are listed for inventory but not searched: the macOS
+app's conversation files are encrypted and the Windows app keeps only a browser
+profile. The MCP {tool}`list_sources` tool with `include_non_default` lists
+their files. See {ref}`backend-chatgpt` for details.
 
 ### Fixes
 
