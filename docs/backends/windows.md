@@ -83,10 +83,15 @@ the real file:
 - `find -a` prints real absolute paths in text output; JSON keeps the display
   form.
 
-Two cases are left as is:
+Three cases are left as is:
 
 - A single-component home such as `/root` encodes to a common word.
 - A repository whose own name contains the account name keeps its name.
+- Inside an encoded folder name, only the accounts of profiles under the
+  users directory are recognized, since the encoding leaves no mark where a
+  name ends: a folder for a profile on another drive (`-mnt-d-Users-<name>-…`)
+  keeps its name, though a working directory on that drive prints as
+  `%USERPROFILE%/…`.
 
 A printed path works as a `path:` query, and a printed working directory as a
 `cwd:` query, so the Windows-side results can be selected or left out.
