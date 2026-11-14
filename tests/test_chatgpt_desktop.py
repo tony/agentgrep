@@ -251,6 +251,38 @@ def test_conversation_list_becomes_title_records(
     assert _SECRET_VALUE not in decoded
 
 
+def test_plain_term_search_finds_a_title(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A plain-term conversation search reaches the titles stored beside the CURRENT file."""
+    from agentgrep._engine.orchestration import run_search_query
+    from agentgrep.records import SearchQuery
+
+    leveldb = (
+        tmp_path
+        / "Users/windows-account-name/AppData/Local/Packages"
+        / f"{CHATGPT_DESKTOP_PACKAGE}/LocalCache/Roaming/ChatGPT/Local Storage/leveldb"
+    )
+    leveldb.mkdir(parents=True)
+    (leveldb / "CURRENT").write_text("MANIFEST-000001\n", encoding="utf-8")
+    _write_log(leveldb, "000003.log", 1, [(_KEY, _OLD)])
+    monkeypatch.setenv(wsl.USERS_ROOT_ENV, str(tmp_path / "Users"))
+    monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
+    query = SearchQuery(
+        terms=("widget",),
+        scope="conversations",
+        any_term=False,
+        regex=False,
+        case_sensitive=False,
+        agents=("chatgpt",),
+        limit=None,
+        effort="exhaustive",
+    )
+    records = run_search_query(tmp_path / "home", query, backends=_NO_BACKENDS)
+    assert [record.title for record in records] == ["Draft the widget plan"]
+
+
 class DamagedStoreCase(t.NamedTuple):
     """A LevelDB directory with one damaged part, and the entries that must survive it."""
 

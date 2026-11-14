@@ -340,6 +340,12 @@ def direct_source_matches(
             # unconditional; the record matcher filters after expansion.
             matched = True
             return matched  # Preserve matched for profiling in finally.
+        if source.adapter_id == "chatgpt.local_storage_conversation_list.v1":
+            # The source path is LevelDB's CURRENT pointer; the titles sit in
+            # sibling log and Snappy table files, often as UTF-16, so no grep
+            # over the path can see them. The record matcher decides.
+            matched = True
+            return matched  # Preserve matched for profiling in finally.
         if source.source_kind == "sqlite":
             matched = True
             return matched  # Preserve matched for profiling in finally.
