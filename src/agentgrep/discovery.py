@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import concurrent.futures
+import contextlib
+import contextvars
 import datetime
 import logging
 import os
 import pathlib
 import re
 import sys
+import threading
 import tomllib
 import typing as t
 import urllib.parse
@@ -860,7 +863,7 @@ def handles_from_discovery(
                 ),
             )
 
-    if spec.glob is not None and search_root.exists():
+    if spec.glob is not None and not _discovery_stopped() and search_root.exists():
         required_parts = set(spec.path_parts_required)
         excluded_parts = set(spec.path_parts_excluded)
         key = (search_root, spec.glob)
@@ -877,6 +880,8 @@ def handles_from_discovery(
             and not (skip_path is not None and skip_path(path))
         ]
         mtimes = _file_mtimes(kept, slow_mount=wsl.is_host_path(search_root))
+        if mtimes is None:
+            return sources
         for path, mtime_ns in zip(kept, mtimes, strict=True):
             sources.append(
                 SourceHandle(
@@ -918,25 +923,97 @@ def handles_from_discovery(
     return sources
 
 
-_SLOW_MOUNT_STAT_WORKERS = 8
-"""Concurrent ``stat`` calls for files on the 9p Windows mount."""
+_DISCOVERY_STOP: contextvars.ContextVar[cabc.Callable[[], bool] | None] = contextvars.ContextVar(
+    "agentgrep_discovery_stop",
+    default=None,
+)
 
 
-def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int]:
+@contextlib.contextmanager
+def discovery_stop(should_stop: cabc.Callable[[], bool]) -> cabc.Generator[None]:
+    """Let discovery in this context end early once ``should_stop()`` is true.
+
+    The search engine abandons a discovery pass when the caller cancels or
+    asks for an answer now, but the abandoned thread would keep walking the
+    filesystem, which on the WSL 9p mount is seconds of round trips. Inside
+    this context, discovery checks the predicate between catalogue rows and
+    roots and stops queuing ``stat`` calls, returning the sources found so far.
+    A context variable carries it, so ``asyncio.to_thread`` and
+    :func:`contextvars.copy_context` reach worker threads without changing any
+    discover function's signature.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> from agentgrep.discovery import discover_sources, discovery_stop
+    >>> from agentgrep.records import BackendSelection
+    >>> home = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (home / ".claude" / "projects" / "p").mkdir(parents=True)
+    >>> _ = (home / ".claude" / "projects" / "p" / "s.jsonl").write_text("{}")
+    >>> none = BackendSelection(find_tool=None, grep_tool=None, json_tool=None)
+    >>> with discovery_stop(lambda: True):
+    ...     discover_sources(home, ("claude",), none, include_non_default=True)
+    []
+    """
+    token = _DISCOVERY_STOP.set(should_stop)
+    try:
+        yield
+    finally:
+        _DISCOVERY_STOP.reset(token)
+
+
+def _discovery_stopped() -> bool:
+    """Return whether the active :func:`discovery_stop` predicate asks to stop."""
+    should_stop = _DISCOVERY_STOP.get()
+    return should_stop is not None and should_stop()
+
+
+_SLOW_MOUNT_STAT_WORKERS = 16
+"""Concurrent ``stat`` calls for files on the 9p Windows mount, shared process-wide."""
+
+_SLOW_MOUNT_MIN_BATCH = 16
+"""Smallest batch worth sending to the pool; shorter lists stay serial."""
+
+_stat_pool: concurrent.futures.ThreadPoolExecutor | None = None
+_stat_pool_lock = threading.Lock()
+
+
+def _shared_stat_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the process-wide pool for Windows-mount ``stat`` calls.
+
+    One bounded pool serves every discovery pass, so concurrent searches share
+    a bounded set of threads instead of each starting its own.
+    """
+    global _stat_pool
+    with _stat_pool_lock:
+        if _stat_pool is None:
+            _stat_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=_SLOW_MOUNT_STAT_WORKERS,
+                thread_name_prefix="agentgrep-stat",
+            )
+        return _stat_pool
+
+
+def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int] | None:
     """Return each path's mtime, concurrently on the Windows mount.
 
     A ``stat`` over the WSL 9p mount is a round trip of a few milliseconds
     that releases the GIL, so a batch of them overlaps well in threads. On a
     local disk the same call takes microseconds and a pool would only add
-    overhead, so local paths stay serial.
+    overhead, so local paths stay serial. Returns ``None`` when
+    :func:`discovery_stop` asks to stop, after cancelling the queued calls.
     """
-    if not slow_mount or len(paths) < _SLOW_MOUNT_STAT_WORKERS * 2:
+    if not slow_mount or len(paths) < _SLOW_MOUNT_MIN_BATCH:
         return [file_mtime_ns(path) for path in paths]
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=_SLOW_MOUNT_STAT_WORKERS,
-        thread_name_prefix="agentgrep-stat",
-    ) as pool:
-        return list(pool.map(file_mtime_ns, paths))
+    futures = [_shared_stat_pool().submit(file_mtime_ns, path) for path in paths]
+    mtimes: list[int] = []
+    for future in futures:
+        if _discovery_stopped():
+            for pending in futures:
+                pending.cancel()
+            return None
+        mtimes.append(future.result())
+    return mtimes
 
 
 _CURSOR_CLI_TRANSCRIPT_STORES: frozenset[str] = frozenset(
@@ -1207,6 +1284,8 @@ def discover_from_catalog(
     listings: dict[tuple[pathlib.Path, str], list[pathlib.Path]] = {}
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
+        if _discovery_stopped():
+            return sources
         coverage = descriptor.coverage_level
         if coverage is StoreCoverage.PRIVATE:
             continue
@@ -1409,13 +1488,17 @@ def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
 
     Examples
     --------
-    >>> import pathlib, tempfile
+    >>> import os, pathlib, tempfile
+    >>> from unittest import mock
     >>> from agentgrep.discovery import claude_desktop_dirs
     >>> home = pathlib.Path(tempfile.mkdtemp())
-    >>> claude_desktop_dirs(home)
+    >>> no_windows = mock.patch.dict(os.environ, {"AGENTGREP_WSL_USERS_ROOT": str(home / "none")})
+    >>> with no_windows:
+    ...     print(claude_desktop_dirs(home))
     ()
     >>> _ = (home / "Library" / "Application Support" / "Claude").mkdir(parents=True)
-    >>> [path.relative_to(home).as_posix() for path in claude_desktop_dirs(home)]
+    >>> with no_windows:
+    ...     print([path.relative_to(home).as_posix() for path in claude_desktop_dirs(home)])
     ['Library/Application Support/Claude']
     """
     xdg_config = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))

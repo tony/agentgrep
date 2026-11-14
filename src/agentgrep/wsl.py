@@ -22,6 +22,13 @@ Three role objects name the places agent stores live:
 They implement :class:`os.PathLike`, so they pass anywhere a path does, and
 joining one with ``/`` returns a :class:`WSLHostPath`.
 
+Contents, in file order: detection (:func:`is_wsl`, :func:`mount_root`,
+:func:`users_root`), profiles (:func:`host_user_profiles`,
+:func:`known_profile_names`), display and its inverse
+(:func:`display_host_path`, :func:`host_display_candidates`,
+:func:`host_profile_key`, :func:`is_host_path`), the path type, and the role
+objects.
+
 Examples
 --------
 Point the users root at a scratch tree, the way ``AGENTGREP_WSL_USERS_ROOT``
@@ -52,6 +59,7 @@ import hmac
 import os
 import pathlib
 import re
+import threading
 
 USERS_ROOT_ENV = "AGENTGREP_WSL_USERS_ROOT"
 """Environment variable that pins the Windows users directory seen from WSL.
@@ -250,12 +258,20 @@ def host_user_profiles(
 _known_profile_names_sorted: tuple[str, ...] = ()
 
 
+_profile_names_lock = threading.Lock()
+
+
 def _remember_profile_name(name: str) -> None:
-    """Record one profile name for :func:`known_profile_names`."""
+    """Record one profile name for :func:`known_profile_names`.
+
+    Discovery runs in worker threads, so the update is locked and readers see
+    an immutable, already-sorted tuple.
+    """
     global _known_profile_names_sorted
-    if name not in _KNOWN_PROFILE_NAMES:
-        _KNOWN_PROFILE_NAMES.add(name)
-        _known_profile_names_sorted = tuple(sorted(_KNOWN_PROFILE_NAMES))
+    with _profile_names_lock:
+        if name not in _KNOWN_PROFILE_NAMES:
+            _KNOWN_PROFILE_NAMES.add(name)
+            _known_profile_names_sorted = tuple(sorted(_KNOWN_PROFILE_NAMES))
 
 
 def known_profile_names() -> tuple[str, ...]:

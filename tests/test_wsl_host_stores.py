@@ -268,3 +268,36 @@ def test_encoded_home_hides_the_linux_account_and_resolves(
         if isinstance(event, FindRecordEmitted)
     ]
     assert parse_record_ref(make_find_ref(record), home=host_tree.home).path == transcript
+
+
+def test_discovery_stop_ends_a_windows_walk_early(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the stop predicate fires, discovery stops queuing Windows-side stats."""
+    from agentgrep import discovery
+
+    for index in range(40):
+        _write_transcript(
+            host_tree.profile / f".claude/projects/C--Users-x-bulk/bulk-{index}.jsonl",
+            f"bulk-{index}",
+        )
+    calls: list[pathlib.Path] = []
+    real_mtime = discovery.file_mtime_ns
+
+    def counted(path: pathlib.Path) -> int:
+        calls.append(path)
+        return real_mtime(path)
+
+    monkeypatch.setattr(discovery, "file_mtime_ns", counted)
+
+    def stop() -> bool:
+        return sum(1 for path in calls if path.name.startswith("bulk-")) >= 4
+
+    with discovery.discovery_stop(stop):
+        sources = discover_sources(
+            host_tree.home, ("claude",), _NO_BACKENDS, include_non_default=True
+        )
+    bulk = [s for s in sources if s.path.name.startswith("bulk-")]
+    assert bulk == []
+    assert len([path for path in calls if path.name.startswith("bulk-")]) < 40
