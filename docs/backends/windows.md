@@ -155,9 +155,8 @@ calls on paths under the mount, so the counts do not depend on machine load:
 
 Prompt search makes three fewer `stat` calls and three more directory scans.
 All five scans list the Windows users directory, once for each backend that
-probes it (Claude, Codex, Cursor CLI, VS Code, and Cursor IDE, where 0.1.0a54
-probed only the last two); each is one round trip, and the `search --limit 1`
-rows below show no slowdown from them.
+probes it (Claude, Codex, Cursor CLI, VS Code, and Cursor IDE); each is one
+round trip, and the `search --limit 1` rows below show no slowdown from them.
 
 `find` lists 3.8 times as many Windows sources with fewer `stat` calls: it
 never shows a modification time, so it skips the `stat` that reads one unless
@@ -181,12 +180,9 @@ shared, so differences under about 10% are noise:
 | `agentgrep search --limit 1 libtmux`, mount hidden | 1.17 s (1.13–1.30) | 1.18 s (1.15–1.39) |
 
 Every row is within that noise, so this version is not slower while it reads
-the Windows side. Before `find` skipped the unused `stat`, the same
-comparison measured it about 0.7 s slower with the mount (2.15 s against
-2.82 s), the cost of stat'ing 279 more Windows-side files; the
-{ref}`benchmark harness <benchmark>`, which times one build after the other,
-had hidden that gap behind changes in machine load. The harness still gives a
-quick comparison against the main branch:
+the Windows side. The {ref}`benchmark harness <benchmark>` gives a quicker
+comparison against the main branch, but it times one build after the other,
+so a change in machine load can hide or invent a gap of this size:
 
 ```console
 $ uv run scripts/benchmark.py run \
@@ -204,7 +200,7 @@ reads their transcripts after skipping the copies of WSL-distro transcripts
 | --- | --- | --- | --- |
 | First read, Windows side reading from disk | `eb20c18` (before ChatGPT title search) | 863 | about 100 s |
 | Warm, right after | `eb20c18` | 863 | about 35 s |
-| Warm | this version | 868 | about 19 s |
+| Warm | `bc697fb` (with ChatGPT title search) | 868 | about 19 s |
 
 The two warm runs are not comparable: they ran at different commits and
 under different machine load, so the drop from 35 s to 19 s is not claimed
