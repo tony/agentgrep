@@ -114,7 +114,8 @@ def mount_root(wsl_conf: pathlib.Path = _WSL_CONF) -> pathlib.PurePosixPath:
 
     Reads ``root`` from the ``[automount]`` section of ``/etc/wsl.conf``
     and falls back to ``/mnt`` when the file, section, or key is missing or
-    unreadable.
+    unreadable. WSL applies the setting when the distro starts, so the file
+    is read once per process.
 
     Parameters
     ----------
@@ -133,17 +134,17 @@ def mount_root(wsl_conf: pathlib.Path = _WSL_CONF) -> pathlib.PurePosixPath:
     >>> mount_root(pathlib.Path("/nonexistent/wsl.conf"))
     PurePosixPath('/mnt')
     """
-    try:
-        mtime_ns = wsl_conf.stat().st_mtime_ns
-    except OSError:
-        return DEFAULT_MOUNT_ROOT
-    return _parse_mount_root(str(wsl_conf), mtime_ns)
+    return _parse_mount_root(str(wsl_conf))
 
 
 @functools.lru_cache(maxsize=8)
-def _parse_mount_root(wsl_conf: str, mtime_ns: int) -> pathlib.PurePosixPath:
-    """Parse ``[automount] root``; keyed on mtime so an edited file is re-read."""
-    del mtime_ns  # cache key only
+def _parse_mount_root(wsl_conf: str) -> pathlib.PurePosixPath:
+    """Parse ``[automount] root`` once per file and process.
+
+    WSL applies the automount root when the distro starts, so the value
+    cannot change under a running process, and caching it keeps path display
+    (which runs on the TUI's render path) free of file I/O.
+    """
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     try:
         parser.read_string(pathlib.Path(wsl_conf).read_text(encoding="utf-8", errors="ignore"))
@@ -153,6 +154,11 @@ def _parse_mount_root(wsl_conf: str, mtime_ns: int) -> pathlib.PurePosixPath:
     if not root.startswith("/"):
         return DEFAULT_MOUNT_ROOT
     return pathlib.PurePosixPath(root.rstrip("/") or "/")
+
+
+def _users_root_text() -> str:
+    """Return :func:`users_root` as a string without building a path object."""
+    return os.environ.get(USERS_ROOT_ENV) or f"{mount_root()}/c/Users"
 
 
 def users_root() -> WSLHostPath:
@@ -266,7 +272,7 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     None
     """
     text = os.fspath(path)
-    root = str(users_root()).rstrip("/")
+    root = _users_root_text().rstrip("/")
     if not text.startswith(root + "/"):
         return None
     profile, _, tail = text[len(root) + 1 :].partition("/")
@@ -334,7 +340,7 @@ def host_profile_key(path: str | os.PathLike[str]) -> str | None:
     (16, True, None)
     """
     text = os.fspath(path)
-    root = str(users_root()).rstrip("/")
+    root = _users_root_text().rstrip("/")
     if not text.startswith(root + "/"):
         return None
     profile = text[len(root) + 1 :].partition("/")[0]
