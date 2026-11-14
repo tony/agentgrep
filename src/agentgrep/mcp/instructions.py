@@ -14,7 +14,8 @@ _INSTR_HEADER = (
     "app's Cowork transcripts and Code-tab sessions), Cursor, Gemini, "
     "Antigravity CLI, Grok, Pi, OpenCode, and VS Code (GitHub Copilot Chat). "
     "On WSL, the Windows-side Claude, Codex, Cursor, and VS Code stores are "
-    "searched too. All tools are read-only and never spawn writes."
+    "searched too (prompt history by default, transcripts with exhaustive "
+    "effort). All tools are read-only and never spawn writes."
 )
 
 _INSTR_SCOPE = (

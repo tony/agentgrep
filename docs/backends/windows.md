@@ -13,15 +13,15 @@ WSL kernel, and only for directories that exist.
 
 ## What is searched
 
-| Agent | Windows location | Searched as |
-| --- | --- | --- |
-| Claude Code (run by Claude desktop) | `%USERPROFILE%/.claude/` | {doc}`claude` transcripts |
-| Claude desktop Cowork | `%APPDATA%/Claude/local-agent-mode-sessions/` | {doc}`claude` transcripts |
-| Claude desktop Code tab | `%APPDATA%/Claude/claude-code-sessions/` | session titles, opt-in |
-| Codex desktop | `%USERPROFILE%/.codex/` | {doc}`codex` sessions and SQLite state |
-| Cursor agent | `%USERPROFILE%/.cursor/projects/` | {doc}`cursor-cli` transcripts |
-| Cursor IDE | `%APPDATA%/Cursor/User/` | {doc}`cursor-ide` state databases |
-| VS Code Copilot Chat | `%APPDATA%/Code/User/` | {doc}`vscode` chat sessions |
+| Agent | Windows location | Searched as | Default prompt search |
+| --- | --- | --- | --- |
+| Claude Code (run by Claude desktop) | `%USERPROFILE%/.claude/` | {doc}`claude` transcripts | `history.jsonl` if present |
+| Claude desktop Cowork | `%APPDATA%/Claude/local-agent-mode-sessions/` | {doc}`claude` transcripts | no, `--exhaustive` |
+| Claude desktop Code tab | `%APPDATA%/Claude/claude-code-sessions/` | session titles | no, opt-in inventory |
+| Codex desktop | `%USERPROFILE%/.codex/` | {doc}`codex` sessions and SQLite state | `history.jsonl` if present |
+| Cursor agent | `%USERPROFILE%/.cursor/projects/` | {doc}`cursor-cli` transcripts | `prompt_history.json` if present |
+| Cursor IDE | `%APPDATA%/Cursor/User/` | {doc}`cursor-ide` state databases | as on Linux |
+| VS Code Copilot Chat | `%APPDATA%/Code/User/` | {doc}`vscode` chat sessions | as on Linux |
 
 The catalogue records each store's Windows path in its `win32` platform
 variant, which `get_store_descriptor` and the backend pages show.
@@ -52,7 +52,23 @@ Grok's `%2Fhome%2F<user>%2Fwork` as `~%2Fwork`), and a Windows account
 encoded into a Linux-side folder (`-mnt-c-Users-<name>-…`) as `%USERNAME%`.
 
 The rewrite applies to text, JSON, NDJSON, the TUI, and MCP results.
-Opaque result refs still open the real file.
+Opaque result refs still open the real file, and `find -a` prints real
+absolute paths when a script needs them. Two limits: a single-component home
+such as `/root` encodes to a common word and is left as is, and a
+repository whose own name contains the account name keeps its name.
+
+A printed path works as a `path:` query, so the Windows-side results can be
+selected or left out. Only the Windows side:
+
+```console
+$ agentgrep find 'path:%USERPROFILE%* OR path:%APPDATA%*'
+```
+
+Everything except the Windows side:
+
+```console
+$ agentgrep search 'NOT path:%USERPROFILE%* NOT path:%APPDATA%* deploy'
+```
 
 ## Choosing the Windows users directory
 
@@ -78,13 +94,25 @@ read once. Copies of sessions from other hosts are kept.
 
 ## Speed
 
-The Windows drive is a 9p network mount and reads over it are slow. The
-default prompt search adds only each profile's prompt-history files
-(`.claude/history.jsonl`, `.codex/history.jsonl`, and Cursor's
-`.config/cursor/prompt_history.json`) and skips the desktop app directories, so on a machine where those files are absent it pays a
-few directory checks. `find` and `--exhaustive` walk every Windows-side
-transcript tree as well; on a large Claude desktop install that adds
-seconds to `find` and can add minutes to an exhaustive search. Point
+The Windows drive is a 9p network mount, where every `stat` is a round trip.
+Counts of filesystem operations on the mount for one discovery pass, taken on
+a WSL host with a large Claude desktop install, compare the latest release
+with this version:
+
+| Pass | Windows sources | `stat` calls | Directory scans | `fd` runs |
+| --- | --- | --- | --- | --- |
+| Prompt search, before | 1 | 39 | 2 | 0 |
+| Prompt search, now | 1 | 36 | 5 | 0 |
+| `find`, before | 103 | 327 | 51 | 0 |
+| `find`, now | 376 | 641 | 65 | 10 |
+
+The default prompt search reads only each profile's prompt-history files and
+skips the desktop app directories, so it does the same work as before. `find`
+and `--exhaustive` walk every Windows-side transcript tree; discovery overlaps
+the `stat` calls on the mount, and on that host (a shared machine, so the
+figure is indicative) `find`'s discovery took about 0.3 s longer than the
+release for 3.6 times as many Windows sources. A cancelled search stops the
+walk instead of finishing it in the background. Point
 `AGENTGREP_WSL_USERS_ROOT` at a missing directory to leave the Windows side
 out.
 
