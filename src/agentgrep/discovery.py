@@ -952,8 +952,8 @@ def discovery_stop(should_stop: cabc.Callable[[], bool]) -> cabc.Generator[Disco
     asks for an answer now, but the abandoned thread would keep walking the
     filesystem, which on the WSL 9p mount is seconds of round trips. Inside
     this context, discovery checks the predicate between catalogue rows and
-    roots, ends running file listings, and stops queuing ``stat`` calls,
-    returning the sources found so far. The yielded
+    roots, ends running file listings, and starts no new ``stat`` on the
+    Windows mount, returning the sources found so far. The yielded
     :class:`DiscoveryStopState` says whether that happened, so a caller never
     mistakes a partial result for a complete one. A context variable carries
     the predicate, so ``asyncio.to_thread`` and :func:`contextvars.copy_context`
@@ -984,7 +984,11 @@ def discovery_stop(should_stop: cabc.Callable[[], bool]) -> cabc.Generator[Disco
 
 def _discovery_stopped() -> bool:
     """Return whether the active :func:`discovery_stop` predicate asks to stop."""
-    active = _DISCOVERY_STOP.get()
+    return _stop_requested(_DISCOVERY_STOP.get())
+
+
+def _stop_requested(active: tuple[cabc.Callable[[], bool], DiscoveryStopState] | None) -> bool:
+    """Check ``active``'s predicate, recording a stop in its state once it fires."""
     if active is None:
         return False
     should_stop, state = active
@@ -1031,18 +1035,34 @@ def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int] | 
     that releases the GIL, so a batch of them overlaps well in threads. On a
     local disk the same call takes microseconds and a pool would only add
     overhead, so local paths stay serial. Returns ``None`` when
-    :func:`discovery_stop` asks to stop, after cancelling the queued calls.
+    :func:`discovery_stop` asks to stop: no ``stat`` on the mount starts after
+    that, so at most the calls already in flight, one per pool thread, finish.
     """
-    if not slow_mount or len(paths) < _SLOW_MOUNT_MIN_BATCH:
+    if not slow_mount:
         return [file_mtime_ns(path) for path in paths]
-    futures = [_shared_stat_pool().submit(file_mtime_ns, path) for path in paths]
+    # Pool threads do not inherit the context variable, so bind the stop here.
+    active = _DISCOVERY_STOP.get()
+
+    def mtime_unless_stopped(path: pathlib.Path) -> int | None:
+        return None if _stop_requested(active) else file_mtime_ns(path)
+
+    if len(paths) < _SLOW_MOUNT_MIN_BATCH:
+        serial: list[int] = []
+        for path in paths:
+            mtime = mtime_unless_stopped(path)
+            if mtime is None:
+                return None
+            serial.append(mtime)
+        return serial
+    futures = [_shared_stat_pool().submit(mtime_unless_stopped, path) for path in paths]
     mtimes: list[int] = []
     for future in futures:
-        if _discovery_stopped():
+        mtime = None if _stop_requested(active) else future.result()
+        if mtime is None:
             for pending in futures:
                 pending.cancel()
             return None
-        mtimes.append(future.result())
+        mtimes.append(mtime)
     return mtimes
 
 
