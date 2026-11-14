@@ -189,6 +189,23 @@ explicitly close the async generator, for example with
 .. autofunction:: agentgrep.search_sources
 .. autofunction:: agentgrep.run_find_query
 .. autofunction:: agentgrep.find_sources
+.. autofunction:: agentgrep.discover_listed_sources
+```
+
+### Stopping discovery
+
+A discovery pass on WSL walks the Windows mount, where each `stat` is a
+network round trip. These let a caller end that walk early: the search engine
+uses {func}`~agentgrep.discovery.discovery_stop` for a cancelled search, and
+the MCP server runs its discovery tools through
+{func}`~agentgrep.discovery.discover_in_thread`, so a cancelled request stops
+its walk.
+
+```{eval-rst}
+.. autofunction:: agentgrep.discovery.discovery_stop
+.. autoclass:: agentgrep.discovery.DiscoveryStopState
+.. autofunction:: agentgrep.discovery.discover_in_thread
+.. autofunction:: agentgrep.discovery.discovery_without_mtimes
 ```
 
 ## Store catalog
