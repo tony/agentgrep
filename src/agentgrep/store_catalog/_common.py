@@ -5,6 +5,10 @@ from __future__ import annotations
 import datetime
 import hashlib
 import pathlib
+import typing as t
+
+if t.TYPE_CHECKING:
+    from agentgrep.stores import StoreDescriptor
 
 OBSERVED_AT = datetime.date(2026, 5, 17)
 _CATALOG_CAPTURED_AT = datetime.date(2026, 10, 25)
@@ -65,3 +69,32 @@ def gemini_project_hash(project_root: pathlib.Path) -> str:
     '99d0533064c83d0483dc07145a0aa887cb104311dac8cc2ca57843c6723a5b69'
     """
     return hashlib.sha256(str(project_root).encode("utf-8")).hexdigest()
+
+
+def with_windows_home_variants(stores: tuple[StoreDescriptor, ...]) -> tuple[StoreDescriptor, ...]:
+    """Add a ``win32`` location to every home-relative row that has none.
+
+    For agents that resolve their data directory from the user's home on
+    Windows exactly as on Linux, the Windows location is the row's pattern with
+    ``%USERPROFILE%`` in place of ``${HOME}``. Rows that are not home-relative
+    (a project tree) keep no Windows variant.
+
+    Examples
+    --------
+    >>> from agentgrep.store_catalog import CATALOG
+    >>> CATALOG.by_id("grok.config").platform_variants["win32"]
+    '${GROK_HOME or %USERPROFILE%/.grok}/config.toml'
+    """
+    return tuple(
+        store.model_copy(
+            update={
+                "platform_variants": {
+                    **store.platform_variants,
+                    "win32": store.path_pattern.replace("${HOME}", "%USERPROFILE%"),
+                },
+            },
+        )
+        if "${HOME}" in store.path_pattern and "win32" not in store.platform_variants
+        else store
+        for store in stores
+    )

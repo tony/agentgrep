@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _OPENCODE_OBSERVED_AT
+from agentgrep.store_catalog._common import _OPENCODE_OBSERVED_AT, with_windows_home_variants
 from agentgrep.stores import (
     DiscoverySpec,
     StoreCoverage,
@@ -215,3 +215,9 @@ _OPENCODE_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=False,
     ),
 )
+
+# OpenCode uses xdg-basedir, which on Windows also falls back to `~/.local/share`,
+# `~/.local/state`, and `~/.config` under the user's home:
+# https://github.com/anomalyco/opencode/blob/v1.19.5/packages/core/src/global.ts#L9-L26
+# and https://github.com/sindresorhus/xdg-basedir/blob/v5.1.0/index.js#L1-L17
+_OPENCODE_STORES = with_windows_home_variants(_OPENCODE_STORES)

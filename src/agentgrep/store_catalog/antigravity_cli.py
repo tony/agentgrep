@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _ANTIGRAVITY_CLI_OBSERVED_AT
+from agentgrep.store_catalog._common import _ANTIGRAVITY_CLI_OBSERVED_AT, with_windows_home_variants
 from agentgrep.stores import (
     DiscoverySpec,
     StoreCoverage,
@@ -366,3 +366,8 @@ _ANTIGRAVITY_CLI_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=False,
     ),
 )
+
+# `agy` is closed source; its changelog confirms Windows support with the same
+# `~/.gemini` layout, so the Windows locations are inferred, not read from source:
+# https://github.com/google-antigravity/antigravity-cli/blob/1.5.9/CHANGELOG.md
+_ANTIGRAVITY_CLI_STORES = with_windows_home_variants(_ANTIGRAVITY_CLI_STORES)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _GROK_OBSERVED_AT
+from agentgrep.store_catalog._common import _GROK_OBSERVED_AT, with_windows_home_variants
 from agentgrep.stores import (
     DiscoverySpec,
     StoreCoverage,
@@ -559,3 +559,7 @@ _GROK_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=False,
     ),
 )
+
+# Grok resolves `GROK_HOME` or `~/.grok` from the user's home on every platform:
+# https://github.com/xai-org/grok-build/blob/2bdd1d6/crates/codegen/xai-dirs/src/lib.rs#L28-L55
+_GROK_STORES = with_windows_home_variants(_GROK_STORES)
