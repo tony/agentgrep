@@ -32,7 +32,7 @@ _INSTR_SCOPE = (
     "UNSUPPORTED for search — its conversation transcripts are encrypted, so "
     "agentgrep cannot read them. ChatGPT desktop is catalogued the same way: its "
     "macOS conversation files are encrypted and its Windows app keeps only a "
-    "browser profile.\n"
+    "browser profile; list_sources(include_non_default=True) lists its files.\n"
     "Antigravity is two agent ids and they are not equally searchable: "
     "'antigravity-cli' has searchable prompt history plus opt-in conversation "
     "records, while 'antigravity-ide' is catalogued for storage inventory only "

@@ -27,6 +27,7 @@ from agentgrep.mcp.models import (
     SearchRecordModel,
     StoreDescriptorModel,
 )
+from agentgrep.records import INVENTORY_AGENTS
 from agentgrep.store_catalog import CATALOG
 
 if t.TYPE_CHECKING:
@@ -87,7 +88,7 @@ def _inspect_record_sample_sync(request: InspectSampleRequest) -> InspectSampleR
     backends = agentgrep.select_backends()
     sources = agentgrep.discover_sources(
         pathlib.Path.home(),
-        agentgrep.AGENT_CHOICES,
+        INVENTORY_AGENTS,
         backends,
         include_non_default=True,
         version_detail="none",
@@ -144,7 +145,7 @@ def _inspect_result_sync(request: InspectResultRequest) -> InspectResultResponse
     backends = agentgrep.select_backends()
     sources = agentgrep.discover_sources(
         home,
-        agentgrep.AGENT_CHOICES,
+        INVENTORY_AGENTS,
         backends,
         include_non_default=True,
         version_detail="none",

@@ -106,6 +106,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "claude.session_memory_text.v1",
     "claude.settings_json.v1",
     "claude.desktop_session_json.v1",
+    "chatgpt.file_metadata_summary.v1",
     "claude.skills_text.v1",
     "claude.commands_text.v1",
     "claude.app_state_json_summary.v1",
@@ -347,3 +348,17 @@ def normalize_agent_selection(agent: AgentSelector) -> tuple[str, ...]:
     """Convert a single MCP agent selector into ``agentgrep`` agents."""
     values: list[str] = [] if agent == "all" else [agent]
     return agentgrep.parse_agents(values)
+
+
+def normalize_inventory_selection(agent: AgentSelector) -> tuple[str, ...]:
+    """Like :func:`normalize_agent_selection`, with catalog-only agents under ``"all"``.
+
+    Inventory tools list catalog-only rows, so ``"all"`` also covers agents
+    such as ChatGPT desktop that no search reads
+    (:data:`agentgrep.records.INVENTORY_AGENTS`).
+    """
+    if agent == "all":
+        from agentgrep.records import INVENTORY_AGENTS
+
+        return INVENTORY_AGENTS
+    return normalize_agent_selection(agent)

@@ -228,6 +228,19 @@ def discover_sources(
                     ),
                 ),
             )
+        elif agent == "chatgpt":
+            discovered.extend(
+                discover_chatgpt_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                    version_detail=version_detail,
+                    store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
+                ),
+            )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
 
@@ -1567,6 +1580,62 @@ def discover_cursor_cli_sources(
         {"default": (home, *profiles)},
         backends,
         include_non_default=include_non_default,
+        version_detail=version_detail,
+        store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+    )
+
+
+CHATGPT_DESKTOP_PACKAGE = "OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0"
+"""MSIX package family name of the ChatGPT desktop app for Windows."""
+
+
+def discover_chatgpt_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+    version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
+) -> list[SourceHandle]:
+    """Discover ChatGPT desktop stores for inventory.
+
+    Every ``chatgpt.*`` row is catalog-only, so only an inventory pass
+    (``include_non_default``) lists them and no search opens them. The macOS
+    app keeps its files in ``~/Library/Application Support/com.openai.chat``;
+    the Windows app is an MSIX package whose ``%APPDATA%`` lives under its
+    ``LocalCache``, reached natively or, on WSL, through each Windows profile.
+    """
+    if not include_non_default:
+        return []
+    macos = home / "Library" / "Application Support" / "com.openai.chat"
+    windows = [
+        home
+        / "AppData"
+        / "Local"
+        / "Packages"
+        / CHATGPT_DESKTOP_PACKAGE
+        / "LocalCache"
+        / "Roaming"
+        / "ChatGPT",
+        *(
+            profile.package_appdata(CHATGPT_DESKTOP_PACKAGE) / "ChatGPT"
+            for profile in wsl.host_user_profiles()
+        ),
+    ]
+    roots: dict[str, DiscoveryRoot] = {
+        "chatgpt_macos": (macos,) if macos.is_dir() else (),
+        "chatgpt_windows": tuple(path for path in windows if path.is_dir()),
+    }
+    if not any(roots.values()):
+        return []
+    return discover_from_catalog(
+        home,
+        "chatgpt",
+        roots,
+        backends,
+        include_non_default=True,
         version_detail=version_detail,
         store_roles=store_roles,
         allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,

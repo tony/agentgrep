@@ -56,6 +56,7 @@ from agentgrep.adapters.antigravity_cli import (
     parse_antigravity_cli_transcript,
 )
 from agentgrep.adapters.antigravity_ide import _ANTIGRAVITY_IDE_PARSERS
+from agentgrep.adapters.chatgpt import _CHATGPT_PARSERS
 from agentgrep.adapters.claude import (
     _CLAUDE_PARSERS,
     CLAUDE_PASTE_HASH_RE,
@@ -207,6 +208,7 @@ PARSER_REGISTRY: t.Final[dict[str, AnyParserSpec]] = merge_parser_specs(
     _OPENCODE_PARSERS,
     _PI_PARSERS,
     _VSCODE_PARSERS,
+    _CHATGPT_PARSERS,
 )
 """``adapter_id`` -> parser spec, merged from every per-agent fragment.
 

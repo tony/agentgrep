@@ -16,8 +16,8 @@ Base paths: `~/Library/Application Support/com.openai.chat` (macOS) and
 ChatGPT desktop is **documented but unsupported**. The macOS app writes one
 `.data` file per conversation that looks encrypted, and the Windows app is a
 Chromium profile with no conversation files. agentgrep catalogues the
-locations for inventory completeness but does **not** cover ChatGPT desktop:
-it is excluded from `--agent` selection and default search.
+locations and lists the files for inventory but does **not** cover ChatGPT
+desktop: it is excluded from `--agent` selection and from search.
 ```
 
 ## Stores
@@ -25,8 +25,11 @@ it is excluded from `--agent` selection and default search.
 ```{storage:agent} chatgpt
 ```
 
-All rows are catalog-only: agentgrep documents where the data lives but does
-not parse it.
+All rows are catalog-only, so `find` and search never open them. The MCP
+{tool}`list_sources` tool with `include_non_default`, and
+{tool}`filter_sources` with `coverage_filter="catalog_only"`, list the files
+that exist on the machine, from macOS or from Windows (natively or through
+WSL), described by size and modification time only.
 
 ## Record schemas
 
