@@ -8,6 +8,7 @@ import os
 import pathlib
 
 from agentgrep import wsl
+from agentgrep._text import restore_encoded_paths
 from agentgrep.origin import _dedupe as _dedupe_preserving_order
 from agentgrep.query.ast import (
     AndNode,
@@ -87,15 +88,20 @@ def _expand_current_user_home_patterns(raw: str) -> tuple[str, ...]:
             for separator in _path_separators()
         ]
         return _dedupe_preserving_order([home, *child_patterns])
-    if raw.startswith("~/"):
-        return (home + raw[1:],)
-    if os.sep != "/" and raw.startswith(f"~{os.sep}"):
-        return (home + raw[1:],)
-    if os.altsep is not None and raw.startswith(f"~{os.altsep}"):
-        return (home + raw[1:],)
+    # Display paths also hide account names inside encoded project folders
+    # (``-home-u-work`` as ``-~-work``); restore them so a copied path matches.
+    for prefix in ("~/", f"~{os.sep}", f"~{os.altsep}" if os.altsep else None):
+        if prefix is not None and raw.startswith(prefix):
+            return restore_encoded_paths(home + raw[1:], home)
     # A Windows path is displayed as %APPDATA%/..., %LOCALAPPDATA%/..., or
     # %USERPROFILE%/...; expand it to every Windows profile so a copied path matches.
-    return tuple(str(path) for path in wsl.host_display_candidates(raw))
+    candidates = wsl.host_display_candidates(raw)
+    if candidates:
+        return _dedupe_preserving_order(
+            [variant for path in candidates for variant in restore_encoded_paths(str(path), home)],
+        )
+    restored = restore_encoded_paths(raw, home)
+    return () if restored == (raw,) else restored
 
 
 def _path_separators() -> tuple[str, ...]:

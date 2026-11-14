@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections
 import dataclasses
+import functools
 import json
 import os
 import pathlib
@@ -18,10 +19,11 @@ import re
 import textwrap
 import typing as t
 import unicodedata
+import urllib.parse
 
 from rich.text import Text as _RichText
 
-from agentgrep.wsl import display_host_path
+from agentgrep.wsl import USERNAME, display_host_path, known_profile_names
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -488,7 +490,9 @@ class PrivatePath(PrivatePathBase):
 
     ``str()`` and ``repr()`` collapse the home directory to ``~`` and, on WSL,
     a Windows profile to ``%USERPROFILE%``/``%APPDATA%``/``%LOCALAPPDATA%``
-    (see :func:`agentgrep.wsl.display_host_path`). :func:`os.fspath`,
+    (see :func:`agentgrep.wsl.display_host_path`). The home directory inside an
+    agent's encoded project folder (``-home-<user>-work``) shows as ``-~-work``
+    (see :func:`redact_encoded_paths`). :func:`os.fspath`,
     equality, and hashing keep using the real path, so a ``PrivatePath`` opens
     the file it names and compares equal to the plain path of that file.
 
@@ -526,9 +530,9 @@ class PrivatePath(PrivatePathBase):
         for separator in separators:
             home_with_separator = home + separator
             if value.startswith(home_with_separator):
-                return "~" + value[len(home) :]
+                return "~" + redact_encoded_paths(value[len(home) :], home)
 
-        return display_host_path(value) or value
+        return redact_encoded_paths(display_host_path(value) or value, home)
 
     def _real_str(self) -> str:
         """Return the uncollapsed path string."""
@@ -559,6 +563,126 @@ class PrivatePath(PrivatePathBase):
     def __repr__(self) -> str:
         """Return repr output with account names collapsed."""
         return f"{self.__class__.__name__}({str(self)!r})"
+
+
+@functools.lru_cache(maxsize=8)
+def _encoded_home_forms(home: str) -> tuple[str, str] | None:
+    """Return ``home`` as agents encode it in folder names, or ``None`` if too generic.
+
+    Claude Code and Cursor replace every non-alphanumeric character with ``-``
+    (``/home/u`` becomes ``-home-u``), and Grok URL-encodes it (``%2Fhome%2Fu``).
+    A single-component home such as ``/root`` encodes to a common word and is
+    left alone.
+    """
+    root = home.rstrip("/")
+    dashed = re.sub(r"[^A-Za-z0-9]", "-", root)
+    if dashed.count("-") < 2:
+        return None
+    return dashed[1:], urllib.parse.quote(root, safe="")
+
+
+@functools.lru_cache(maxsize=8)
+def _home_replacements(home: str) -> tuple[tuple[str, str], ...]:
+    """Return literal ``(old, new)`` pairs that hide ``home`` in encoded folder names.
+
+    Every encoded form sits between fixed separators, so plain
+    :meth:`str.replace` covers them; path display runs this on every result
+    path, and the literal replacements cost a fraction of a regex pass.
+    """
+    forms = _encoded_home_forms(home)
+    if forms is None:
+        return ()
+    body, quoted = forms
+    return (
+        (f"-{body}-", "-~-"),
+        (f"-{body}/", "-~/"),
+        (f"/{body}-", "/~-"),
+        (f"/{body}/", "/~/"),
+        (f"/{quoted}%2F", "/~%2F"),
+        (f"/{quoted}/", "/~/"),
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _account_pattern(names: tuple[str, ...]) -> re.Pattern[str] | None:
+    """Match a Windows account name encoded after ``Users-`` or ``Users%2F``."""
+    if not names:
+        return None
+    accounts = "|".join(re.escape(name) for name in names)
+    return re.compile(
+        rf"(?<=Users-)(?i:{accounts})(?=-|%2F|/|$)|(?<=Users%2F)(?i:{accounts})(?=-|%2F|/|$)",
+    )
+
+
+def redact_encoded_paths(text: str, home: str | None = None) -> str:
+    """Hide account names that agents encoded into folder names.
+
+    The home directory becomes ``~`` in every encoded form
+    (``-home-u-work`` as ``-~-work``, ``%2Fhome%2Fu%2Fwork`` as
+    ``~%2Fwork``), and a Windows account seen by discovery becomes
+    ``%USERNAME%`` after ``Users-`` or ``Users%2F``. :func:`restore_encoded_paths`
+    reverses both.
+
+    Examples
+    --------
+    >>> from agentgrep._text import redact_encoded_paths
+    >>> redact_encoded_paths("/.claude/projects/-home-u-work-demo/s.jsonl", "/home/u")
+    '/.claude/projects/-~-work-demo/s.jsonl'
+    >>> redact_encoded_paths("/.grok/sessions/%2Fhome%2Fu%2Fwork/h.jsonl", "/home/u")
+    '/.grok/sessions/~%2Fwork/h.jsonl'
+    >>> redact_encoded_paths("/.cursor/projects/home-u/t.jsonl", "/home/u")
+    '/.cursor/projects/~/t.jsonl'
+    >>> redact_encoded_paths("/srv/home-user-guide.md", "/home/u")
+    '/srv/home-user-guide.md'
+    """
+    resolved_home = home if home is not None else str(pathlib.Path.home())
+    replacements = _home_replacements(resolved_home)
+    if replacements:
+        body, quoted = _encoded_home_forms(resolved_home) or ("", "")
+        if body in text or quoted in text:
+            # Pad with separators so a folder at the start or end matches too.
+            padded = f"/{text}/"
+            for old, new in replacements:
+                padded = padded.replace(old, new)
+            text = padded[1:-1]
+    accounts = _account_pattern(known_profile_names())
+    if accounts is not None and "Users" in text:
+        text = accounts.sub(USERNAME, text)
+    return text
+
+
+_RESTORE_QUOTED = re.compile(r"(?:(?<=/)|^)~(?=%2F)")
+_RESTORE_DASHED = re.compile(r"-~(?=[-/]|$)")
+_RESTORE_BARE = re.compile(r"(?:(?<=/)|^)~(?=[-/]|$)")
+
+
+def restore_encoded_paths(text: str, home: str | None = None) -> tuple[str, ...]:
+    """Return the real paths a redacted display path can name.
+
+    The inverse of :func:`redact_encoded_paths`. Apply it to a path whose
+    leading ``~/`` is already expanded, so that ``~`` is not mistaken for an
+    encoded one. ``%USERNAME%`` yields one candidate per Windows account seen
+    by discovery.
+
+    Examples
+    --------
+    >>> from agentgrep._text import restore_encoded_paths
+    >>> restore_encoded_paths("/home/u/.claude/projects/-~-work/s.jsonl", "/home/u")
+    ('/home/u/.claude/projects/-home-u-work/s.jsonl',)
+    """
+    resolved_home = (home if home is not None else str(pathlib.Path.home())).rstrip("/")
+    restored = text
+    forms = _encoded_home_forms(resolved_home)
+    if forms is not None:
+        body, quoted = forms
+        restored = _RESTORE_QUOTED.sub(lambda _match: quoted, restored)
+        restored = _RESTORE_DASHED.sub(lambda _match: f"-{body}", restored)
+        restored = _RESTORE_BARE.sub(lambda _match: body, restored)
+    if USERNAME in restored:
+        names = known_profile_names()
+        if names:
+            return tuple(restored.replace(USERNAME, name) for name in names)
+    return (restored,)
 
 
 def format_display_path(path: pathlib.Path | str, *, directory: bool = False) -> str:

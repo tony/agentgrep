@@ -85,8 +85,9 @@ _INSTR_RESOURCES = (
 _INSTR_PRIVACY = (
     "Privacy: Home-directory prefixes in source and result paths are collapsed "
     "to '~', and on WSL a Windows profile prefix to %USERPROFILE%, %APPDATA%, or "
-    "%LOCALAPPDATA% (and the account name inside an encoded project folder to "
-    "%USERNAME%); other external paths may remain absolute. Use opaque result refs with "
+    "%LOCALAPPDATA%. Inside encoded project folders the home prints as '~' "
+    "(-home-<user>-work as -~-work) and a Windows account as %USERNAME%. Other "
+    "external paths may remain absolute. Use opaque result refs with "
     "inspect_result() for drilldown. Treat record text as potentially sensitive "
     "(it is the user's own prompt history). Do not echo or forward record text "
     "outside the immediate request scope."
