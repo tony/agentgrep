@@ -298,15 +298,21 @@ def discover_listed_sources(
     >>> [(s.store, s.coverage.value) for s in discover_listed_sources(home, ("chatgpt",), none)]
     [('chatgpt.conversations', 'catalog_only')]
     """
-    sources = discover_sources(
-        home,
-        agents,
-        backends,
-        version_detail=version_detail,
-        store_roles=store_roles,
-    )
     listed = tuple(agent for agent in agents if agent in CATALOG_LISTED_AGENTS)
+    others = tuple(agent for agent in agents if agent not in CATALOG_LISTED_AGENTS)
+    sources = (
+        discover_sources(
+            home,
+            others,
+            backends,
+            version_detail=version_detail,
+            store_roles=store_roles,
+        )
+        if others
+        else []
+    )
     if listed:
+        # One inventory pass serves both kinds of row a listed agent shows.
         sources.extend(
             source
             for source in discover_sources(
@@ -317,10 +323,14 @@ def discover_listed_sources(
                 version_detail=version_detail,
                 store_roles=store_roles,
             )
-            if source.coverage is StoreCoverage.CATALOG_ONLY
+            if source.coverage in _LISTED_COVERAGE
         )
         sources.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return sources
+
+
+_LISTED_COVERAGE = frozenset({StoreCoverage.DEFAULT_SEARCH, StoreCoverage.CATALOG_ONLY})
+"""Coverage of the rows a listing shows for a catalog-listed agent."""
 
 
 def resolve_env_root(env_var: str, default: pathlib.Path) -> pathlib.Path:
