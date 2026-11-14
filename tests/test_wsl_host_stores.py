@@ -153,6 +153,8 @@ def test_desktop_session_becomes_title_record(host_tree: HostTree) -> None:
     )
     assert record.timestamp == "2026-01-01T00:01:00Z"
     assert record.metadata["wsl_distro"] == "Demo-Distro"
+    assert record.origin is not None
+    assert record.origin.cwd == "/work/demo"
     assert "must not be copied" not in json.dumps(record.metadata)
 
 
@@ -188,3 +190,18 @@ def test_display_form_resolves_to_its_own_profile(host_tree: HostTree) -> None:
     resolved = [parse_record_ref(make_find_ref(r), home=host_tree.home).path for r in records]
     assert sorted(resolved) == sorted(files)
     assert len({find_record_fingerprint(r) for r in records}) == 2
+
+
+def test_chatgpt_desktop_is_inventory_only() -> None:
+    """ChatGPT desktop rows are documented but never discovered or searched."""
+    from agentgrep.records import AGENT_CHOICES
+    from agentgrep.store_catalog import CATALOG
+    from agentgrep.stores import StoreCoverage
+
+    rows = CATALOG.for_agent("chatgpt")
+    assert rows
+    assert "chatgpt" not in AGENT_CHOICES
+    for row in rows:
+        assert row.coverage_level is StoreCoverage.CATALOG_ONLY
+        assert row.discovery == ()
+        assert row.platform_variants
