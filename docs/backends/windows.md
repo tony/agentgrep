@@ -65,6 +65,8 @@ variable that names it, the way a Linux path under your home starts with
 | `/mnt/c/Users/<name>/.claude/projects/C--Users-<name>-work/...` | `%USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/...` |
 | `C:\Users\<name>\work`, a working directory recorded on Windows | `%USERPROFILE%/work` |
 | `/mnt/d/Users/<name>/work`, one recorded inside WSL, on any drive | `%USERPROFILE%/work` |
+| `/home/<user>/work`, another account's home | `~/work` |
+| `\\wsl.localhost\<distro>\home\<user>\work`, a distro's home seen from Windows | `~/work` |
 
 Agents also name project folders after the working directory, which can
 carry an account name. Those encoded names are rewritten the same way:
@@ -83,15 +85,15 @@ the real file:
 - `find -a` prints real absolute paths in text output; JSON keeps the display
   form.
 
-Three cases are left as is:
+Two cases are left as is:
 
 - A single-component home such as `/root` encodes to a common word.
 - A repository whose own name contains the account name keeps its name.
-- Inside an encoded folder name, only the accounts of profiles under the
-  users directory are recognized, since the encoding leaves no mark where a
-  name ends: a folder for a profile on another drive (`-mnt-d-Users-<name>-…`)
-  keeps its name, though a working directory on that drive prints as
-  `%USERPROFILE%/…`.
+
+Inside an encoded folder name an account is recognized by name, since the
+encoding leaves no mark where a name ends, so agentgrep reads the profile
+names of every drive mounted under the automount root, not only the users
+directory it searches.
 
 A printed path works as a `path:` query, and a printed working directory as a
 `cwd:` query, so the Windows-side results can be selected or left out.
