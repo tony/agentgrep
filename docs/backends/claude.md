@@ -122,7 +122,11 @@ than the primary transcript.
 The Claude desktop app keeps two Claude Code stores in its app-data
 directory: `~/Library/Application Support/Claude` on macOS, `%APPDATA%/Claude`
 on Windows (reached from WSL through each Windows profile), and
-`$XDG_CONFIG_HOME/Claude` on Linux.
+`$XDG_CONFIG_HOME/Claude` (normally `~/.config/Claude`) on Linux. The Linux app
+is Anthropic's official beta for Debian and Ubuntu
+([Claude Desktop on Linux](https://code.claude.com/docs/en/desktop-linux));
+Anthropic does not document its data directory, so the Linux path is
+Electron's default for an app named `Claude`.
 
 {storage:storeref}`claude.cowork.session` and
 {storage:storeref}`claude.cowork.subagent` are the transcripts of local
@@ -139,17 +143,27 @@ is opt-in: each file becomes one title record whose `session_id` is the
 file's `cliSessionId`, the transcript's session id, so a title groups with
 its transcript. The record keeps `model`, the working directory as origin,
 `completedTurns`, and, for sessions that ran in a WSL distro, the distro name
-and the transcript path inside it. Code-tab transcripts themselves are
-ordinary Claude Code transcripts. The app (checked against Claude desktop
-5.11492.5) writes a local session's transcript to
-`projects/<encoded_cwd>/<cliSessionId>.jsonl` under Claude Code's
-configuration directory, `CLAUDE_CONFIG_DIR` or `~/.claude`, so on Windows
-that is `%USERPROFILE%/.claude`. A session run in a WSL distro or over SSH
+and the transcript path inside it. The record text also
+carries the session's earlier titles (`previousTitles`), so a session the app
+or the user renamed is found by either name; the Code tab's other text keys
+(turn summaries, wrap-ups, suggestions) are written by the model and are not
+read. Code-tab transcripts themselves are ordinary Claude Code transcripts,
+on every platform: Anthropic documents that they live in Claude Code's own
+store, not in the app directory or the Cowork VM images
+([user identity and local data](https://claude.com/docs/third-party/claude-desktop/data-storage)).
+The app (checked against Claude desktop 5.11492.5) writes a local session's
+transcript to `projects/<encoded_cwd>/<cliSessionId>.jsonl` under Claude
+Code's configuration directory, `CLAUDE_CONFIG_DIR` or `~/.claude`, so on
+Windows that is `%USERPROFILE%/.claude`. A session run in a WSL distro or over SSH
 writes on that host, at the path the file records as
 `sshRemoteTranscriptPath`, and the app keeps a copy under
-`projects/ssh-<id>/`. Claude Code deletes transcripts older than
-`cleanupPeriodDays` (30 days by default); the app then sets
-`transcriptUnavailable`, and only the title record remains.
+`projects/ssh-<id>/`. Claude Code before 2.1.248 deleted desktop
+transcripts older than `cleanupPeriodDays` (30 days by default); later
+versions keep the transcript of a session started or last continued in the
+desktop app
+([`.claude` directory](https://code.claude.com/docs/en/claude-directory)).
+When a transcript is gone the app sets `transcriptUnavailable`, and only the
+title record remains.
 
 ```console
 $ agentgrep find --agent claude
