@@ -12,7 +12,9 @@ not through targeted prompt routing.
 
 Base path: `~/.codex` (env override: `CODEX_HOME`).
 SQLite path: `CODEX_SQLITE_HOME`, then `sqlite_home` from
-`config.toml`, then `CODEX_HOME`.
+`config.toml`, then `CODEX_HOME`. On WSL, each Windows profile's
+`%USERPROFILE%/.codex`, where Codex desktop keeps the same layout, is searched
+too, with its SQLite files read from beside its sessions; see {doc}`windows`.
 
 `observed_version`: `codex-cli 0.164.0` (observed 2026-10-25).
 

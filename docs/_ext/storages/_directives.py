@@ -53,6 +53,7 @@ _AGENT_LABELS: dict[str, str] = {
     "pi": "Pi",
     "vscode": "VS Code",
     "windsurf": "Windsurf",
+    "chatgpt": "ChatGPT",
 }
 """Display label per agent id.
 

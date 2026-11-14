@@ -30,6 +30,11 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl"
         ),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl"
+            ),
+        },
         observed_version=_CURSOR_CLI_OBSERVED_VERSION,
         observed_at=_CURSOR_CLI_OBSERVED_AT,
         upstream_ref="cursor.com/docs/cli/overview",
@@ -71,6 +76,11 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
         ),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
+            ),
+        },
         observed_version=_CURSOR_CLI_OBSERVED_VERSION,
         observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
@@ -177,6 +187,7 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.cursor/ai-tracking/ai-code-tracking.db",
+        platform_variants={"win32": "%USERPROFILE%/.cursor/ai-tracking/ai-code-tracking.db"},
         observed_version=_CURSOR_CLI_OBSERVED_VERSION,
         observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(

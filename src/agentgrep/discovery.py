@@ -9,16 +9,24 @@ the adapters and below the engine.
 
 from __future__ import annotations
 
+import collections.abc as cabc
+import concurrent.futures
+import contextlib
+import contextvars
+import dataclasses
 import datetime
+import functools
 import logging
 import os
 import pathlib
 import re
 import sys
+import threading
 import tomllib
 import typing as t
 import urllib.parse
 
+from agentgrep import wsl
 from agentgrep.origin import (
     PRUNABLE_ORIGIN_FIELDS,
     OriginEncoding,
@@ -215,6 +223,19 @@ def discover_sources(
         elif agent == "vscode":
             discovered.extend(
                 discover_vscode_sources(
+                    home,
+                    backends,
+                    include_non_default=include_non_default,
+                    version_detail=version_detail,
+                    store_roles=store_roles,
+                    allow_conversation_content_role_fallback=(
+                        allow_conversation_content_role_fallback
+                    ),
+                ),
+            )
+        elif agent == "chatgpt":
+            discovered.extend(
+                discover_chatgpt_sources(
                     home,
                     backends,
                     include_non_default=include_non_default,
@@ -797,6 +818,8 @@ def handles_from_discovery(
     coverage: StoreCoverage,
     *,
     project_dirs: ProjectDirCache | None = None,
+    skip_path: cabc.Callable[[pathlib.Path], bool] | None = None,
+    listings: dict[tuple[pathlib.Path, str], list[pathlib.Path]] | None = None,
 ) -> list[SourceHandle]:
     """Produce ``SourceHandle``s from a :class:`DiscoverySpec`.
 
@@ -810,6 +833,12 @@ def handles_from_discovery(
     One project directory backs every transcript of every session it ran, so
     the decode is worth remembering — but only for as long as the discovery
     pass that owns it, since the directory layout it probed can change.
+
+    ``skip_path`` drops glob matches before they are stat'ed, which matters
+    on a network mount where each ``stat`` is a round trip. ``listings`` is the
+    pass's memo of glob walks keyed by search root and pattern: sibling rows
+    such as a session store and its subagent store walk the same tree with the
+    same glob and differ only in their path-part filters.
     """
     sources: list[SourceHandle] = []
     search_root = root.joinpath(*spec.home_subpath) if spec.home_subpath else root
@@ -836,14 +865,33 @@ def handles_from_discovery(
                 ),
             )
 
-    if spec.glob is not None and search_root.exists():
+    if spec.glob is not None and not _discovery_stopped() and search_root.exists():
         required_parts = set(spec.path_parts_required)
         excluded_parts = set(spec.path_parts_excluded)
-        for path in list_files_matching(search_root, spec.glob, backends.find_tool):
-            if required_parts and not required_parts.issubset(path.parts):
-                continue
-            if excluded_parts and excluded_parts.intersection(path.parts):
-                continue
+        key = (search_root, spec.glob)
+        matches = listings.get(key) if listings is not None else None
+        if matches is None:
+            matches = list_files_matching(
+                search_root,
+                spec.glob,
+                backends.find_tool,
+                should_stop=_active_stop(),
+            )
+            # A stopped walk is partial; memoizing it would hand a truncated
+            # listing to the next row that walks the same tree.
+            if listings is not None and not _discovery_stopped():
+                listings[key] = matches
+        kept = [
+            path
+            for path in matches
+            if not (required_parts and not required_parts.issubset(path.parts))
+            and not (excluded_parts and excluded_parts.intersection(path.parts))
+            and not (skip_path is not None and skip_path(path))
+        ]
+        mtimes = _file_mtimes(kept, slow_mount=wsl.is_host_path(search_root))
+        if mtimes is None:
+            return sources
+        for path, mtime_ns in zip(kept, mtimes, strict=True):
             sources.append(
                 SourceHandle(
                     agent=agent,
@@ -853,7 +901,7 @@ def handles_from_discovery(
                     path_kind=spec.path_kind,
                     source_kind=spec.source_kind,
                     search_root=search_root,
-                    mtime_ns=file_mtime_ns(path),
+                    mtime_ns=mtime_ns,
                     coverage=coverage,
                     origin_summary=_source_origin_summary(spec, path, project_dirs=project_dirs),
                 ),
@@ -882,6 +930,164 @@ def handles_from_discovery(
             )
 
     return sources
+
+
+@dataclasses.dataclass(slots=True)
+class DiscoveryStopState:
+    """Whether a :func:`discovery_stop` predicate actually cut a pass short."""
+
+    stopped: bool = False
+
+
+_StopBinding = tuple[cabc.Callable[[], bool], DiscoveryStopState]
+"""A :func:`discovery_stop` predicate and the state that records it firing."""
+
+_DISCOVERY_STOP: contextvars.ContextVar[_StopBinding | None] = contextvars.ContextVar(
+    "agentgrep_discovery_stop",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def discovery_stop(should_stop: cabc.Callable[[], bool]) -> cabc.Generator[DiscoveryStopState]:
+    """Let discovery in this context end early once ``should_stop()`` is true.
+
+    The search engine abandons a discovery pass when the caller cancels or
+    asks for an answer now, but the abandoned thread would keep walking the
+    filesystem, which on the WSL 9p mount is seconds of round trips. Inside
+    this context, discovery checks the predicate between catalogue rows and
+    roots, ends running file listings, and starts no new ``stat`` on the
+    Windows mount, returning the sources found so far. The yielded
+    :class:`DiscoveryStopState` says whether that happened, so a caller never
+    mistakes a partial result for a complete one. A context variable carries
+    the predicate, so ``asyncio.to_thread`` and :func:`contextvars.copy_context`
+    reach worker threads without changing any discover function's signature.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> from agentgrep.discovery import discover_sources, discovery_stop
+    >>> from agentgrep.records import BackendSelection
+    >>> home = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (home / ".claude" / "projects" / "p").mkdir(parents=True)
+    >>> _ = (home / ".claude" / "projects" / "p" / "s.jsonl").write_text("{}")
+    >>> none = BackendSelection(find_tool=None, grep_tool=None, json_tool=None)
+    >>> with discovery_stop(lambda: True) as state:
+    ...     print(discover_sources(home, ("claude",), none, include_non_default=True))
+    []
+    >>> state.stopped
+    True
+    """
+    state = DiscoveryStopState()
+    token = _DISCOVERY_STOP.set((should_stop, state))
+    try:
+        yield state
+    finally:
+        _DISCOVERY_STOP.reset(token)
+
+
+def _discovery_stopped() -> bool:
+    """Return whether the active :func:`discovery_stop` predicate asks to stop."""
+    return _stop_requested(_DISCOVERY_STOP.get())
+
+
+def _stop_requested(active: _StopBinding | None) -> bool:
+    """Check ``active``'s predicate, recording a stop in its state once it fires."""
+    if active is None:
+        return False
+    should_stop, state = active
+    if should_stop():
+        state.stopped = True
+    return state.stopped
+
+
+def _active_stop() -> cabc.Callable[[], bool] | None:
+    """Return a stop check for long-running calls, or ``None`` outside :func:`discovery_stop`."""
+    return _discovery_stopped if _DISCOVERY_STOP.get() is not None else None
+
+
+_SLOW_MOUNT_STAT_WORKERS = 16
+"""Concurrent ``stat`` calls for files on the 9p Windows mount, shared process-wide.
+
+Measured on a WSL host over 376 Windows-side files, median of 5 rounds: about
+650 ms serial (1.7 ms per ``stat``), 110-160 ms with 4 threads, and 95-130 ms
+from 8 to 32 threads. Throughput levels off from 8 threads; 16 sits on that
+plateau with room for concurrent searches.
+"""
+
+_SLOW_MOUNT_MIN_BATCH = 16
+"""Smallest batch worth sending to the pool; shorter lists stay serial.
+
+At about 1.7 ms per ``stat`` this caps a serial batch near 25 ms.
+"""
+
+_stat_pool: concurrent.futures.ThreadPoolExecutor | None = None
+_stat_pool_lock = threading.Lock()
+
+
+def _shared_stat_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the process-wide pool for Windows-mount ``stat`` calls.
+
+    One bounded pool serves every discovery pass, so concurrent searches share
+    a bounded set of threads instead of each starting its own.
+    """
+    global _stat_pool
+    with _stat_pool_lock:
+        if _stat_pool is None:
+            _stat_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=_SLOW_MOUNT_STAT_WORKERS,
+                thread_name_prefix="agentgrep-stat",
+            )
+        return _stat_pool
+
+
+def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int] | None:
+    """Return each path's mtime, concurrently on the Windows mount.
+
+    A ``stat`` over the WSL 9p mount is a round trip of a few milliseconds
+    that releases the GIL, so a batch of them overlaps well in threads. On a
+    local disk the same call takes microseconds and a pool would only add
+    overhead, so local paths stay serial. Returns ``None`` when
+    :func:`discovery_stop` asks to stop: no ``stat`` on the mount starts after
+    that, so at most the calls already in flight, one per pool thread, finish.
+    """
+    if not slow_mount:
+        return [file_mtime_ns(path) for path in paths]
+    # Pool threads do not inherit the context variable, so bind the stop here.
+    active = _DISCOVERY_STOP.get()
+    if len(paths) < _SLOW_MOUNT_MIN_BATCH:
+        return _serial_mtimes(paths, active)
+    return _pooled_mtimes(paths, active)
+
+
+def _mtime_unless_stopped(path: pathlib.Path, active: _StopBinding | None) -> int | None:
+    """Return ``path``'s mtime, or ``None`` without a round trip once ``active`` fired."""
+    return None if _stop_requested(active) else file_mtime_ns(path)
+
+
+def _serial_mtimes(paths: list[pathlib.Path], active: _StopBinding | None) -> list[int] | None:
+    """Return each mtime in turn, or ``None`` once ``active`` fires."""
+    mtimes: list[int] = []
+    for path in paths:
+        mtime = _mtime_unless_stopped(path, active)
+        if mtime is None:
+            return None
+        mtimes.append(mtime)
+    return mtimes
+
+
+def _pooled_mtimes(paths: list[pathlib.Path], active: _StopBinding | None) -> list[int] | None:
+    """Return each mtime from the shared pool, or ``None`` once ``active`` fires."""
+    futures = [_shared_stat_pool().submit(_mtime_unless_stopped, path, active) for path in paths]
+    mtimes: list[int] = []
+    for future in futures:
+        mtime = None if _stop_requested(active) else future.result()
+        if mtime is None:
+            for pending in futures:
+                pending.cancel()
+            return None
+        mtimes.append(mtime)
+    return mtimes
 
 
 _CURSOR_CLI_TRANSCRIPT_STORES: frozenset[str] = frozenset(
@@ -1048,6 +1254,64 @@ def descriptor_admits_store_roles(
     return any(spec.store in CONVERSATION_CONTENT_STORES for spec in descriptor.discovery)
 
 
+def admitted_root_keys(
+    agent: AgentName,
+    store_roles: DiscoveryStoreRoles,
+    *,
+    include_non_default: bool = False,
+    allow_conversation_content_role_fallback: bool = True,
+) -> frozenset[str]:
+    """Return the discovery root keys a pass would read for ``agent``.
+
+    Applies the same coverage and role narrowing as
+    :func:`discover_from_catalog`, so a discover function can skip resolving
+    a root that is expensive to compute (a walk over a network mount) when
+    no admitted row reads it.
+
+    Parameters
+    ----------
+    agent : AgentName
+        Agent whose catalogue rows to consult.
+    store_roles : DiscoveryStoreRoles
+        Roles the caller's scope can consume, or ``None`` for every role.
+    include_non_default : bool
+        Whether inventory rows outside default search are admitted.
+    allow_conversation_content_role_fallback : bool
+        Whether conversation roles may admit allowlisted app-state stores.
+
+    Returns
+    -------
+    frozenset[str]
+        ``DiscoverySpec.root_key`` values of the admitted rows.
+
+    Examples
+    --------
+    >>> from agentgrep.discovery import admitted_root_keys
+    >>> from agentgrep.stores import StoreRole
+    >>> "claude_cowork" in admitted_root_keys("claude", frozenset({StoreRole.PROMPT_HISTORY}))
+    False
+    >>> "claude_cowork" in admitted_root_keys("claude", None)
+    True
+    """
+    from agentgrep.store_catalog import CATALOG
+
+    keys: set[str] = set()
+    for descriptor in CATALOG.for_agent(agent):
+        coverage = descriptor.coverage_level
+        if coverage is StoreCoverage.PRIVATE:
+            continue
+        if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
+            continue
+        if not descriptor_admits_store_roles(
+            descriptor,
+            store_roles,
+            allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+        ):
+            continue
+        keys.update(spec.root_key for spec in descriptor.discovery)
+    return frozenset(keys)
+
+
 def discover_from_catalog(
     home: pathlib.Path,
     agent: AgentName,
@@ -1058,6 +1322,7 @@ def discover_from_catalog(
     version_detail: DiscoveryVersionDetail = "shape",
     store_roles: DiscoveryStoreRoles = None,
     allow_conversation_content_role_fallback: bool = True,
+    skip_path: cabc.Callable[[pathlib.Path], bool] | None = None,
 ) -> list[SourceHandle]:
     """Walk every catalogue row for ``agent`` and emit ``SourceHandle``s.
 
@@ -1073,7 +1338,8 @@ def discover_from_catalog(
     for it. ``store_roles`` restricts enumeration before any filesystem walk,
     which lets search avoid stores its scope cannot consume. The fallback flag
     controls whether conversation roles can also reach allowlisted app-state
-    rows; see :func:`descriptor_admits_store_roles`.
+    rows; see :func:`descriptor_admits_store_roles`. ``skip_path`` is passed
+    to :func:`handles_from_discovery`.
     """
     from agentgrep.store_catalog import CATALOG
 
@@ -1089,8 +1355,11 @@ def discover_from_catalog(
     # filesystem, and a memo that outlived the walk would answer from a
     # directory layout that has since changed.
     project_dirs: ProjectDirCache = {}
+    listings: dict[tuple[pathlib.Path, str], list[pathlib.Path]] = {}
     sources: list[SourceHandle] = []
     for descriptor in CATALOG.for_agent(agent):
+        if _discovery_stopped():
+            return sources
         coverage = descriptor.coverage_level
         if coverage is StoreCoverage.PRIVATE:
             continue
@@ -1120,6 +1389,8 @@ def discover_from_catalog(
                     backends,
                     coverage,
                     project_dirs=project_dirs,
+                    skip_path=skip_path,
+                    listings=listings,
                 ):
                     if handle.path in seen_paths:
                         continue
@@ -1156,16 +1427,24 @@ def discover_codex_sources(
 
     Honours the ``CODEX_HOME`` environment variable (see upstream
     ``codex-rs/utils/home-dir/src/lib.rs``); falls back to ``${HOME}/.codex``
-    when unset or empty. Path roots, globs, file lists, and adapter metadata
-    come from the ``codex.*`` rows of
+    when unset or empty. On WSL, each Windows profile's ``.codex`` (where
+    Codex desktop keeps its sessions) is searched too. Path roots, globs, file
+    lists, and adapter metadata come from the ``codex.*`` rows of
     :data:`agentgrep.store_catalog.CATALOG`.
     """
     root = resolve_env_root("CODEX_HOME", home / ".codex")
-    if not root.exists():
+    host_roots = _host_profile_dirs(".codex")
+    local_roots = (root,) if root.exists() else ()
+    if not local_roots and not host_roots:
         return []
-    sqlite_root = resolve_codex_sqlite_root(root)
-    roots: dict[str, DiscoveryRoot] = {"default": root, "codex_sqlite": sqlite_root}
-    if include_non_default:
+    # A Windows-side home keeps its SQLite files beside the sessions; the
+    # Linux ``CODEX_SQLITE_HOME`` and ``sqlite_home`` settings do not apply to it.
+    sqlite_roots = tuple(resolve_codex_sqlite_root(path) for path in local_roots) + host_roots
+    roots: dict[str, DiscoveryRoot] = {
+        "default": local_roots + host_roots,
+        "codex_sqlite": sqlite_roots,
+    }
+    if include_non_default and local_roots:
         roots["codex_project"] = _codex_project_roots(root, backends)
     return discover_from_catalog(
         home,
@@ -1188,28 +1467,253 @@ def discover_claude_sources(
     store_roles: DiscoveryStoreRoles = None,
     allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
-    """Discover Claude Code project session files.
+    """Discover Claude Code and Claude desktop sources.
 
     Honours ``CLAUDE_CONFIG_DIR`` and otherwise falls back to
-    ``${HOME}/.claude``. Path roots, globs, and adapter metadata come from
-    the ``claude.*`` rows of :data:`agentgrep.store_catalog.CATALOG`.
+    ``${HOME}/.claude``. On WSL, each Windows profile's ``.claude`` (where
+    Claude desktop runs Claude Code for Windows-side sessions) is searched
+    too. The Claude desktop app directories (see :func:`claude_desktop_dirs`)
+    add the local agent-mode ("Cowork") transcripts and the Code-tab session
+    index. Path roots, globs, and adapter metadata come from the ``claude.*``
+    rows of :data:`agentgrep.store_catalog.CATALOG`.
     """
     root = resolve_env_root("CLAUDE_CONFIG_DIR", home / ".claude")
-    if not root.exists():
+    local_roots = (root,) if root.exists() else ()
+    host_roots = _host_profile_dirs(".claude")
+    # The desktop roots cost a walk over the Windows mount on WSL; skip them
+    # when no admitted row reads them (prompt-only search admits none).
+    wanted = admitted_root_keys(
+        "claude",
+        store_roles,
+        include_non_default=include_non_default,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+    )
+    desktop_dirs = claude_desktop_dirs(home) if wanted & {"claude_desktop", "claude_cowork"} else ()
+    if not local_roots and not host_roots and not desktop_dirs:
         return []
-    roots: dict[str, DiscoveryRoot] = {"default": root}
-    if include_non_default:
+    roots: dict[str, DiscoveryRoot] = {
+        "default": local_roots,
+        "claude_desktop": desktop_dirs,
+        "claude_cowork": claude_cowork_roots(desktop_dirs) if "claude_cowork" in wanted else (),
+    }
+    if include_non_default and local_roots:
         roots["claude_project"] = _claude_project_roots(root, backends)
-    return discover_from_catalog(
+
+    catalog_pass = functools.partial(
+        discover_from_catalog,
         home,
         "claude",
-        roots,
-        backends,
+        backends=backends,
         include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
         allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
+    # Local roots first, so the Windows pass can skip copies of local
+    # transcripts before stat'ing them over the 9p mount.
+    sources = catalog_pass(roots)
+    if host_roots:
+        skip = mirrored_claude_transcript_filter(sources, root / "projects")
+        sources.extend(catalog_pass({"default": host_roots}, skip_path=skip))
+    return sources
+
+
+_CLAUDE_TRANSCRIPT_STORES = frozenset({"claude.projects", "claude.projects_subagents"})
+
+
+def _host_profile_dirs(name: str) -> tuple[pathlib.Path, ...]:
+    """Return ``%USERPROFILE%/<name>`` for each Windows profile on WSL where it exists."""
+    found: list[pathlib.Path] = []
+    for profile in wsl.host_user_profiles():
+        if _discovery_stopped():
+            break
+        candidate = profile / name
+        try:
+            if candidate.is_dir():
+                found.append(candidate)
+        except OSError:
+            continue
+    return tuple(found)
+
+
+def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
+    """Return the Claude desktop app-data directories that exist.
+
+    The desktop app keeps its local agent-mode ("Cowork") sessions and its
+    Code-tab session index in its app-data directory:
+    ``~/Library/Application Support/Claude`` on macOS, ``%APPDATA%/Claude``
+    on Windows, and ``$XDG_CONFIG_HOME/Claude`` on Linux. Every location is
+    probed regardless of platform so one tree can be tested anywhere; on WSL
+    each Windows profile's ``%APPDATA%/Claude`` is added.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        Home directory to resolve the native locations against.
+
+    Returns
+    -------
+    tuple[pathlib.Path, ...]
+        Existing directories, native locations first.
+
+    Examples
+    --------
+    >>> import os, pathlib, tempfile
+    >>> from unittest import mock
+    >>> from agentgrep.discovery import claude_desktop_dirs
+    >>> home = pathlib.Path(tempfile.mkdtemp())
+    >>> no_windows = mock.patch.dict(os.environ, {"AGENTGREP_WSL_USERS_ROOT": str(home / "none")})
+    >>> with no_windows:
+    ...     print(claude_desktop_dirs(home))
+    ()
+    >>> _ = (home / "Library" / "Application Support" / "Claude").mkdir(parents=True)
+    >>> with no_windows:
+    ...     print([path.relative_to(home).as_posix() for path in claude_desktop_dirs(home)])
+    ['Library/Application Support/Claude']
+    """
+    xdg_config = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
+    candidates: list[pathlib.Path] = [
+        home / "Library" / "Application Support" / "Claude",
+        home / "AppData" / "Roaming" / "Claude",
+        xdg_config / "Claude",
+    ]
+    candidates.extend(
+        path for profile in wsl.host_user_profiles() for path in profile.app_dirs("Claude")
+    )
+    found: list[pathlib.Path] = []
+    for candidate in dict.fromkeys(candidates):
+        if _discovery_stopped():
+            break
+        try:
+            if candidate.is_dir():
+                found.append(candidate)
+        except OSError:
+            continue
+    return tuple(found)
+
+
+def claude_cowork_roots(desktop_dirs: tuple[pathlib.Path, ...]) -> tuple[pathlib.Path, ...]:
+    """Return the Claude Code home of each Claude desktop Cowork session.
+
+    Cowork runs Claude Code once per session with its own home at
+    ``local-agent-mode-sessions/<account>/<org>/<session>/.claude``. Those
+    homes hold ordinary Claude Code transcripts; ``audit.jsonl`` and
+    ``.audit-key`` sit one level up, outside the home, and are never read.
+    Each session costs a round trip on the Windows mount, so inside
+    :func:`discovery_stop` the scan ends at the next session once it fires.
+
+    Parameters
+    ----------
+    desktop_dirs : tuple[pathlib.Path, ...]
+        Claude desktop app-data directories from :func:`claude_desktop_dirs`.
+
+    Returns
+    -------
+    tuple[pathlib.Path, ...]
+        Session ``.claude`` directories, sorted per desktop directory.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> from agentgrep.discovery import claude_cowork_roots
+    >>> app = pathlib.Path(tempfile.mkdtemp())
+    >>> home = app / "local-agent-mode-sessions" / "acct" / "org" / "local_s1" / ".claude"
+    >>> home.mkdir(parents=True)
+    >>> [path.relative_to(app).as_posix() for path in claude_cowork_roots((app,))]
+    ['local-agent-mode-sessions/acct/org/local_s1/.claude']
+    """
+    roots: list[pathlib.Path] = []
+    for desktop in desktop_dirs:
+        for org in _child_dirs(desktop / "local-agent-mode-sessions", depth=2):
+            for session in _child_dirs(org, depth=1):
+                # Session directories are local_<uuid> or eight hex characters;
+                # skipping the rest saves a round trip each on the Windows mount.
+                if not _COWORK_SESSION_RE.fullmatch(session.name):
+                    continue
+                if _discovery_stopped():
+                    return tuple(roots)
+                home = session / ".claude"
+                try:
+                    if home.is_dir():
+                        roots.append(home)
+                except OSError:
+                    continue
+    return tuple(roots)
+
+
+_COWORK_SESSION_RE = re.compile(r"local_.+|[0-9a-f]{8}")
+
+
+def _child_dirs(root: pathlib.Path, *, depth: int) -> list[pathlib.Path]:
+    """Return the directories ``depth`` levels below ``root``, sorted per level."""
+    level = [root]
+    for _ in range(depth):
+        children: list[pathlib.Path] = []
+        for parent in level:
+            if _discovery_stopped():
+                return []
+            try:
+                with os.scandir(parent) as entries:
+                    children.extend(
+                        pathlib.Path(entry.path)
+                        for entry in entries
+                        if entry.is_dir(follow_symlinks=False)
+                    )
+            except OSError:
+                continue
+        level = sorted(children)
+    return level
+
+
+def mirrored_claude_transcript_filter(
+    local_sources: list[SourceHandle],
+    local_projects: pathlib.Path,
+) -> cabc.Callable[[pathlib.Path], bool]:
+    """Return a predicate that spots Windows-side copies of local transcripts.
+
+    Claude desktop runs WSL-distro sessions inside the distro and keeps a copy
+    of each transcript under ``%USERPROFILE%/.claude/projects/ssh-<id>/`` on
+    Windows, with subagent files flattened into the same directory. The
+    predicate is true for a file in such a directory whose name matches a
+    transcript discovered under ``local_projects``; copies of sessions from
+    other hosts stay.
+
+    Parameters
+    ----------
+    local_sources : list[SourceHandle]
+        Sources already discovered from the local Claude home.
+    local_projects : pathlib.Path
+        The local Claude home's ``projects`` directory.
+
+    Returns
+    -------
+    collections.abc.Callable[[pathlib.Path], bool]
+        ``True`` for a path to skip.
+
+    Examples
+    --------
+    >>> import pathlib
+    >>> from agentgrep.discovery import mirrored_claude_transcript_filter
+    >>> skip = mirrored_claude_transcript_filter([], pathlib.Path("/home/u/.claude/projects"))
+    >>> skip(pathlib.Path("/mnt/c/Users/u/.claude/projects/ssh-a/s1.jsonl"))
+    False
+    """
+    prefix = f"{local_projects}{os.sep}"
+    local_names = frozenset(
+        source.path.name
+        for source in local_sources
+        if source.store in _CLAUDE_TRANSCRIPT_STORES and str(source.path).startswith(prefix)
+    )
+
+    def is_mirrored_copy(path: pathlib.Path) -> bool:
+        parent = path.parent
+        return (
+            path.name in local_names
+            and parent.name.startswith("ssh-")
+            and parent.parent.name == "projects"
+        )
+
+    return is_mirrored_copy
 
 
 def discover_cursor_cli_sources(
@@ -1225,15 +1729,74 @@ def discover_cursor_cli_sources(
 
     Covers the terminal agent's transcripts under ``~/.cursor/projects``,
     the AI-tracking SQLite, and the lowercase ``~/.config/cursor`` home
-    (prompt history and chat ``store.db`` blobs). Driven entirely by the
-    ``cursor-cli.*`` catalogue rows.
+    (prompt history and chat ``store.db`` blobs). On WSL, each Windows
+    profile is searched as a second home, which reaches the transcripts of
+    Cursor running on Windows. Driven entirely by the ``cursor-cli.*``
+    catalogue rows.
     """
+    profiles = tuple(profile.path for profile in wsl.host_user_profiles())
     return discover_from_catalog(
         home,
         "cursor-cli",
-        home,
+        {"default": (home, *profiles)},
         backends,
         include_non_default=include_non_default,
+        version_detail=version_detail,
+        store_roles=store_roles,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+    )
+
+
+CHATGPT_DESKTOP_PACKAGE = "OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0"
+"""MSIX package family name of the ChatGPT desktop app for Windows."""
+
+
+def discover_chatgpt_sources(
+    home: pathlib.Path,
+    backends: BackendSelection,
+    *,
+    include_non_default: bool = False,
+    version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
+    allow_conversation_content_role_fallback: bool = True,
+) -> list[SourceHandle]:
+    """Discover ChatGPT desktop stores for inventory.
+
+    Every ``chatgpt.*`` row is catalog-only, so only an inventory pass
+    (``include_non_default``) lists them and no search opens them. The macOS
+    app keeps its files in ``~/Library/Application Support/com.openai.chat``;
+    the Windows app is an MSIX package whose ``%APPDATA%`` lives under its
+    ``LocalCache``, reached natively or, on WSL, through each Windows profile.
+    """
+    if not include_non_default:
+        return []
+    macos = home / "Library" / "Application Support" / "com.openai.chat"
+    windows = [
+        home
+        / "AppData"
+        / "Local"
+        / "Packages"
+        / CHATGPT_DESKTOP_PACKAGE
+        / "LocalCache"
+        / "Roaming"
+        / "ChatGPT",
+        *(
+            profile.package_appdata(CHATGPT_DESKTOP_PACKAGE) / "ChatGPT"
+            for profile in wsl.host_user_profiles()
+        ),
+    ]
+    roots: dict[str, DiscoveryRoot] = {
+        "chatgpt_macos": (macos,) if macos.is_dir() else (),
+        "chatgpt_windows": tuple(path for path in windows if path.is_dir()),
+    }
+    if not any(roots.values()):
+        return []
+    return discover_from_catalog(
+        home,
+        "chatgpt",
+        roots,
+        backends,
+        include_non_default=True,
         version_detail=version_detail,
         store_roles=store_roles,
         allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
@@ -1265,13 +1828,7 @@ def _cursor_ide_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     ``/mnt/c/Users``). See :ref:`adr-cross-host-discovery`.
     """
     bases: list[pathlib.Path] = [_cursor_ide_native_user_dir(home)]
-    if _is_wsl():
-        windows_users = pathlib.Path(os.environ.get("AGENTGREP_WSL_USERS_ROOT") or "/mnt/c/Users")
-        if windows_users.is_dir():
-            bases.extend(
-                user_dir / "AppData" / "Roaming" / "Cursor" / "User"
-                for user_dir in sorted(windows_users.glob("*"))
-            )
+    bases.extend(profile.appdata / "Cursor" / "User" for profile in wsl.host_user_profiles())
     return tuple(path for path in dict.fromkeys(bases) if path.is_dir())
 
 
@@ -1569,17 +2126,6 @@ def discover_opencode_sources(
     return [*data_handles, *state_handles]
 
 
-def _is_wsl() -> bool:
-    """Detect WSL so the Windows ``/mnt/c`` VS Code data is only probed there."""
-    try:
-        return (
-            "microsoft"
-            in pathlib.Path("/proc/version").read_text(encoding="utf-8", errors="ignore").casefold()
-        )
-    except OSError:
-        return False
-
-
 _VSCODE_EDITIONS: tuple[str, ...] = (
     "Code",
     "Code - Insiders",
@@ -1608,12 +2154,8 @@ def _vscode_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     override = os.environ.get("VSCODE_APPDATA")
     if override:
         roaming_bases.append(pathlib.Path(os.path.expandvars(override)).expanduser())
-    elif _is_wsl():
-        windows_users = pathlib.Path(os.environ.get("AGENTGREP_WSL_USERS_ROOT") or "/mnt/c/Users")
-        if windows_users.is_dir():
-            roaming_bases.extend(
-                user_dir / "AppData" / "Roaming" for user_dir in sorted(windows_users.glob("*"))
-            )
+    else:
+        roaming_bases.extend(profile.appdata.path for profile in wsl.host_user_profiles())
     user_dirs = [base / edition / "User" for base in roaming_bases for edition in _VSCODE_EDITIONS]
     return tuple(path for path in dict.fromkeys(user_dirs) if path.is_dir())
 

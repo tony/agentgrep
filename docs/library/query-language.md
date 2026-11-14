@@ -345,7 +345,12 @@ $ agentgrep find 'path:*codex* agent:codex'
 Codex-agent sources whose path contains `codex`. `find` takes a
 single positional, so quote the whole query as one token; `path:`
 matches against the absolute path and accepts current-user `~`
-prefixes, so both `path:*codex*` and `path:~/.codex` work.
+prefixes, so both `path:*codex*` and `path:~/.codex` work. On WSL it
+also accepts the Windows forms agentgrep prints for Windows-side files,
+so a copied `path:%APPDATA%/Claude/*` matches in every Windows profile
+(see {doc}`/backends/windows`). Encoded project folders print with the
+account hidden (`-home-<user>-work` as `-~-work`, a Windows account as
+`%USERNAME%`), and a copied `path:` value restores it before matching.
 
 ```console
 $ agentgrep grep agent:codex bliss

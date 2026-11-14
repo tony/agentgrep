@@ -83,6 +83,12 @@ OpenCode (anomalyco) SQLite session store, config, snapshots, and caches.
 VS Code GitHub Copilot Chat JSON transcripts and inline-edit history, including WSL cross-host stores.
 :::
 
+:::{grid-item-card} Windows and WSL
+:link: windows
+:link-type: doc
+Windows-side Claude desktop, Codex, Cursor, and VS Code history searched from a WSL distro.
+:::
+
 ::::
 
 ## Unsupported backends
@@ -90,7 +96,8 @@ VS Code GitHub Copilot Chat JSON transcripts and inline-edit history, including 
 Some agents store their conversations in an obfuscated or encrypted form
 agentgrep cannot read. Their storage is catalogued for inventory, but
 they are excluded from search — see {doc}`unsupported/index`
-(currently {doc}`Windsurf <unsupported/windsurf>`).
+(currently {doc}`Windsurf <unsupported/windsurf>` and
+{doc}`ChatGPT desktop <unsupported/chatgpt>`).
 
 ## Coverage levels
 
@@ -290,5 +297,6 @@ grok
 pi
 opencode
 vscode
+windows
 unsupported/index
 ```

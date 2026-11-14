@@ -59,7 +59,11 @@ against a concrete environment is the consumer's job, so the catalogue
 stays portable. `env_overrides` lists the env vars that change the
 root (Claude respects `CLAUDE_CONFIG_DIR`; Codex respects
 `CODEX_HOME` and `CODEX_SQLITE_HOME`; Gemini respects
-`GEMINI_CLI_HOME`).
+`GEMINI_CLI_HOME`). `platform_variants` records where the same store lives
+on another platform, keyed `"darwin"` or `"win32"`; Windows paths use
+`%USERPROFILE%`, `%APPDATA%`, and `%LOCALAPPDATA%`. On WSL, discovery reaches
+those `win32` locations through the Windows users mount, as described in
+{doc}`/backends/windows`.
 
 ## Coverage levels
 
@@ -206,6 +210,19 @@ Debug output and shell snapshots expose metadata-only file summaries.
 Backups, uploads, file history, context/security state, credentials,
 session environment, and cache payloads are catalogued or private
 according to sensitivity.
+The Claude desktop app adds three rows rooted at its app-data directory
+(`~/Library/Application Support/Claude`, `%APPDATA%/Claude`, or
+`$XDG_CONFIG_HOME/Claude`). `claude.cowork.session` and
+`claude.cowork.subagent` read each local agent-mode session's private
+Claude Code home, `local-agent-mode-sessions/<account>/<org>/<session>/.claude`,
+under the runtime stores `claude.projects` and `claude.projects_subagents`;
+the session's `audit.jsonl` and `.audit-key` sit outside that home and are
+never enumerated. `claude.desktop_sessions` is the Code tab's session
+index, parsed by `claude.desktop_session_json.v1` into one opt-in title
+record per session keyed by `cliSessionId`. On WSL, each Windows profile's
+`.claude` joins the default root, and a Windows-side copy under
+`projects/ssh-<id>/` is dropped when the local `projects` tree holds a
+transcript of the same file name.
 Claude source version detection uses `embedded_metadata` for transcript
 `version` fields, `shape_inference` for history records with `display`,
 `timestamp`, and `project`, task/todo/team JSON keys, settings and
@@ -256,7 +273,8 @@ because they have disjoint data homes and on-disk formats.
 `observed_version`: ``codex-cli 0.164.0`` (observed 2026-10-25).
 Codex honours `CODEX_HOME` for primary files. SQLite files resolve
 through `CODEX_SQLITE_HOME`, then `sqlite_home` in `config.toml`, then
-`CODEX_HOME`.
+`CODEX_HOME`. On WSL, each Windows profile's `.codex` (Codex desktop) is a
+second root whose SQLite files are read from beside its sessions.
 
 Schemas are pinned directly to the upstream Rust types:
 

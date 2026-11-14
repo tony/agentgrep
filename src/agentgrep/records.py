@@ -32,6 +32,7 @@ __all__ = [
     "CONVERSATION_STORE_ROLES",
     "CURSOR_STATE_TOKENS",
     "DEFAULT_TARGETED_CONVERSATION_LIMIT",
+    "INVENTORY_AGENTS",
     "ITER_SOURCE_RECORD_ADAPTERS",
     "JSON_FILE_SUFFIXES",
     "OFFICIAL_CURSOR_STATE_PATHS",
@@ -90,6 +91,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "chatgpt",
     "vscode",
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
@@ -133,6 +135,13 @@ AGENT_CHOICES: tuple[AgentName, ...] = (
     "opencode",
     "vscode",
 )
+INVENTORY_AGENTS: tuple[AgentName, ...] = (*AGENT_CHOICES, "chatgpt")
+"""Every agent with discoverable stores, including catalog-only agents.
+
+``chatgpt`` has only catalog-only rows, so it is no ``--agent`` choice and no
+search reads it; inventory surfaces that list catalog-only rows iterate this
+tuple instead of :data:`AGENT_CHOICES`.
+"""
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
 USER_ROLES: frozenset[str] = frozenset({"human", "user"})
@@ -155,7 +164,9 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_ide.brain_resolved_text.v1",
         "antigravity_ide.skills_text.v1",
         "claude.app_state_json_summary.v1",
+        "chatgpt.file_metadata_summary.v1",
         "claude.commands_text.v1",
+        "claude.desktop_session_json.v1",
         "claude.file_metadata_summary.v1",
         "claude.memory_text.v1",
         "claude.plans_text.v1",

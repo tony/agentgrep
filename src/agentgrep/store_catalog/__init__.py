@@ -10,6 +10,7 @@ from __future__ import annotations
 from agentgrep.store_catalog._common import _CATALOG_CAPTURED_AT, OBSERVED_AT, gemini_project_hash
 from agentgrep.store_catalog.antigravity_cli import _ANTIGRAVITY_CLI_STORES
 from agentgrep.store_catalog.antigravity_ide import _ANTIGRAVITY_IDE_STORES
+from agentgrep.store_catalog.chatgpt import _CHATGPT_STORES
 from agentgrep.store_catalog.claude import _CLAUDE_STORES
 from agentgrep.store_catalog.codex import _CODEX_STORES
 from agentgrep.store_catalog.cursor_cli import _CURSOR_CLI_STORES
@@ -23,7 +24,7 @@ from agentgrep.store_catalog.windsurf import _WINDSURF_STORES
 from agentgrep.stores import StoreCatalog
 
 CATALOG = StoreCatalog(
-    catalog_version=42,
+    catalog_version=43,
     captured_at=_CATALOG_CAPTURED_AT,
     stores=(
         *_CLAUDE_STORES,
@@ -37,6 +38,7 @@ CATALOG = StoreCatalog(
         *_PI_STORES,
         *_OPENCODE_STORES,
         *_WINDSURF_STORES,
+        *_CHATGPT_STORES,
         *_VSCODE_STORES,
     ),
 )

@@ -108,6 +108,7 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
         format=StoreFormat.JSONL,
         path_pattern="${CLAUDE_CONFIG_DIR or ${HOME}/.claude}/history.jsonl",
         env_overrides=("CLAUDE_CONFIG_DIR",),
+        platform_variants={"win32": "%USERPROFILE%/.claude/history.jsonl"},
         observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
@@ -152,6 +153,9 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
+        platform_variants={
+            "win32": "%USERPROFILE%/.claude/projects/<encoded_project>/<session_uuid>.jsonl"
+        },
         observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         upstream_ref="code.claude.com/docs/en/changelog",
@@ -203,6 +207,12 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
             "<encoded_project>/<session_uuid>/subagents/<agent>.jsonl"
         ),
         env_overrides=("CLAUDE_CONFIG_DIR",),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.claude/projects/<encoded_project>/<session_uuid>/"
+                "subagents/<agent>.jsonl"
+            ),
+        },
         observed_version=_CLAUDE_OBSERVED_VERSION,
         observed_at=_CLAUDE_OBSERVED_AT,
         schema_notes=(
@@ -230,6 +240,180 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
                 home_subpath=("projects",),
                 glob="*.jsonl",
                 path_parts_required=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.cowork.session",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+            "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+            "<session_uuid>.jsonl"
+        ),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+                "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+                "<session_uuid>.jsonl"
+            ),
+            "win32": (
+                "%APPDATA%/Claude/local-agent-mode-sessions/<account_uuid>/<org_uuid>/"
+                "<session>/.claude/projects/<encoded_project>/<session_uuid>.jsonl"
+            ),
+        },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude desktop local agent-mode (Cowork) transcript. Cowork runs "
+            "Claude Code once per session with its own home at "
+            "`local-agent-mode-sessions/<account>/<org>/<session>/.claude`, where "
+            "`<session>` is `local_<uuid>` or eight hex characters, so the lines "
+            "are the Claude Code project format read by `claude.projects.session`. "
+            "The session's `audit.jsonl` (snake_case audit copy of the same turns) "
+            "and `.audit-key` (key material) sit one level above the home and are "
+            "never read; the sibling `local_<uuid>.json` metadata carries account "
+            "fields (`accountName`, `emailAddress`) and is not indexed. On WSL the "
+            "Windows-side `%APPDATA%/Claude` of every profile is searched."
+        ),
+        distinguishes_from=("claude.projects.session",),
+        search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.EMBEDDED_METADATA,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        search_notes=(
+            "Searched as `claude.projects`, so Cowork prompts group and "
+            "de-duplicate with Claude Code transcripts by session."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects",
+                adapter_id="claude.projects_jsonl.v1",
+                data_version="claude.projects_jsonl.message.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                root_key="claude_cowork",
+                home_subpath=("projects",),
+                glob="*.jsonl",
+                path_parts_excluded=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.cowork.subagent",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+            "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+            "<session_uuid>/subagents/<agent>.jsonl"
+        ),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+                "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+                "<session_uuid>/subagents/<agent>.jsonl"
+            ),
+            "win32": (
+                "%APPDATA%/Claude/local-agent-mode-sessions/<account_uuid>/<org_uuid>/"
+                "<session>/.claude/projects/<encoded_project>/<session_uuid>/subagents/"
+                "<agent>.jsonl"
+            ),
+        },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Sub-agent transcript of a Claude desktop Cowork session, in the same "
+            "JSONL line format as the parent; older files also carry `progress` "
+            "lines. A sibling `agent-<id>.meta.json` holds `agentType`, "
+            "`description`, and `toolUseId`."
+        ),
+        distinguishes_from=("claude.cowork.session", "claude.projects.subagent"),
+        search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.EMBEDDED_METADATA,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects_subagents",
+                adapter_id="claude.projects_jsonl.v1",
+                data_version="claude.projects_jsonl.message.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                root_key="claude_cowork",
+                home_subpath=("projects",),
+                glob="*.jsonl",
+                path_parts_required=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.desktop_sessions",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.JSON_OBJECT,
+        path_pattern=(
+            "${HOME}/Library/Application Support/Claude/claude-code-sessions/"
+            "<account_uuid>/<org_uuid>/local_<uuid>.json"
+        ),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Claude/claude-code-sessions/"
+                "<account_uuid>/<org_uuid>/local_<uuid>.json"
+            ),
+            "win32": (
+                "%APPDATA%/Claude/claude-code-sessions/<account_uuid>/<org_uuid>/local_<uuid>.json"
+            ),
+        },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude desktop Code-tab session index, one JSON object per session: "
+            "`sessionId` (`local_<uuid>`), `cliSessionId` (the Claude Code "
+            "transcript's session id), `title`, `titleSource`, `cwd`, `originCwd`, "
+            "`model`, `effort`, `permissionMode`, `createdAt` and `lastActivityAt` "
+            "(Unix milliseconds), `completedTurns`, `isArchived`, and, when the "
+            "transcript cannot be read, `transcriptUnavailable: true`. Sessions run "
+            "inside a WSL distro add `wslConfig.distro` and "
+            "`sshRemoteTranscriptPath`, the transcript's path inside that distro; "
+            "Windows-side sessions write `<cliSessionId>.jsonl` under "
+            "`%USERPROFILE%/.claude/projects`; in general the app writes a local "
+            "session to `projects/<encoded_cwd>/<cliSessionId>.jsonl` under "
+            "Claude Code's configuration directory, and sets "
+            "`transcriptUnavailable` once Claude Code's `cleanupPeriodDays` sweep "
+            "(30 days by default) has deleted it. Some 50 further keys vary by app "
+            "version. `scheduled-tasks.json` and `archived-sessions.idx` in the "
+            "same directory are not sessions."
+        ),
+        distinguishes_from=("claude.projects.session", "claude.cowork.session"),
+        coverage=StoreCoverage.INSPECTABLE,
+        search_by_default=False,
+        version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+        search_notes=(
+            "Indexed as one title record per session whose `session_id` is "
+            "`cliSessionId`, so a title groups with its transcript. Only the "
+            "keys above are read."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.desktop_sessions",
+                adapter_id="claude.desktop_session_json.v1",
+                data_version="claude.desktop_session_json.v1",
+                path_kind="store_file",
+                source_kind="json",
+                root_key="claude_desktop",
+                home_subpath=("claude-code-sessions",),
+                glob="local_*.json",
             ),
         ),
     ),

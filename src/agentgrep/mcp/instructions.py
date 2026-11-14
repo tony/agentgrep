@@ -10,9 +10,12 @@ from __future__ import annotations
 
 _INSTR_HEADER = (
     "agentgrep MCP server. Read-only search over local AI-agent prompts and "
-    "opt-in conversations across Codex, Claude Code, Cursor, Gemini, "
+    "opt-in conversations across Codex, Claude Code (including the Claude desktop "
+    "app's Cowork transcripts and Code-tab sessions), Cursor, Gemini, "
     "Antigravity CLI, Grok, Pi, OpenCode, and VS Code (GitHub Copilot Chat). "
-    "All tools are read-only and never spawn writes."
+    "On WSL, the Windows-side Claude, Codex, Cursor, and VS Code stores are "
+    "searched too (prompt history by default, transcripts with exhaustive "
+    "effort). All tools are read-only and never spawn writes."
 )
 
 _INSTR_SCOPE = (
@@ -28,7 +31,9 @@ _INSTR_SCOPE = (
     "agent-history scoped.\n"
     "Windsurf (Codeium Cascade) is catalogued for storage inventory but "
     "UNSUPPORTED for search — its conversation transcripts are encrypted, so "
-    "agentgrep cannot read them.\n"
+    "agentgrep cannot read them. ChatGPT desktop is catalogued the same way: its "
+    "macOS conversation files are encrypted and its Windows app keeps only a "
+    "browser profile; list_sources(include_non_default=True) lists its files.\n"
     "Antigravity is two agent ids and they are not equally searchable: "
     "'antigravity-cli' has searchable prompt history plus opt-in conversation "
     "records, while 'antigravity-ide' is catalogued for storage inventory only "
@@ -65,6 +70,16 @@ _INSTR_QUERY = (
     "dry-run a query string with validate_query(query=...) before searching."
 )
 
+_INSTR_WSL = (
+    "WSL: Windows-side paths print as %USERPROFILE%/..., %APPDATA%/..., or "
+    "%LOCALAPPDATA%/.... path:%USERPROFILE% keeps only those results (the "
+    "AppData folders sit inside the profile, so it covers all three) and NOT "
+    "path:%USERPROFILE% drops them. Filters narrow results, not the walk over "
+    "the Windows mount: to skip the walk, the server's environment sets "
+    "AGENTGREP_WSL_USERS_ROOT to a missing directory. A Windows-side result's "
+    "ref opens its real file through inspect_result()."
+)
+
 _INSTR_RESULT_LOOP = (
     "Result loop: search() and find() return opaque result refs. Use "
     "inspect_result(ref=...) to drill into a returned result without "
@@ -80,7 +95,10 @@ _INSTR_RESOURCES = (
 
 _INSTR_PRIVACY = (
     "Privacy: Home-directory prefixes in source and result paths are collapsed "
-    "to '~'; external paths may remain absolute. Use opaque result refs with "
+    "to '~', and on WSL a Windows profile prefix to %USERPROFILE%, %APPDATA%, or "
+    "%LOCALAPPDATA%. Inside encoded project folders the home prints as '~' "
+    "(-home-<user>-work as -~-work) and a Windows account as %USERNAME%. Other "
+    "external paths may remain absolute. Use opaque result refs with "
     "inspect_result() for drilldown. Treat record text as potentially sensitive "
     "(it is the user's own prompt history). Do not echo or forward record text "
     "outside the immediate request scope."
@@ -92,6 +110,7 @@ _BASE_INSTRUCTIONS = (
     f"{_INSTR_SEARCH_VS_DISCOVERY}\n\n"
     f"{_INSTR_DEFAULTS}\n\n"
     f"{_INSTR_QUERY}\n\n"
+    f"{_INSTR_WSL}\n\n"
     f"{_INSTR_RESULT_LOOP}\n\n"
     f"{_INSTR_RESOURCES}\n\n"
     f"{_INSTR_PRIVACY}"

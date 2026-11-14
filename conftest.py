@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import pathlib
 
+import pytest
+
 from pytest_documentation import (
     ConsoleCommandEvaluator,
     DocumentationSuite,
@@ -21,6 +23,31 @@ from pytest_documentation import (
 
 _REPO_ROOT = pathlib.Path(__file__).parent.resolve()
 _SAMPLES_ROOT = _REPO_ROOT / "tests" / "samples"
+
+
+@pytest.fixture(scope="session")
+def _wsl_users_root_sentinel(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> pathlib.Path:
+    """Return one absent Windows-users root shared by the test session."""
+    return tmp_path_factory.mktemp("wsl-users-root") / "missing"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_wsl_host_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    _wsl_users_root_sentinel: pathlib.Path,
+) -> None:
+    """Keep the WSL Windows-host probes off the developer's real ``/mnt/c``.
+
+    On WSL, discovery also searches each Windows profile under ``/mnt/c/Users``
+    (Claude Code, Claude desktop, Codex, Cursor, VS Code). That path is
+    independent of ``$HOME``, so on a WSL dev box it would leak real history
+    into hermetic tests and doctests. This root-level fixture covers ``src``
+    doctests as well as ``tests``; tests that exercise a probe override
+    ``AGENTGREP_WSL_USERS_ROOT`` explicitly.
+    """
+    monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(_wsl_users_root_sentinel))
 
 
 def _sample_seed(source: pathlib.Path, target: str) -> SandboxSeed:
