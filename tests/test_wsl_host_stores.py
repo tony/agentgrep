@@ -386,3 +386,38 @@ def test_abandoned_search_stops_the_windows_walk(
         )
     assert finished.wait(5), "the abandoned discovery never returned"
     assert len(calls) < 64
+
+
+def test_stopped_listing_is_not_memoized(tmp_path: pathlib.Path) -> None:
+    """A walk cut short by a stop is never kept as the pass's listing of that tree."""
+    from agentgrep.discovery import discovery_stop, handles_from_discovery
+    from agentgrep.records import StoreCoverage
+    from agentgrep.stores import DiscoverySpec
+
+    for index in range(50):
+        _write_transcript(tmp_path / "projects" / f"p{index}" / "s.jsonl", f"s-{index}")
+    spec = DiscoverySpec(
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path_kind="session_file",
+        source_kind="jsonl",
+        home_subpath=("projects",),
+        glob="*.jsonl",
+    )
+    checks: list[int] = []
+
+    def stop() -> bool:
+        checks.append(1)
+        return len(checks) > 5
+
+    listings: dict[tuple[pathlib.Path, str], list[pathlib.Path]] = {}
+    with discovery_stop(stop):
+        handles_from_discovery(
+            spec,
+            "claude",
+            tmp_path,
+            _NO_BACKENDS,
+            StoreCoverage.DEFAULT_SEARCH,
+            listings=listings,
+        )
+    assert listings == {}
