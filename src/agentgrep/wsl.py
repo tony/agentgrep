@@ -85,6 +85,13 @@ replaced by dashes, so a project under the profile becomes
 _SERVICE_PROFILES = frozenset({"all users", "default", "default user", "public"})
 """Profiles Windows creates for itself under ``C:\\Users``, compared casefolded."""
 
+_KNOWN_PROFILE_NAMES: set[str] = set()
+"""Windows profile names seen by :func:`host_user_profiles` in this process.
+
+Path display hides these names wherever an agent encoded them into a folder
+name, without listing ``C:\\Users`` on the render path.
+"""
+
 _PROC_VERSION = pathlib.Path("/proc/version")
 _WSL_CONF = pathlib.Path("/etc/wsl.conf")
 
@@ -236,7 +243,28 @@ def host_user_profiles(
             continue
         if is_profile:
             profiles.append(WSLHostUserProfile(entry))
+            _remember_profile_name(entry.name)
     return tuple(profiles)
+
+
+_known_profile_names_sorted: tuple[str, ...] = ()
+
+
+def _remember_profile_name(name: str) -> None:
+    """Record one profile name for :func:`known_profile_names`."""
+    global _known_profile_names_sorted
+    if name not in _KNOWN_PROFILE_NAMES:
+        _KNOWN_PROFILE_NAMES.add(name)
+        _known_profile_names_sorted = tuple(sorted(_KNOWN_PROFILE_NAMES))
+
+
+def known_profile_names() -> tuple[str, ...]:
+    """Return the Windows profile names discovery has seen in this process, sorted.
+
+    Path display redacts these names inside encoded folder names; reading
+    them here costs no file access.
+    """
+    return _known_profile_names_sorted
 
 
 def _redact_account(segment: str, profile: str) -> str:
@@ -735,6 +763,7 @@ __all__ = (
     "host_user_profiles",
     "is_host_path",
     "is_wsl",
+    "known_profile_names",
     "mount_root",
     "users_root",
 )

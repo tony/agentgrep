@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import typing as t
 
 import pytest
@@ -227,3 +228,43 @@ def test_encoded_folder_hides_the_account_and_resolves(host_tree: HostTree) -> N
     display = format_display_path(transcript)
     assert display == "%USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/windows-1.jsonl"
     assert wsl.host_display_candidates(display) == (transcript,)
+
+
+def test_encoded_home_hides_the_linux_account_and_resolves(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A project folder named after the home shows ``-~-`` and still resolves."""
+    from agentgrep._engine.find import iter_find_events
+    from agentgrep.events import FindRecordEmitted
+    from agentgrep.mcp._library import FindRecordLike
+    from agentgrep.mcp.refs import make_find_ref, parse_record_ref
+    from agentgrep.query import compile_query, default_registry, parse_query
+
+    monkeypatch.setenv("HOME", str(host_tree.home))
+    encoded = re.sub(r"[^A-Za-z0-9]", "-", str(host_tree.home))
+    transcript = host_tree.home / f".claude/projects/{encoded}-work/linux-1.jsonl"
+    _write_transcript(transcript, "linux-1")
+    windows_copy = (
+        host_tree.profile / f".claude/projects/--wsl-localhost-demo{encoded}-work/s.jsonl"
+    )
+    display = format_display_path(transcript)
+    assert display == "~/.claude/projects/-~-work/linux-1.jsonl"
+    assert format_display_path(windows_copy) == (
+        "%USERPROFILE%/.claude/projects/--wsl-localhost-demo-~-work/s.jsonl"
+    )
+    registry = default_registry()
+    compiled = compile_query(parse_query(f"path:{display}", registry), registry)
+    (record,) = [
+        t.cast("FindRecordLike", event.record)
+        for event in iter_find_events(
+            host_tree.home,
+            ("claude",),
+            pattern=None,
+            limit=None,
+            backends=_NO_BACKENDS,
+            compiled=compiled,
+        )
+        if isinstance(event, FindRecordEmitted)
+    ]
+    assert parse_record_ref(make_find_ref(record), home=host_tree.home).path == transcript

@@ -10,6 +10,7 @@ import pathlib
 import typing as t
 
 from agentgrep import wsl
+from agentgrep._text import restore_encoded_paths
 from agentgrep.mcp._library import (
     AgentSelector,
     FindRecordLike,
@@ -130,15 +131,27 @@ def _display_path_to_path(
         raise McpTokenError(msg)
     if value == "~":
         return home
+    # Display paths hide account names inside encoded project folders
+    # (``-home-u-work`` as ``-~-work``); put them back once ``~/`` is expanded.
     if value.startswith("~/"):
-        return home / value[2:]
+        return _first_existing(restore_encoded_paths(str(home / value[2:]), str(home)))
     profile_key = profile if isinstance(profile, str) and profile else None
-    candidates = wsl.host_display_candidates(value, profile_key=profile_key)
+    candidates = [
+        variant
+        for path in wsl.host_display_candidates(value, profile_key=profile_key)
+        for variant in restore_encoded_paths(str(path), str(home))
+    ]
     if candidates:
         # The display form hides the Windows profile; the ref's profile key
         # names it. A ref without one resolves to the first profile that has the file.
-        return next((path for path in candidates if path.exists()), candidates[0])
-    return pathlib.Path(value).expanduser()
+        return _first_existing(tuple(candidates))
+    return _first_existing(restore_encoded_paths(value, str(home))).expanduser()
+
+
+def _first_existing(candidates: tuple[str, ...]) -> pathlib.Path:
+    """Return the first candidate path that exists, else the first candidate."""
+    paths = [pathlib.Path(candidate) for candidate in candidates]
+    return next((path for path in paths if path.exists()), paths[0])
 
 
 def _record_fingerprint(payload: dict[str, object]) -> str:

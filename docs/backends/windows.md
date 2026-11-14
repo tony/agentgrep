@@ -46,7 +46,10 @@ variable that names it, the way a Linux path under your home starts with
 
 Agents name project folders after the working directory, so a project under
 the profile carries the account name in its folder name; that part is shown as
-`%USERNAME%`.
+`%USERNAME%`. The same rule covers the Linux side: the home directory inside
+an encoded folder name prints as `~` (`-home-<user>-work` as `-~-work`,
+Grok's `%2Fhome%2F<user>%2Fwork` as `~%2Fwork`), and a Windows account
+encoded into a Linux-side folder (`-mnt-c-Users-<name>-…`) as `%USERNAME%`.
 
 The rewrite applies to text, JSON, NDJSON, the TUI, and MCP results.
 Opaque result refs still open the real file.
