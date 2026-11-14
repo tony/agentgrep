@@ -244,17 +244,21 @@ def host_user_profiles(
     >>> host_user_profiles("/nonexistent/Users", require_wsl=False)
     ()
     """
-    if require_wsl and not is_wsl():
-        return ()
+    # Resolve the users root first: discovery calls this off the render path,
+    # so path display later finds the automount root already read and cached.
     users = WSLHostPath(root) if root is not None else users_root()
+    if require_wsl and not is_wsl():
+        _profiles_listed.set()
+        return ()
     try:
         entries = sorted(users.iterdir())
     except OSError:
+        _profiles_listed.set()
         return ()
     profiles: list[WSLHostUserProfile] = []
     for entry in entries:
         if should_stop is not None and should_stop():
-            break
+            return tuple(profiles)
         if entry.name.casefold() in _SERVICE_PROFILES:
             continue
         try:
@@ -264,10 +268,14 @@ def host_user_profiles(
         if is_profile:
             profiles.append(WSLHostUserProfile(entry))
             _remember_profile_name(entry.name)
+    _profiles_listed.set()
     return tuple(profiles)
 
 
 _known_profile_names_sorted: tuple[str, ...] = ()
+
+_profiles_listed = threading.Event()
+"""Set once a profile listing has run to the end in this process."""
 
 
 _profile_names_lock = threading.Lock()
@@ -287,11 +295,16 @@ def _remember_profile_name(name: str) -> None:
 
 
 def known_profile_names() -> tuple[str, ...]:
-    """Return the Windows profile names discovery has seen in this process, sorted.
+    """Return the Windows profile names seen in this process, sorted.
 
-    Path display redacts these names inside encoded folder names; reading
-    them here costs no file access.
+    Path display redacts these names inside encoded folder names. Discovery
+    lists the profiles before any of its paths are shown, so this normally
+    costs no file access; only a display that runs before any listing (a
+    ref opened in a fresh process, or a direct library call) lists the users
+    directory once, so the name is hidden there too.
     """
+    if not _profiles_listed.is_set():
+        host_user_profiles()
     return _known_profile_names_sorted
 
 
@@ -328,16 +341,35 @@ def _restore_account(segment: str, profile: str) -> str:
     return segment.replace(f"Users-{USERNAME}", f"Users-{dashed}").replace(USERNAME, profile)
 
 
+_DRIVE_PROFILE = re.compile(r"^[A-Za-z]:[\\/](?i:Users)[\\/]([^\\/]+)(.*)$")
+"""A Windows drive path inside a profile, as agents record a working directory."""
+
+
+def _variable_form(profile: str, parts: list[str]) -> str:
+    """Join a profile-relative path onto the Windows variable that names its root."""
+    parts = [_redact_account(part, profile) for part in parts]
+    if len(parts) >= 2 and parts[0].casefold() == "appdata":
+        area = parts[1].casefold()
+        if area == "roaming":
+            return "/".join((APPDATA, *parts[2:]))
+        if area == "local":
+            return "/".join((LOCALAPPDATA, *parts[2:]))
+    return "/".join((USERPROFILE, *parts))
+
+
 def display_host_path(path: str | os.PathLike[str]) -> str | None:
-    """Rewrite a path inside a Windows profile to its Windows-variable form.
+    r"""Rewrite a path inside a Windows profile to its Windows-variable form.
 
     The profile prefix becomes ``%APPDATA%`` for ``AppData/Roaming``,
     ``%LOCALAPPDATA%`` for ``AppData/Local``, and ``%USERPROFILE%`` for the
     rest of the profile. The account name inside an encoded project folder
     (``C--Users-<name>-work``) becomes ``%USERNAME%``, so the Windows account
-    name never reaches output.
-    The match is a string prefix test against :func:`users_root`; it touches
-    no files.
+    name never reaches output. Both forms of a profile path are rewritten:
+    the WSL mount form under :func:`users_root`, and the drive form
+    (``C:\Users\<name>``) that agents running on Windows record as a
+    working directory. Both print with ``/``, so a printed path pastes into a
+    query unchanged.
+    The match is a string test; it touches no files.
 
     Parameters
     ----------
@@ -365,6 +397,8 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     ...         "/mnt/c/Users/someone/.claude/projects/C--Users-someone-work/s.jsonl",
     ...         "/mnt/c/Users/Public/Documents",
     ...         "/home/someone/.claude",
+    ...         "C:\\Users\\Some One\\work",
+    ...         "C:/Users/someone/AppData/Roaming/Code",
     ...     ):
     ...         print(display_host_path(path))
     %APPDATA%/Code/User
@@ -373,22 +407,23 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     %USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/s.jsonl
     None
     None
+    %USERPROFILE%/work
+    %APPDATA%/Code
     """
     text = os.fspath(path)
+    drive = _DRIVE_PROFILE.match(text)
+    if drive is not None:
+        profile, tail = drive.groups()
+        if profile.casefold() in _SERVICE_PROFILES:
+            return None
+        return _variable_form(profile, [part for part in re.split(r"[\\/]", tail) if part])
     root = _users_root_text().rstrip("/")
     if not text.startswith(root + "/"):
         return None
     profile, _, tail = text[len(root) + 1 :].partition("/")
     if not profile or profile.casefold() in _SERVICE_PROFILES:
         return None
-    parts = [_redact_account(part, profile) for part in tail.split("/")] if tail else []
-    if len(parts) >= 2 and parts[0].casefold() == "appdata":
-        area = parts[1].casefold()
-        if area == "roaming":
-            return "/".join((APPDATA, *parts[2:]))
-        if area == "local":
-            return "/".join((LOCALAPPDATA, *parts[2:]))
-    return "/".join((USERPROFILE, *parts))
+    return _variable_form(profile, tail.split("/") if tail else [])
 
 
 def is_host_path(path: str | os.PathLike[str]) -> bool:

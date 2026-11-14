@@ -63,6 +63,7 @@ variable that names it, the way a Linux path under your home starts with
 | `/mnt/c/Users/<name>/AppData/Local/Packages/...` | `%LOCALAPPDATA%/Packages/...` |
 | `/mnt/c/Users/<name>/.codex/sessions/...` | `%USERPROFILE%/.codex/sessions/...` |
 | `/mnt/c/Users/<name>/.claude/projects/C--Users-<name>-work/...` | `%USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/...` |
+| `C:\Users\<name>\work`, a working directory recorded on Windows | `%USERPROFILE%/work` |
 
 Agents also name project folders after the working directory, which can
 carry an account name. Those encoded names are rewritten the same way:
@@ -86,9 +87,10 @@ Two cases are left as is:
 - A single-component home such as `/root` encodes to a common word.
 - A repository whose own name contains the account name keeps its name.
 
-A printed path works as a `path:` query, so the Windows-side results can be
-selected or left out. `%APPDATA%` and `%LOCALAPPDATA%` sit inside the
-profile, so `path:%USERPROFILE%` covers them too. Only the Windows side:
+A printed path works as a `path:` query, and a printed working directory as a
+`cwd:` query, so the Windows-side results can be selected or left out.
+`%APPDATA%` and `%LOCALAPPDATA%` sit inside the profile, so
+`path:%USERPROFILE%` covers them too. Only the Windows side:
 
 ```console
 $ agentgrep find 'path:%USERPROFILE%'

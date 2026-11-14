@@ -927,22 +927,51 @@ def test_reencoded_account_name_is_hidden_and_resolves(
     profile: str,
     folder: str,
 ) -> None:
-    """An account name with spaces or dots never prints, however an agent encoded it."""
+    r"""An account name with spaces or dots never prints, however an agent recorded it.
+
+    The registry of profile names starts empty, as in a fresh process that
+    opens a ref before any discovery, so the first display has to list the
+    profiles itself. A working directory an agent on Windows recorded
+    (``C:\Users\<name>\w``) prints as ``%USERPROFILE%/w/``, and that printed
+    form, pasted into a ``cwd:`` filter, matches the record.
+    """
+    import threading
+
     from agentgrep._text import redact_encoded_paths, restore_encoded_paths
+    from agentgrep.origin_serializers import serialize_record_origin
+    from agentgrep.query import compile_query, default_registry, parse_query
+    from agentgrep.records import RecordOrigin, SearchRecord
 
     users = tmp_path / "Users"
     transcript = users / profile / ".claude" / "projects" / folder / "s.jsonl"
     _write_transcript(transcript, "s")
     monkeypatch.setenv(wsl.USERS_ROOT_ENV, str(users))
     monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
-    assert wsl.host_user_profiles()
+    monkeypatch.setattr(wsl, "_KNOWN_PROFILE_NAMES", set())
+    monkeypatch.setattr(wsl, "_known_profile_names_sorted", ())
+    monkeypatch.setattr(wsl, "_profiles_listed", threading.Event())
+    linux_side = f"/home/u/.grok/sessions/{folder}/h.jsonl"
+    redacted = redact_encoded_paths(linux_side, "/home/u")
+    assert "%USERNAME%" in redacted
+    assert linux_side in restore_encoded_paths(redacted, "/home/u")
     display = format_display_path(transcript)
     assert "%USERNAME%" in display
     assert profile not in display
     assert wsl.encoded_account_forms(profile)[0] not in display
     if "%5C" not in folder:
         assert wsl.host_display_candidates(display) == (transcript,)
-    linux_side = f"/home/u/.grok/sessions/{folder}/h.jsonl"
-    redacted = redact_encoded_paths(linux_side, "/home/u")
-    assert "%USERNAME%" in redacted
-    assert linux_side in restore_encoded_paths(redacted, "/home/u")
+    origin = RecordOrigin(cwd=f"C:\\Users\\{profile}\\w")
+    assert serialize_record_origin(origin) == {"cwd": "%USERPROFILE%/w/"}
+    record = SearchRecord(
+        kind="prompt",
+        agent="claude",
+        store="claude.projects",
+        adapter_id="claude.projects_jsonl.v1",
+        path=transcript,
+        text="t",
+        origin=origin,
+    )
+    registry = default_registry()
+    compiled = compile_query(parse_query("cwd:%USERPROFILE%/w", registry), registry)
+    assert compiled.record_predicate is not None
+    assert compiled.record_predicate(record)

@@ -673,9 +673,10 @@ def redact_encoded_paths(text: str, home: str | None = None) -> str:
             for old, new in replacements:
                 padded = padded.replace(old, new)
             text = padded[1:-1]
-    accounts = _account_pattern(known_profile_names())
-    if accounts is not None and "Users" in text:
-        text = accounts.sub(USERNAME, text)
+    if "Users" in text:
+        accounts = _account_pattern(known_profile_names())
+        if accounts is not None:
+            text = accounts.sub(USERNAME, text)
     return text
 
 
