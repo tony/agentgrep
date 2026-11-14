@@ -421,3 +421,57 @@ def test_stopped_listing_is_not_memoized(tmp_path: pathlib.Path) -> None:
             listings=listings,
         )
     assert listings == {}
+
+
+class ProfileFilterCase(t.NamedTuple):
+    """A ``path:`` filter on the Windows profile and the transcripts it keeps."""
+
+    test_id: str
+    query: str
+    expected: frozenset[str]
+
+
+_WINDOWS_SIDE = frozenset({"remote-only.jsonl", "windows-1.jsonl", "cowork-1.jsonl"})
+PROFILE_FILTER_CASES = (
+    ProfileFilterCase("glob-after-variable", "path:%USERPROFILE%*", _WINDOWS_SIDE),
+    ProfileFilterCase("bare-variable", "path:%USERPROFILE%", _WINDOWS_SIDE),
+    ProfileFilterCase(
+        "negated",
+        "NOT path:%USERPROFILE%",
+        frozenset({"local-1.jsonl", "cowork-mac.jsonl"}),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    list(ProfileFilterCase._fields),
+    PROFILE_FILTER_CASES,
+    ids=[case.test_id for case in PROFILE_FILTER_CASES],
+)
+def test_profile_filter_selects_the_windows_side(
+    host_tree: HostTree,
+    test_id: str,
+    query: str,
+    expected: frozenset[str],
+) -> None:
+    """``path:%USERPROFILE%`` covers %APPDATA% paths too, and NOT drops them all."""
+    from agentgrep._engine.find import iter_find_events
+    from agentgrep.events import FindRecordEmitted
+    from agentgrep.mcp._library import FindRecordLike
+    from agentgrep.query import compile_query, default_registry, parse_query
+
+    registry = default_registry()
+    compiled = compile_query(parse_query(query, registry), registry)
+    names = {
+        t.cast("FindRecordLike", event.record).path.name
+        for event in iter_find_events(
+            host_tree.home,
+            ("claude",),
+            pattern=None,
+            limit=None,
+            backends=_NO_BACKENDS,
+            compiled=compiled,
+        )
+        if isinstance(event, FindRecordEmitted)
+    }
+    assert names & (_WINDOWS_SIDE | {"local-1.jsonl", "cowork-mac.jsonl"}) == expected
