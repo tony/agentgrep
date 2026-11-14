@@ -9,6 +9,7 @@ the adapters and below the engine.
 
 from __future__ import annotations
 
+import asyncio
 import collections.abc as cabc
 import concurrent.futures
 import contextlib
@@ -1004,6 +1005,53 @@ def _stop_requested(active: _StopBinding | None) -> bool:
 def _active_stop() -> cabc.Callable[[], bool] | None:
     """Return a stop check for long-running calls, or ``None`` outside :func:`discovery_stop`."""
     return _discovery_stopped if _DISCOVERY_STOP.get() is not None else None
+
+
+async def discover_in_thread[**P, R](
+    fn: cabc.Callable[P, R],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> R:
+    """Run blocking discovery in a worker thread that stops when the caller is cancelled.
+
+    :func:`asyncio.to_thread` cannot stop its thread: cancelling the awaiting
+    task returns at once but leaves the worker walking the filesystem, which on
+    the WSL 9p mount is seconds of round trips while it holds the shared
+    ``stat`` pool. Here ``fn`` runs inside :func:`discovery_stop`, and
+    cancelling the awaiting task fires the stop, so the walk ends at its next
+    check and its partial result is dropped with the cancellation.
+
+    Parameters
+    ----------
+    fn : Callable
+        Blocking work that discovers sources, such as :func:`discover_sources`.
+    *args, **kwargs
+        Passed to ``fn``.
+
+    Returns
+    -------
+    R
+        What ``fn`` returns when the caller is not cancelled.
+
+    Examples
+    --------
+    >>> import asyncio
+    >>> from agentgrep.discovery import discover_in_thread
+    >>> asyncio.run(discover_in_thread(sum, [1, 2, 3]))
+    6
+    """
+    stop = threading.Event()
+
+    def run() -> R:
+        with discovery_stop(stop.is_set):
+            return fn(*args, **kwargs)
+
+    try:
+        return await asyncio.to_thread(run)
+    except asyncio.CancelledError:
+        stop.set()
+        raise
 
 
 _SLOW_MOUNT_STAT_WORKERS = 16

@@ -696,3 +696,50 @@ def test_core_module_stays_headless(
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             imported.update(f"{node.module}.{alias.name}" for alias in node.names)
     assert not [name for name in imported if name.startswith(forbidden)]
+
+
+async def test_cancelled_discovery_thread_stops_the_windows_walk(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling the task awaiting ``discover_in_thread`` stops the walk it started.
+
+    The MCP discovery tools run through this helper, so a cancelled ``find``
+    leaves at most the in-flight Windows-side stats running, not the whole walk.
+    """
+    import asyncio
+    import threading
+
+    from agentgrep import discovery
+
+    for index in range(64):
+        _write_transcript(
+            host_tree.profile / f".claude/projects/C--Users-x-bulk/bulk-{index}.jsonl",
+            f"bulk-{index}",
+        )
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    calls: list[pathlib.Path] = []
+    real_mtime = discovery.file_mtime_ns
+
+    def gated(path: pathlib.Path) -> int:
+        if path.name.startswith("bulk-"):
+            calls.append(path)
+            started.set()
+            release.wait(5)
+        return real_mtime(path)
+
+    def walk() -> list[SourceHandle]:
+        try:
+            return _discover(host_tree, "claude")
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(discovery, "file_mtime_ns", gated)
+    task = asyncio.create_task(discovery.discover_in_thread(walk))
+    assert await asyncio.to_thread(started.wait, 5), "the Windows walk never started"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    assert await asyncio.to_thread(finished.wait, 5), "the cancelled walk never returned"
+    assert len(calls) <= discovery._SLOW_MOUNT_STAT_WORKERS

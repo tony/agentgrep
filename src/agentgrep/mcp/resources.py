@@ -8,6 +8,7 @@ import typing as t
 
 from mcp.types import ResourceTemplateReference
 
+from agentgrep.discovery import discover_in_thread
 from agentgrep.mcp._library import (
     KNOWN_ADAPTERS,
     READONLY_TAGS,
@@ -159,8 +160,9 @@ def register_resources(mcp: FastMCP) -> None:
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
     )
-    def sources_resource() -> str:
-        return SourceListAdapter.dump_json(list_source_models()).decode("utf-8")
+    async def sources_resource() -> str:
+        models = await discover_in_thread(list_source_models)
+        return SourceListAdapter.dump_json(models).decode("utf-8")
 
     _ = sources_resource
 
@@ -171,8 +173,9 @@ def register_resources(mcp: FastMCP) -> None:
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
     )
-    def sources_by_agent_resource(agent: AgentSelector) -> str:
-        return SourceListAdapter.dump_json(list_source_models(agent)).decode("utf-8")
+    async def sources_by_agent_resource(agent: AgentSelector) -> str:
+        models = await discover_in_thread(list_source_models, agent)
+        return SourceListAdapter.dump_json(models).decode("utf-8")
 
     _ = sources_by_agent_resource
 
