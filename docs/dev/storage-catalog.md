@@ -61,9 +61,17 @@ root (Claude respects `CLAUDE_CONFIG_DIR`; Codex respects
 `CODEX_HOME` and `CODEX_SQLITE_HOME`; Gemini respects
 `GEMINI_CLI_HOME`). `platform_variants` records where the same store lives
 on another platform, keyed `"darwin"` or `"win32"`; Windows paths use
-`%USERPROFILE%`, `%APPDATA%`, and `%LOCALAPPDATA%`. On WSL, discovery reaches
-those `win32` locations through the Windows users mount, as described in
-{doc}`/backends/windows`.
+`%USERPROFILE%`, `%APPDATA%`, and `%LOCALAPPDATA%`. For agents that resolve
+their directory from the user's home on Windows as on Linux (Gemini CLI, Grok,
+Pi, OpenCode, Antigravity CLI), `with_windows_home_variants` derives the
+`win32` path by putting `%USERPROFILE%` in place of `${HOME}`. On WSL,
+discovery reaches those `win32` locations through the Windows users mount, as
+described in {doc}`/backends/windows`.
+
+`format` names the on-disk encoding. {attr}`~agentgrep.stores.StoreFormat.LEVELDB`
+marks Chromium web storage (ChatGPT desktop's Local Storage), which agentgrep
+reads in pure Python, without a LevelDB library and without taking the owning
+app's lock.
 
 ## Coverage levels
 

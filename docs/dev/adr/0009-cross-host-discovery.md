@@ -91,6 +91,16 @@ equality, and hash stay the real path, plus the profile and app-data role
 objects. It imports no other agentgrep module, so every layer can use it
 (ADR 0010), and a test keeps it that way.
 
+### Chromium web storage is read without the app's lock
+
+ChatGPT desktop on Windows keeps no message text on disk, but its Chromium
+Local Storage caches the conversation list, which agentgrep searches by title
+(`chatgpt.conversation_list`). The store is a LevelDB directory the running app
+holds open, so agentgrep reads its log and table files directly in pure Python
+(Snappy blocks included) instead of opening it with a LevelDB library, which
+would take the app's lock. Only the conversation-list keys are decoded; the
+store's session data and secrets are never read.
+
 ### Windows paths never name the account
 
 A path inside a Windows profile displays as `%USERPROFILE%/…`, `%APPDATA%/…`,
@@ -140,6 +150,8 @@ the catalogue stays declarative; only the discovery function computes roots.
 - A Windows-side copy of a local transcript is read once.
 - Discovery over the Windows mount honours `discovery_stop`, so an abandoned
   search makes no further round trips beyond the `stat` calls in flight.
+- An app-owned store such as Chromium Local Storage is read without a lock
+  and without writes, decoding only the keys an adapter needs.
 
 ## Consequences
 
