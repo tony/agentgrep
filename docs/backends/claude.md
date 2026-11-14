@@ -10,7 +10,9 @@ prompts from every eligible project transcript. Memory, todo, and plugin/skill
 stores may join explicit broad-scope search. Settings and shell snapshots
 remain inventory-only.
 
-Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`).
+Base path: `~/.claude` (env override: `CLAUDE_CONFIG_DIR`). The Claude
+desktop app adds its own directory, covered under
+{ref}`backend-claude-desktop`.
 
 `observed_version`: `claude-code v2.1.310` (observed 2026-10-25).
 
@@ -111,6 +113,28 @@ for explicit inventory but does not search it by default.
 `projects/<encoded_project>/<session_uuid>/session-memory/summary.md`. They
 can contain prompt context and summaries, but they are derived state rather
 than the primary transcript.
+
+(backend-claude-desktop)=
+
+### Claude desktop
+
+The Claude desktop app keeps two Claude Code stores in its app-data
+directory: `~/Library/Application Support/Claude` on macOS, `%APPDATA%/Claude`
+on Windows (reached from WSL through each Windows profile), and
+`$XDG_CONFIG_HOME/Claude` on Linux.
+
+{storage:storeref}`claude.cowork.session` and
+{storage:storeref}`claude.cowork.subagent` are the transcripts of local
+agent-mode ("Cowork") sessions. Cowork runs Claude Code once per session with
+its own home at `local-agent-mode-sessions/<account>/<org>/<session>/.claude`,
+so the files use the project transcript format above and are searched as
+`claude.projects`. The session's `audit.jsonl` and `.audit-key` sit outside
+that home and are never read, and the per-session `local_<uuid>.json` metadata,
+which carries account fields, is not indexed.
+
+```console
+$ agentgrep find --agent claude
+```
 
 ### Tasks, Plans, And Configuration
 

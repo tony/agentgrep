@@ -1049,6 +1049,64 @@ def descriptor_admits_store_roles(
     return any(spec.store in CONVERSATION_CONTENT_STORES for spec in descriptor.discovery)
 
 
+def admitted_root_keys(
+    agent: AgentName,
+    store_roles: DiscoveryStoreRoles,
+    *,
+    include_non_default: bool = False,
+    allow_conversation_content_role_fallback: bool = True,
+) -> frozenset[str]:
+    """Return the discovery root keys a pass would read for ``agent``.
+
+    Applies the same coverage and role narrowing as
+    :func:`discover_from_catalog`, so a discover function can skip resolving
+    a root that is expensive to compute (a walk over a network mount) when
+    no admitted row reads it.
+
+    Parameters
+    ----------
+    agent : AgentName
+        Agent whose catalogue rows to consult.
+    store_roles : DiscoveryStoreRoles
+        Roles the caller's scope can consume, or ``None`` for every role.
+    include_non_default : bool
+        Whether inventory rows outside default search are admitted.
+    allow_conversation_content_role_fallback : bool
+        Whether conversation roles may admit allowlisted app-state stores.
+
+    Returns
+    -------
+    frozenset[str]
+        ``DiscoverySpec.root_key`` values of the admitted rows.
+
+    Examples
+    --------
+    >>> from agentgrep.discovery import admitted_root_keys
+    >>> from agentgrep.stores import StoreRole
+    >>> "claude_cowork" in admitted_root_keys("claude", frozenset({StoreRole.PROMPT_HISTORY}))
+    False
+    >>> "claude_cowork" in admitted_root_keys("claude", None)
+    True
+    """
+    from agentgrep.store_catalog import CATALOG
+
+    keys: set[str] = set()
+    for descriptor in CATALOG.for_agent(agent):
+        coverage = descriptor.coverage_level
+        if coverage is StoreCoverage.PRIVATE:
+            continue
+        if coverage is not StoreCoverage.DEFAULT_SEARCH and not include_non_default:
+            continue
+        if not descriptor_admits_store_roles(
+            descriptor,
+            store_roles,
+            allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+        ):
+            continue
+        keys.update(spec.root_key for spec in descriptor.discovery)
+    return frozenset(keys)
+
+
 def discover_from_catalog(
     home: pathlib.Path,
     agent: AgentName,
@@ -1189,17 +1247,34 @@ def discover_claude_sources(
     store_roles: DiscoveryStoreRoles = None,
     allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
-    """Discover Claude Code project session files.
+    """Discover Claude Code and Claude desktop sources.
 
     Honours ``CLAUDE_CONFIG_DIR`` and otherwise falls back to
-    ``${HOME}/.claude``. Path roots, globs, and adapter metadata come from
-    the ``claude.*`` rows of :data:`agentgrep.store_catalog.CATALOG`.
+    ``${HOME}/.claude``. The Claude desktop app directories (see
+    :func:`claude_desktop_dirs`) add the local agent-mode ("Cowork")
+    transcripts. Path roots, globs, and adapter
+    metadata come from the ``claude.*`` rows of
+    :data:`agentgrep.store_catalog.CATALOG`.
     """
     root = resolve_env_root("CLAUDE_CONFIG_DIR", home / ".claude")
-    if not root.exists():
+    local_roots = (root,) if root.exists() else ()
+    # The desktop roots cost a walk over the Windows mount on WSL; skip them
+    # when no admitted row reads them (prompt-only search admits none).
+    wanted = admitted_root_keys(
+        "claude",
+        store_roles,
+        include_non_default=include_non_default,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+    )
+    desktop_dirs = claude_desktop_dirs(home) if wanted & {"claude_desktop", "claude_cowork"} else ()
+    if not local_roots and not desktop_dirs:
         return []
-    roots: dict[str, DiscoveryRoot] = {"default": root}
-    if include_non_default:
+    roots: dict[str, DiscoveryRoot] = {
+        "default": local_roots,
+        "claude_desktop": desktop_dirs,
+        "claude_cowork": claude_cowork_roots(desktop_dirs) if "claude_cowork" in wanted else (),
+    }
+    if include_non_default and local_roots:
         roots["claude_project"] = _claude_project_roots(root, backends)
     return discover_from_catalog(
         home,
@@ -1211,6 +1286,95 @@ def discover_claude_sources(
         store_roles=store_roles,
         allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
     )
+
+
+def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
+    """Return the Claude desktop app-data directories that exist.
+
+    The desktop app keeps its local agent-mode ("Cowork") sessions and its
+    Code-tab session index in its app-data directory:
+    ``~/Library/Application Support/Claude`` on macOS, ``%APPDATA%/Claude``
+    on Windows, and ``$XDG_CONFIG_HOME/Claude`` on Linux. Every location is
+    probed regardless of platform so one tree can be tested anywhere; on WSL
+    each Windows profile's ``%APPDATA%/Claude`` is added.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        Home directory to resolve the native locations against.
+
+    Returns
+    -------
+    tuple[pathlib.Path, ...]
+        Existing directories, native locations first.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> from agentgrep.discovery import claude_desktop_dirs
+    >>> home = pathlib.Path(tempfile.mkdtemp())
+    >>> claude_desktop_dirs(home)
+    ()
+    >>> _ = (home / "Library" / "Application Support" / "Claude").mkdir(parents=True)
+    >>> [path.relative_to(home).as_posix() for path in claude_desktop_dirs(home)]
+    ['Library/Application Support/Claude']
+    """
+    xdg_config = pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
+    candidates: list[pathlib.Path] = [
+        home / "Library" / "Application Support" / "Claude",
+        home / "AppData" / "Roaming" / "Claude",
+        xdg_config / "Claude",
+    ]
+    candidates.extend(
+        path for profile in wsl.host_user_profiles() for path in profile.app_dirs("Claude")
+    )
+    found: list[pathlib.Path] = []
+    for candidate in dict.fromkeys(candidates):
+        try:
+            if candidate.is_dir():
+                found.append(candidate)
+        except OSError:
+            continue
+    return tuple(found)
+
+
+def claude_cowork_roots(desktop_dirs: tuple[pathlib.Path, ...]) -> tuple[pathlib.Path, ...]:
+    """Return the Claude Code home of each Claude desktop Cowork session.
+
+    Cowork runs Claude Code once per session with its own home at
+    ``local-agent-mode-sessions/<account>/<org>/<session>/.claude``. Those
+    homes hold ordinary Claude Code transcripts; ``audit.jsonl`` and
+    ``.audit-key`` sit one level up, outside the home, and are never read.
+
+    Parameters
+    ----------
+    desktop_dirs : tuple[pathlib.Path, ...]
+        Claude desktop app-data directories from :func:`claude_desktop_dirs`.
+
+    Returns
+    -------
+    tuple[pathlib.Path, ...]
+        Session ``.claude`` directories, sorted per desktop directory.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> from agentgrep.discovery import claude_cowork_roots
+    >>> app = pathlib.Path(tempfile.mkdtemp())
+    >>> home = app / "local-agent-mode-sessions" / "acct" / "org" / "local_s1" / ".claude"
+    >>> home.mkdir(parents=True)
+    >>> [path.relative_to(app).as_posix() for path in claude_cowork_roots((app,))]
+    ['local-agent-mode-sessions/acct/org/local_s1/.claude']
+    """
+    roots: list[pathlib.Path] = []
+    for desktop in desktop_dirs:
+        sessions = desktop / "local-agent-mode-sessions"
+        try:
+            homes = sorted(sessions.glob("*/*/*/.claude"))
+        except OSError:
+            continue
+        roots.extend(home for home in homes if home.is_dir())
+    return tuple(roots)
 
 
 def discover_cursor_cli_sources(

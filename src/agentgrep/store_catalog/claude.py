@@ -235,6 +235,119 @@ _CLAUDE_STORES: tuple[StoreDescriptor, ...] = (
     ),
     StoreDescriptor(
         agent="claude",
+        store_id="claude.cowork.session",
+        role=StoreRole.PRIMARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+            "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+            "<session_uuid>.jsonl"
+        ),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+                "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+                "<session_uuid>.jsonl"
+            ),
+            "win32": (
+                "%APPDATA%/Claude/local-agent-mode-sessions/<account_uuid>/<org_uuid>/"
+                "<session>/.claude/projects/<encoded_project>/<session_uuid>.jsonl"
+            ),
+        },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Claude desktop local agent-mode (Cowork) transcript. Cowork runs "
+            "Claude Code once per session with its own home at "
+            "`local-agent-mode-sessions/<account>/<org>/<session>/.claude`, where "
+            "`<session>` is `local_<uuid>` or eight hex characters, so the lines "
+            "are the Claude Code project format read by `claude.projects.session`. "
+            "The session's `audit.jsonl` (snake_case audit copy of the same turns) "
+            "and `.audit-key` (key material) sit one level above the home and are "
+            "never read; the sibling `local_<uuid>.json` metadata carries account "
+            "fields (`accountName`, `emailAddress`) and is not indexed. On WSL the "
+            "Windows-side `%APPDATA%/Claude` of every profile is searched."
+        ),
+        distinguishes_from=("claude.projects.session",),
+        search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.EMBEDDED_METADATA,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        search_notes=(
+            "Searched as `claude.projects`, so Cowork prompts group and "
+            "de-duplicate with Claude Code transcripts by session."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects",
+                adapter_id="claude.projects_jsonl.v1",
+                data_version="claude.projects_jsonl.message.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                root_key="claude_cowork",
+                home_subpath=("projects",),
+                glob="*.jsonl",
+                path_parts_excluded=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
+        store_id="claude.cowork.subagent",
+        role=StoreRole.SUPPLEMENTARY_CHAT,
+        format=StoreFormat.JSONL,
+        path_pattern=(
+            "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+            "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+            "<session_uuid>/subagents/<agent>.jsonl"
+        ),
+        platform_variants={
+            "darwin": (
+                "${HOME}/Library/Application Support/Claude/local-agent-mode-sessions/"
+                "<account_uuid>/<org_uuid>/<session>/.claude/projects/<encoded_project>/"
+                "<session_uuid>/subagents/<agent>.jsonl"
+            ),
+            "win32": (
+                "%APPDATA%/Claude/local-agent-mode-sessions/<account_uuid>/<org_uuid>/"
+                "<session>/.claude/projects/<encoded_project>/<session_uuid>/subagents/"
+                "<agent>.jsonl"
+            ),
+        },
+        env_overrides=("AGENTGREP_WSL_USERS_ROOT",),
+        observed_version=_CLAUDE_OBSERVED_VERSION,
+        observed_at=_CLAUDE_OBSERVED_AT,
+        schema_notes=(
+            "Sub-agent transcript of a Claude desktop Cowork session, in the same "
+            "JSONL line format as the parent; older files also carry `progress` "
+            "lines. A sibling `agent-<id>.meta.json` holds `agentType`, "
+            "`description`, and `toolUseId`."
+        ),
+        distinguishes_from=("claude.cowork.session", "claude.projects.subagent"),
+        search_by_default=True,
+        version_strategies=(
+            VersionDetectionStrategy.EMBEDDED_METADATA,
+            VersionDetectionStrategy.SHAPE_INFERENCE,
+            VersionDetectionStrategy.CATALOG_OBSERVATION,
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="claude.projects_subagents",
+                adapter_id="claude.projects_jsonl.v1",
+                data_version="claude.projects_jsonl.message.v1",
+                path_kind="session_file",
+                source_kind="jsonl",
+                root_key="claude_cowork",
+                home_subpath=("projects",),
+                glob="*.jsonl",
+                path_parts_required=("subagents",),
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="claude",
         store_id="claude.projects.memory",
         role=StoreRole.PERSISTENT_MEMORY,
         format=StoreFormat.MARKDOWN_FRONTMATTER,

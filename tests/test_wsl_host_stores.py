@@ -16,7 +16,8 @@ import pytest
 
 from agentgrep import wsl
 from agentgrep._text import format_display_path
-from agentgrep.records import BackendSelection
+from agentgrep.discovery import discover_sources
+from agentgrep.records import AgentName, BackendSelection, SourceHandle
 
 _NO_BACKENDS = BackendSelection(find_tool=None, grep_tool=None, json_tool=None)
 _WINDOWS_USER = "windows-account-name"
@@ -91,6 +92,36 @@ def host_tree(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> HostTr
     monkeypatch.setenv(wsl.USERS_ROOT_ENV, str(users))
     monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
     return HostTree(home=home, profile=profile)
+
+
+def _discover(tree: HostTree, agent: AgentName) -> list[SourceHandle]:
+    return discover_sources(tree.home, (agent,), _NO_BACKENDS, include_non_default=True)
+
+
+class StoreCase(t.NamedTuple):
+    """One file and whether discovery must reach it."""
+
+    test_id: str
+    agent: AgentName
+    file_name: str
+    store: str
+    expected_count: int
+
+
+STORE_CASES: tuple[StoreCase, ...] = (
+    StoreCase("cowork-on-windows-host", "claude", "cowork-1.jsonl", "claude.projects", 1),
+    StoreCase("cowork-on-macos", "claude", "cowork-mac.jsonl", "claude.projects", 1),
+    StoreCase("cowork-audit-log-skipped", "claude", "audit.jsonl", "claude.projects", 0),
+)
+
+
+@pytest.mark.parametrize("case", STORE_CASES, ids=[case.test_id for case in STORE_CASES])
+def test_windows_host_store_discovery(host_tree: HostTree, case: StoreCase) -> None:
+    """Discovery reaches Windows-side and desktop stores and skips copies and service profiles."""
+    sources = _discover(host_tree, case.agent)
+    matches = [s for s in sources if s.path.name == case.file_name and s.store == case.store]
+    assert len(matches) == case.expected_count
+    assert not any(_WINDOWS_USER in format_display_path(s.path) for s in sources)
 
 
 def test_display_form_resolves_to_its_own_profile(host_tree: HostTree) -> None:
