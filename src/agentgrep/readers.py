@@ -971,8 +971,8 @@ def list_files_matching(
 
     ``should_stop`` ends a walk early: it terminates a running ``fd`` and is
     checked between entries of the Python fallback, so an abandoned discovery
-    pass stops walking a slow mount mid-tree. A stopped walk returns what it
-    found so far.
+    pass stops walking a slow mount mid-tree. A stopped walk returns ``[]``
+    from either path, never a partial listing.
     """
     if not root.exists():
         return []
@@ -1004,11 +1004,11 @@ def _collect_files(
     paths: cabc.Iterable[pathlib.Path],
     should_stop: cabc.Callable[[], bool] | None,
 ) -> list[pathlib.Path]:
-    """Return the files among ``paths``, sorted, stopping once ``should_stop()`` is true."""
+    """Return the files among ``paths``, sorted, or ``[]`` once ``should_stop()`` is true."""
     found: list[pathlib.Path] = []
     for path in paths:
         if should_stop is not None and should_stop():
-            break
+            return []
         if path.is_file():
             found.append(path)
     return sorted(found)
