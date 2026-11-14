@@ -42,6 +42,121 @@ $ uvx --from 'agentgrep' --prerelease allow python
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
 
+### Dependencies
+
+#### Brotli (#185)
+
+agentgrep now depends on `brotli>=1.2.1`, which decodes the compressed
+responses in ChatGPT desktop's HTTP cache. It is imported only when such a
+response is read.
+
+### What's new
+
+#### Windows-side history is searched from WSL (#185)
+
+On WSL, agentgrep also searches the agents installed on Windows: each Windows
+profile's Claude Code, Codex, and Cursor homes join the search, beside the
+VS Code and Cursor IDE stores it already read there, and the copies Claude
+desktop keeps of WSL-distro transcripts are read once. Listing the Windows side
+takes no longer than before. To leave it out, point `AGENTGREP_WSL_USERS_ROOT`
+at a missing directory.
+
+A path inside a Windows profile prints as `%USERPROFILE%/…`, `%APPDATA%/…`, or
+`%LOCALAPPDATA%/…` instead of naming the account, as does a working directory
+recorded on Windows or inside WSL, on any drive. A printed path pasted into a
+`path:` or `cwd:` query matches, so `path:%USERPROFILE%` keeps only the
+Windows-side results and `NOT path:%USERPROFILE%` drops them. See
+{ref}`backends-windows` for details.
+
+#### Claude desktop Cowork sessions are searched (#185)
+
+The Claude desktop app keeps the Claude Code transcripts of its local
+agent-mode ("Cowork") sessions in its own directory, which no search reached.
+They are now searched with Claude Code's transcripts on macOS, Windows, and
+Linux, and from WSL, and a `--scope all` search also finds each session by its
+first message and title. See {ref}`backend-claude-desktop` for details.
+
+#### Claude desktop Code-tab sessions are found by title (#185)
+
+A `--scope all` search finds each Code-tab session by its title or any earlier
+title, so a renamed session is still found. The result carries the session's
+model and working directory and groups with the session's transcript. See
+{ref}`backend-claude-desktop` for details.
+
+#### ChatGPT desktop titles and scheduled prompts are searched (#185)
+
+`chatgpt` is a new `--agent` choice. ChatGPT desktop keeps no message text on
+disk, but its Windows app caches the conversation list, each project's
+conversation list, and the scheduled-task list, and a conversation-scope search
+finds each cached conversation by title and each scheduled task by its prompt:
+
+```console
+$ agentgrep search --agent chatgpt --scope conversations deploy
+```
+
+The macOS app's conversation files are encrypted with a key only OpenAI's own
+code can read, so {tooliconl}`find` and the `agentgrep://sources` resource list
+them as catalog-only rather than search them. See {ref}`backend-chatgpt` for
+details.
+
+#### Codex pasted attachments and newer memories are searched (#185)
+
+A `--scope all` or `--scope conversations` search reads the text the Codex
+desktop app keeps out of a turn (pasted text and goal text under
+`attachments/`), and exhaustive or broad-scope search reads the `memories_v2`
+directory like `memories`.
+
+#### Windows host paths in Python (#185)
+
+{mod}`agentgrep.wsl` gives Windows-side locations a type:
+{class}`~agentgrep.wsl.WSLHostPath`, a {class}`pathlib.PosixPath` that opens and
+compares like any path while its `repr()` hides the account name, plus the
+{class}`~agentgrep.wsl.WSLHostUserProfile`, {class}`~agentgrep.wsl.WSLHostAppData`,
+and {class}`~agentgrep.wsl.WSLHost` lookups. See {ref}`library-examples-wsl`
+for details.
+
+#### Library discovery can be stopped (#185)
+
+{func}`~agentgrep.discovery.discovery_stop` ends a discovery walk early once a
+caller's check says so, and {func}`~agentgrep.discovery.discover_in_thread` runs
+discovery in a worker thread that stops when the awaiting task is cancelled,
+the way the MCP server runs its discovery tools.
+
+#### Windows locations for every backend (#185)
+
+The storage catalogue records the Windows path of the Gemini CLI, Grok, Pi,
+OpenCode, and Antigravity CLI stores, and documents Claude desktop's logs and
+claude.ai chat cache, which are not searched. See {ref}`backends-windows` for
+details.
+
+### Fixes
+
+#### Cancelled MCP discovery calls stop walking (#185)
+
+Cancelling an MCP {tooliconl}`find`, {tooliconl}`list_sources`,
+{tooliconl}`filter_sources`, {tooliconl}`summarize_discovery`,
+{tooliconl}`recent_sessions`, {tooliconl}`inspect_result`, or
+{tooliconl}`inspect_record_sample` call, or an `agentgrep://sources` read,
+returned at once but left the filesystem walk running to the end. The walk now
+stops too.
+
+#### Paths no longer name an account (#185)
+
+Claude Code, Cursor, and Grok name project folders after the working
+directory, so result paths carried the account name inside folder names such as
+`-home-<user>-work`, and a working directory in another account's home printed
+in full. The home now prints as `~` in every encoded form (`-~-work`,
+`~%2Fwork`) and in another account's paths, and a Windows account as
+`%USERNAME%`; a printed path copied into a `path:` query or an MCP ref still
+resolves.
+
+#### `PrivatePath` names the real file on Python 3.14 (#185)
+
+On Python 3.14, {func}`os.fspath` of a {class}`~agentgrep.PrivatePath` returned
+its display form (`~/…`), so `open()` on one opened a path relative to the
+working directory, and it never compared equal to the plain path of the same
+file. Both now use the real path.
+
 ## agentgrep 0.1.0a54 (2026-10-25)
 
 agentgrep 0.1.0a54 reads more of what agents store. Claude Code transcript
