@@ -51,6 +51,7 @@ import hashlib
 import hmac
 import os
 import pathlib
+import re
 
 USERS_ROOT_ENV = "AGENTGREP_WSL_USERS_ROOT"
 """Environment variable that pins the Windows users directory seen from WSL.
@@ -71,6 +72,15 @@ APPDATA = "%APPDATA%"
 
 LOCALAPPDATA = "%LOCALAPPDATA%"
 """Display token for ``%USERPROFILE%/AppData/Local``."""
+
+USERNAME = "%USERNAME%"
+"""Display token for the Windows account name inside an encoded folder name.
+
+Agents name project folders after the working directory with separators
+replaced by dashes, so a project under the profile becomes
+``C--Users-<name>-work-demo`` (Claude Code) or ``C-Users-<name>-...``
+(Cursor); the account name in such a segment is shown as this token.
+"""
 
 _SERVICE_PROFILES = frozenset({"all users", "default", "default user", "public"})
 """Profiles Windows creates for itself under ``C:\\Users``, compared casefolded."""
@@ -229,12 +239,27 @@ def host_user_profiles(
     return tuple(profiles)
 
 
+def _redact_account(segment: str, profile: str) -> str:
+    """Replace ``Users-<profile>`` in an encoded folder name with ``Users-%USERNAME%``."""
+    if profile.casefold() not in segment.casefold():
+        return segment
+    pattern = re.compile(rf"(?<=Users-){re.escape(profile)}(?=-|$)", re.IGNORECASE)
+    return pattern.sub(USERNAME, segment)
+
+
+def _restore_account(segment: str, profile: str) -> str:
+    """Invert :func:`_redact_account` for one profile."""
+    return segment.replace(USERNAME, profile)
+
+
 def display_host_path(path: str | os.PathLike[str]) -> str | None:
     """Rewrite a path inside a Windows profile to its Windows-variable form.
 
     The profile prefix becomes ``%APPDATA%`` for ``AppData/Roaming``,
     ``%LOCALAPPDATA%`` for ``AppData/Local``, and ``%USERPROFILE%`` for the
-    rest of the profile, so the Windows account name never reaches output.
+    rest of the profile. The account name inside an encoded project folder
+    (``C--Users-<name>-work``) becomes ``%USERNAME%``, so the Windows account
+    name never reaches output.
     The match is a string prefix test against :func:`users_root`; it touches
     no files.
 
@@ -261,6 +286,7 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     ...         "/mnt/c/Users/someone/AppData/Roaming/Code/User",
     ...         "/mnt/c/Users/someone/AppData/Local/Packages",
     ...         "/mnt/c/Users/someone/.claude/projects",
+    ...         "/mnt/c/Users/someone/.claude/projects/C--Users-someone-work/s.jsonl",
     ...         "/mnt/c/Users/Public/Documents",
     ...         "/home/someone/.claude",
     ...     ):
@@ -268,6 +294,7 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     %APPDATA%/Code/User
     %LOCALAPPDATA%/Packages
     %USERPROFILE%/.claude/projects
+    %USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/s.jsonl
     None
     None
     """
@@ -278,7 +305,7 @@ def display_host_path(path: str | os.PathLike[str]) -> str | None:
     profile, _, tail = text[len(root) + 1 :].partition("/")
     if not profile or profile.casefold() in _SERVICE_PROFILES:
         return None
-    parts = tail.split("/") if tail else []
+    parts = [_redact_account(part, profile) for part in tail.split("/")] if tail else []
     if len(parts) >= 2 and parts[0].casefold() == "appdata":
         area = parts[1].casefold()
         if area == "roaming":
@@ -415,7 +442,10 @@ def host_display_candidates(
         if text == token or text.startswith(f"{token}/"):
             tail = [part for part in text[len(token) :].split("/") if part]
             return tuple(
-                profile.path.joinpath(*parts, *tail)
+                profile.path.joinpath(
+                    *parts,
+                    *(_restore_account(part, profile.path.name) for part in tail),
+                )
                 for profile in host_user_profiles(require_wsl=False)
                 if profile_key is None or host_profile_key(profile) == profile_key
             )
@@ -692,6 +722,7 @@ __all__ = (
     "APPDATA",
     "DEFAULT_MOUNT_ROOT",
     "LOCALAPPDATA",
+    "USERNAME",
     "USERPROFILE",
     "USERS_ROOT_ENV",
     "WSLHost",

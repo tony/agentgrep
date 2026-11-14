@@ -54,7 +54,10 @@ def host_tree(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> HostTr
     _write_transcript(home / ".claude/projects/-work-demo/local-1.jsonl", "local-1")
     _write_transcript(profile / ".claude/projects/ssh-a1/local-1.jsonl", "local-1")
     _write_transcript(profile / ".claude/projects/ssh-a1/remote-only.jsonl", "remote-only")
-    _write_transcript(profile / ".claude/projects/C--Users-x-work/windows-1.jsonl", "windows-1")
+    _write_transcript(
+        profile / f".claude/projects/C--Users-{_WINDOWS_USER}-work/windows-1.jsonl",
+        "windows-1",
+    )
     _write_transcript(profile / f"{_COWORK}/.claude/projects/-sessions-demo/cowork-1.jsonl", "c1")
     _write_transcript(profile / f"{_COWORK}/audit.jsonl", "audit")
     _write_transcript(
@@ -214,3 +217,13 @@ def test_chatgpt_desktop_is_listed_but_never_searched(host_tree: HostTree) -> No
     assert {s.coverage for s in listed} == {StoreCoverage.CATALOG_ONLY}
     assert not any(_WINDOWS_USER in format_display_path(s.path) for s in listed)
     assert discover_sources(host_tree.home, ("chatgpt",), _NO_BACKENDS) == []
+
+
+def test_encoded_folder_hides_the_account_and_resolves(host_tree: HostTree) -> None:
+    """An encoded project folder shows %USERNAME% and maps back to the real file."""
+    transcript = (
+        host_tree.profile / f".claude/projects/C--Users-{_WINDOWS_USER}-work/windows-1.jsonl"
+    )
+    display = format_display_path(transcript)
+    assert display == "%USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/windows-1.jsonl"
+    assert wsl.host_display_candidates(display) == (transcript,)

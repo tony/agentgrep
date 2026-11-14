@@ -42,6 +42,11 @@ variable that names it, the way a Linux path under your home starts with
 | `/mnt/c/Users/<name>/AppData/Roaming/Claude/...` | `%APPDATA%/Claude/...` |
 | `/mnt/c/Users/<name>/AppData/Local/Packages/...` | `%LOCALAPPDATA%/Packages/...` |
 | `/mnt/c/Users/<name>/.codex/sessions/...` | `%USERPROFILE%/.codex/sessions/...` |
+| `/mnt/c/Users/<name>/.claude/projects/C--Users-<name>-work/...` | `%USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/...` |
+
+Agents name project folders after the working directory, so a project under
+the profile carries the account name in its folder name; that part is shown as
+`%USERNAME%`.
 
 The rewrite applies to text, JSON, NDJSON, the TUI, and MCP results.
 Opaque result refs still open the real file.
