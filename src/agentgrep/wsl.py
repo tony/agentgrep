@@ -61,6 +61,7 @@ import pathlib
 import re
 import threading
 import typing as t
+import urllib.parse
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -294,17 +295,37 @@ def known_profile_names() -> tuple[str, ...]:
     return _known_profile_names_sorted
 
 
+def encoded_account_forms(name: str) -> tuple[str, str]:
+    """Return how agents write account ``name`` into folder names: dashed and URL-quoted.
+
+    Claude Code and Cursor turn every character outside ``[A-Za-z0-9]`` into
+    ``-``; Grok URL-quotes the working directory.
+
+    Examples
+    --------
+    >>> from agentgrep.wsl import encoded_account_forms
+    >>> encoded_account_forms("John Smith")
+    ('John-Smith', 'John%20Smith')
+    >>> encoded_account_forms("jo.hn")
+    ('jo-hn', 'jo.hn')
+    """
+    return re.sub(r"[^A-Za-z0-9]", "-", name), urllib.parse.quote(name, safe="")
+
+
 def _redact_account(segment: str, profile: str) -> str:
     """Replace ``Users-<profile>`` in an encoded folder name with ``Users-%USERNAME%``."""
-    if profile.casefold() not in segment.casefold():
+    forms = sorted({profile, encoded_account_forms(profile)[0]}, key=len, reverse=True)
+    if not any(form.casefold() in segment.casefold() for form in forms):
         return segment
-    pattern = re.compile(rf"(?<=Users-){re.escape(profile)}(?=-|$)", re.IGNORECASE)
+    alternatives = "|".join(re.escape(form) for form in forms)
+    pattern = re.compile(rf"(?<=Users-)(?:{alternatives})(?=-|$)", re.IGNORECASE)
     return pattern.sub(USERNAME, segment)
 
 
 def _restore_account(segment: str, profile: str) -> str:
-    """Invert :func:`_redact_account` for one profile."""
-    return segment.replace(USERNAME, profile)
+    """Invert :func:`_redact_account` for one profile, back to the dashed form on disk."""
+    dashed = encoded_account_forms(profile)[0]
+    return segment.replace(f"Users-{USERNAME}", f"Users-{dashed}").replace(USERNAME, profile)
 
 
 def display_host_path(path: str | os.PathLike[str]) -> str | None:
@@ -791,6 +812,7 @@ __all__ = (
     "WSLHostPath",
     "WSLHostUserProfile",
     "display_host_path",
+    "encoded_account_forms",
     "host_display_candidates",
     "host_profile_key",
     "host_user_profiles",

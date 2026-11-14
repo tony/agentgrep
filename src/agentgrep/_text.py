@@ -23,7 +23,7 @@ import urllib.parse
 
 from rich.text import Text as _RichText
 
-from agentgrep.wsl import USERNAME, display_host_path, known_profile_names
+from agentgrep.wsl import USERNAME, display_host_path, encoded_account_forms, known_profile_names
 
 if t.TYPE_CHECKING:
     import collections.abc as cabc
@@ -605,15 +605,41 @@ def _home_replacements(home: str) -> tuple[tuple[str, str], ...]:
     )
 
 
+_QUOTED_SEPARATORS = ("%2F", "%5C")
+"""URL-quoted path separators: ``/`` on Linux and macOS, ``\\`` on Windows."""
+
+
+def _alternatives(forms: cabc.Iterable[str]) -> str:
+    """Join ``forms`` into a regex alternation, longest first so a prefix never wins."""
+    return "|".join(re.escape(form) for form in sorted(set(forms), key=len, reverse=True))
+
+
 @functools.lru_cache(maxsize=8)
 def _account_pattern(names: tuple[str, ...]) -> re.Pattern[str] | None:
-    """Match a Windows account name encoded after ``Users-`` or ``Users%2F``."""
+    """Match a Windows account name encoded after ``Users-`` or a quoted ``Users/``.
+
+    Each name is matched as written and in the form agents encode it: dashed
+    after ``Users-`` (``John Smith`` as ``John-Smith``), URL-quoted after
+    ``Users%2F`` or ``Users%5C``.
+    """
     if not names:
         return None
-    accounts = "|".join(re.escape(name) for name in names)
+    dashed = _alternatives([*names, *(encoded_account_forms(name)[0] for name in names)])
+    quoted = _alternatives([*names, *(encoded_account_forms(name)[1] for name in names)])
+    end = r"(?=-|%2F|%5C|/|$)"
     return re.compile(
-        rf"(?<=Users-)(?i:{accounts})(?=-|%2F|/|$)|(?<=Users%2F)(?i:{accounts})(?=-|%2F|/|$)",
+        rf"(?<=Users-)(?i:{dashed}){end}|(?<=Users%2F)(?i:{quoted}){end}"
+        rf"|(?<=Users%5C)(?i:{quoted}){end}",
     )
+
+
+def _restore_account_name(text: str, name: str) -> str:
+    """Put account ``name`` back in each ``%USERNAME%``, in that spot's encoded form."""
+    dashed, quoted = encoded_account_forms(name)
+    restored = text.replace(f"Users-{USERNAME}", f"Users-{dashed}")
+    for separator in _QUOTED_SEPARATORS:
+        restored = restored.replace(f"Users{separator}{USERNAME}", f"Users{separator}{quoted}")
+    return restored.replace(USERNAME, name)
 
 
 def redact_encoded_paths(text: str, home: str | None = None) -> str:
@@ -683,7 +709,7 @@ def restore_encoded_paths(text: str, home: str | None = None) -> tuple[str, ...]
     if USERNAME in restored:
         names = known_profile_names()
         if names:
-            return tuple(restored.replace(USERNAME, name) for name in names)
+            return tuple(_restore_account_name(restored, name) for name in names)
     return (restored,)
 
 

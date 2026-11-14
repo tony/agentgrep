@@ -848,3 +848,57 @@ def test_find_skips_mtime_stats_it_never_uses(
     ]
     assert found
     assert bool(calls) is stats_windows
+
+
+class EncodedAccountCase(t.NamedTuple):
+    """A Windows profile name agents re-encode, and one folder name that carries it."""
+
+    test_id: str
+    profile: str
+    folder: str
+
+
+ENCODED_ACCOUNT_CASES: tuple[EncodedAccountCase, ...] = (
+    EncodedAccountCase(
+        test_id="space-dashed", profile="John Smith", folder="C--Users-John-Smith-w"
+    ),
+    EncodedAccountCase(test_id="dot-dashed", profile="jo.hn", folder="C--Users-jo-hn-w"),
+    EncodedAccountCase(
+        test_id="space-quoted-windows-grok",
+        profile="John Smith",
+        folder="C%3A%5CUsers%5CJohn%20Smith%5Cw",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    list(EncodedAccountCase._fields),
+    ENCODED_ACCOUNT_CASES,
+    ids=[case.test_id for case in ENCODED_ACCOUNT_CASES],
+)
+def test_reencoded_account_name_is_hidden_and_resolves(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    test_id: str,
+    profile: str,
+    folder: str,
+) -> None:
+    """An account name with spaces or dots never prints, however an agent encoded it."""
+    from agentgrep._text import redact_encoded_paths, restore_encoded_paths
+
+    users = tmp_path / "Users"
+    transcript = users / profile / ".claude" / "projects" / folder / "s.jsonl"
+    _write_transcript(transcript, "s")
+    monkeypatch.setenv(wsl.USERS_ROOT_ENV, str(users))
+    monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
+    assert wsl.host_user_profiles()
+    display = format_display_path(transcript)
+    assert "%USERNAME%" in display
+    assert profile not in display
+    assert wsl.encoded_account_forms(profile)[0] not in display
+    if "%5C" not in folder:
+        assert wsl.host_display_candidates(display) == (transcript,)
+    linux_side = f"/home/u/.grok/sessions/{folder}/h.jsonl"
+    redacted = redact_encoded_paths(linux_side, "/home/u")
+    assert "%USERNAME%" in redacted
+    assert linux_side in restore_encoded_paths(redacted, "/home/u")
