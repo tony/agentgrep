@@ -922,6 +922,26 @@ def test_one_profile_listing_per_pass(
     assert len(calls) == 1
 
 
+def test_profile_key_without_machine_id_is_not_guessable(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a machine id, a profile key uses a random secret, not a fixed guessable one."""
+    import hashlib
+    import hmac
+
+    monkeypatch.setattr(wsl, "_MACHINE_IDS", (tmp_path / "missing-machine-id",))
+    monkeypatch.setenv(wsl.USERS_ROOT_ENV, "/mnt/c/Users")
+    wsl._profile_key_secret.cache_clear()
+    try:
+        key = wsl.host_profile_key("/mnt/c/Users/someone/.codex/history.jsonl")
+    finally:
+        wsl._profile_key_secret.cache_clear()
+    guess = hmac.new(b"agentgrep", b"someone", hashlib.sha256).hexdigest()[:16]
+    assert key is not None
+    assert key != guess
+
+
 class FindStatCase(t.NamedTuple):
     """A find query and whether discovery must stat Windows-side files for it."""
 

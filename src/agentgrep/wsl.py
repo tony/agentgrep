@@ -452,16 +452,25 @@ _DISPLAY_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-_MACHINE_ID = pathlib.Path("/etc/machine-id")
+_MACHINE_IDS = (pathlib.Path("/etc/machine-id"), pathlib.Path("/var/lib/dbus/machine-id"))
 
 
 @functools.lru_cache(maxsize=1)
 def _profile_key_secret() -> bytes:
-    """Return the per-machine key for :func:`host_profile_key`."""
-    try:
-        return _MACHINE_ID.read_bytes().strip() or b"agentgrep"
-    except OSError:
-        return b"agentgrep"
+    """Return the key for :func:`host_profile_key`: the machine id, else a per-process secret.
+
+    A fixed fallback would let anyone holding a key test account names
+    against it, so a machine without an id gets a random key, and its keys
+    hold only for the life of the process.
+    """
+    for path in _MACHINE_IDS:
+        try:
+            secret = path.read_bytes().strip()
+        except OSError:
+            continue
+        if secret:
+            return secret
+    return os.urandom(32)
 
 
 def host_profile_key(path: str | os.PathLike[str]) -> str | None:
@@ -469,9 +478,11 @@ def host_profile_key(path: str | os.PathLike[str]) -> str | None:
 
     The display form drops the profile, so two profiles' copies of the same
     relative file print the same. This key tells them apart without naming
-    the account: it is an HMAC of the casefolded profile name keyed by
-    ``/etc/machine-id``, so it is stable on one machine and cannot be
-    reversed by guessing account names elsewhere.
+    the account: it is an HMAC of the casefolded profile name keyed by the
+    machine id (``/etc/machine-id``), so it is stable on one machine and
+    cannot be reversed by guessing account names elsewhere. Without a
+    machine id the key is random per process, so a ref made by one process
+    does not resolve in another.
 
     Parameters
     ----------
