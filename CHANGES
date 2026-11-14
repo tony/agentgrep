@@ -49,9 +49,10 @@ $ uvx --from 'agentgrep' --prerelease allow python
 On WSL, agentgrep also searches the agents installed on Windows: each Windows
 profile's Claude Code, Codex, and Cursor homes join the search, beside the
 VS Code and Cursor IDE stores it already read there. A path inside a Windows
-profile prints as `%USERPROFILE%/…`, `%APPDATA%/…`, or `%LOCALAPPDATA%/…`
-instead of naming the Windows account, and a printed path pasted into a
-`path:` query matches. The copies Claude desktop keeps of WSL-distro
+profile prints as `%USERPROFILE%/…`, `%APPDATA%/…`, or `%LOCALAPPDATA%/…`, and
+the account name inside an encoded project folder as `%USERNAME%`, so output
+never names the Windows account; a printed path pasted into a `path:` query
+matches. The copies Claude desktop keeps of WSL-distro
 transcripts are read once. See {ref}`backends-windows` for details.
 
 #### Claude desktop Cowork transcripts are searched (#185)
