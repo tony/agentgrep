@@ -456,6 +456,13 @@ def _cowork_homes(root: pathlib.Path) -> int:
     return len(claude_cowork_roots((root,)))
 
 
+def _cowork_orgs(root: pathlib.Path) -> int:
+    """Count the Cowork organisation directories two levels under the sessions root."""
+    from agentgrep import discovery
+
+    return len(discovery._child_dirs(root / "local-agent-mode-sessions", depth=2))
+
+
 def _windows_profiles(root: pathlib.Path) -> int:
     """Count the Windows profiles discovery lists under the users root."""
     from agentgrep import discovery
@@ -502,6 +509,12 @@ STOP_WALK_CASES: tuple[StopWalkCase, ...] = (
         test_id="cowork-session-scan",
         entry="local-agent-mode-sessions/a/o/local_{index}/.claude/s.jsonl",
         count=_cowork_homes,
+        stop_after=5,
+    ),
+    StopWalkCase(
+        test_id="cowork-account-scan",
+        entry="local-agent-mode-sessions/a{index}/o/marker",
+        count=_cowork_orgs,
         stop_after=5,
     ),
     StopWalkCase(
@@ -833,6 +846,48 @@ async def test_cancelled_discovery_thread_stops_the_windows_walk(
     release.set()
     assert await asyncio.to_thread(finished.wait, 5), "the cancelled walk never returned"
     assert len(calls) <= discovery._SLOW_MOUNT_STAT_WORKERS
+
+
+@pytest.mark.mcp
+@pytest.mark.slow  # builds the MCP server and opens one client session (about 2 s)
+async def test_mcp_discovery_walks_where_a_cancel_reaches(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every MCP tool and resource that walks the Windows side runs under a stop check.
+
+    The walk gets a stop check only inside ``discover_in_thread``; a tool moved
+    back to ``asyncio.to_thread`` would keep walking the mount after a cancel.
+    """
+    from fastmcp import Client
+
+    from agentgrep.mcp.server import build_mcp_server
+
+    stoppable: dict[str, bool] = {}
+    current = [""]
+    real_listing = wsl.host_user_profiles
+
+    def listing(*args: t.Any, **kwargs: t.Any) -> tuple[wsl.WSLHostUserProfile, ...]:
+        stoppable.setdefault(current[0], kwargs.get("should_stop") is not None)
+        return real_listing(*args, **kwargs)
+
+    monkeypatch.setattr(wsl, "host_user_profiles", listing)
+    monkeypatch.setenv("HOME", str(host_tree.home))
+    claude: dict[str, t.Any] = {"agent": "claude"}
+    tools = {
+        "find": claude,
+        "list_sources": claude,
+        "filter_sources": {**claude, "pattern": "claude"},
+        "summarize_discovery": claude,
+        "recent_sessions": claude,
+    }
+    async with Client(build_mcp_server()) as client:
+        for name, arguments in tools.items():
+            current[0] = name
+            await client.call_tool(name, arguments)
+        current[0] = "agentgrep://sources"
+        await client.read_resource("agentgrep://sources")
+    assert stoppable == dict.fromkeys((*tools, "agentgrep://sources"), True)
 
 
 def test_one_profile_listing_per_pass(
