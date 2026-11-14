@@ -356,15 +356,17 @@ def _restore_account(segment: str, profile: str) -> str:
 
 
 _DRIVE_PROFILE = re.compile(
-    r"^(?:file:/*|\\\\\?\\)?(?:/?[A-Za-z]:|/[A-Za-z](?=[\\/]))[\\/]+(?i:Users)[\\/]+"
+    r"^(?:file:/*|[\\/]{2}\?[\\/]|/cygdrive)?"
+    r"(?:/?[A-Za-z](?::|%3[Aa])|/[A-Za-z](?=[\\/]))[\\/]+(?i:Users)[\\/]+"
     r"([^\\/]+)(.*)$",
 )
 """A Windows drive path inside a profile, in the spellings agents record.
 
 ``C:\\Users\\<name>``, ``C:/Users/<name>``, ``/c:/Users/<name>`` (a decoded
-``file:`` URI, as VS Code stores workspace folders), ``file:///C:/Users/<name>``,
-``\\\\?\\C:\\Users\\<name>`` (a verbatim path), and ``/c/Users/<name>`` (Git Bash),
-with any run of separators.
+``file:`` URI, as VS Code stores workspace folders), ``file:///C:/Users/<name>``
+and ``file:///c%3A/Users/<name>``, ``\\\\?\\C:\\Users\\<name>`` or ``//?/C:/...`` (a
+verbatim path), ``/c/Users/<name>`` (Git Bash), and
+``/cygdrive/c/Users/<name>`` (Cygwin), with any run of separators.
 """
 
 

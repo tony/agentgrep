@@ -1075,7 +1075,10 @@ def test_reencoded_account_name_is_hidden_and_resolves(
         f"/c:/Users/{profile}/w",
         f"file:///C:/Users/{profile}/w",
         f"\\\\?\\C:\\Users\\{profile}\\w",
+        f"//?/C:/Users/{profile}/w",
+        f"file:///c%3A/Users/{profile}/w",
         f"/c/Users/{profile}/w",
+        f"/cygdrive/c/Users/{profile}/w",
     ):
         assert serialize_record_origin(RecordOrigin(cwd=spelling)) == {"cwd": "%USERPROFILE%/w/"}
     monkeypatch.setattr(wsl, "mount_root", lambda *_: pathlib.PurePosixPath("/mnt"))
