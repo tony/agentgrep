@@ -197,6 +197,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "claude.todos_json.v1",
         "claude.workflow_scripts_text.v1",
         "codex.app_state_json_summary.v1",
+        "codex.attachments_text.v1",
         "codex.config_backup_toml.v1",
         "codex.config_toml.v1",
         "codex.external_imports_json.v1",

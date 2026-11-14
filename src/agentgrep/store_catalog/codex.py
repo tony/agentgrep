@@ -338,12 +338,28 @@ _CODEX_STORES: tuple[StoreDescriptor, ...] = (
             "a top-level `pasted-text-attachments.json` manifest (`attachmentPaths`, "
             "`pendingRemovalPaths`, `textExcerptsByPath`). The directory name is "
             "an attachment id, not a thread id, so an attachment does not name the "
-            "session that used it. Documented; no discovery spec reads it yet. "
-            "Parity with `cursor-cli.uploads`."
+            "session that used it. Parity with `cursor-cli.uploads`."
         ),
         coverage=StoreCoverage.INSPECTABLE,
         search_by_default=False,
+        search_notes=(
+            "Opt-in: each `.txt` or `.md` attachment becomes one record. Images "
+            "are skipped, and the manifest is not read, since its excerpts "
+            "repeat the files."
+        ),
         version_strategies=(VersionDetectionStrategy.CATALOG_OBSERVATION,),
+        discovery=tuple(
+            DiscoverySpec(
+                store="codex.attachments",
+                adapter_id="codex.attachments_text.v1",
+                data_version="codex.attachments.text.v1",
+                path_kind="store_file",
+                source_kind="text",
+                home_subpath=("attachments",),
+                glob=glob,
+            )
+            for glob in ("*.txt", "*.md")
+        ),
     ),
     StoreDescriptor(
         agent="codex",

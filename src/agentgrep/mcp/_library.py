@@ -72,6 +72,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "codex.logs_sqlite.v1",
     "codex.memories_sqlite.v1",
     "codex.memories_text.v1",
+    "codex.attachments_text.v1",
     "codex.goals_sqlite.v1",
     "codex.external_imports_json.v1",
     "codex.instructions_text.v1",

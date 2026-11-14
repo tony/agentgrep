@@ -138,7 +138,11 @@ does not recursively scan `$HOME` for arbitrary `.codex` directories.
 
 `memories/` and `memories_1.sqlite` hold retained memory and rollout
 summaries; the Markdown workspace is inspectable through
-`codex.memories_text.v1`. The external-agent import ledger exposes
+`codex.memories_text.v1`. {storage:storeref}`codex.attachments` holds the
+text the desktop app kept out of a turn (pasted text, goal text), one
+directory per attachment; with `--scope all` or `--scope conversations`,
+each `.txt` or `.md` file is one record, and images and the excerpt manifest are not
+read. The external-agent import ledger exposes
 imported thread ids and source file names for explicit inspection
 without indexing full imported content. Config TOML, managed config,
 environment TOML, config backups, project config,

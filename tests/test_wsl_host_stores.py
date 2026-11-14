@@ -78,6 +78,10 @@ def host_tree(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> HostTr
         profile / ".cursor/projects/p/agent-transcripts/cursor-1/cursor-1.jsonl",
         "cursor-1",
     )
+    attachment = profile / ".codex/attachments/a1/Pasted text.txt"
+    attachment.parent.mkdir(parents=True)
+    attachment.write_text("synthetic pasted text about widgets\n", encoding="utf-8")
+    (attachment.parent / "image-1.png").write_bytes(b"\x89PNG")
     memory = profile / ".codex/memories_v2/memory_summary.md"
     memory.parent.mkdir(parents=True)
     memory.write_text("# Summary\n\nsynthetic memory about widgets\n", encoding="utf-8")
@@ -215,6 +219,20 @@ STORE_CASES: tuple[StoreCase, ...] = (
         file_name="memory_summary.md",
         store="codex.memories_v2",
         expected_count=1,
+    ),
+    StoreCase(
+        test_id="windows-codex-attachment",
+        agent="codex",
+        file_name="Pasted text.txt",
+        store="codex.attachments",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="codex-attachment-image-skipped",
+        agent="codex",
+        file_name="image-1.png",
+        store="codex.attachments",
+        expected_count=0,
     ),
     StoreCase(
         test_id="windows-cursor-transcript",
