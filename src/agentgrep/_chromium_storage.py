@@ -7,8 +7,8 @@ Snappy decompression, LevelDB write-ahead logs (``*.log``) and sorted tables
 
 It never opens a directory through a LevelDB library, so it takes no lock and
 writes nothing. A store the running app is writing may yield a slightly older
-snapshot: a record cut off at the end of a log is skipped, and a file that does
-not parse is skipped whole, keeping what other files hold.
+snapshot: a record cut off at the end of a log is skipped, and a damaged write
+batch or table block is skipped on its own, keeping the rest of the file.
 
 Examples
 --------
@@ -44,6 +44,9 @@ def _varint(data: bytes, pos: int) -> tuple[int, int]:
     result = 0
     shift = 0
     while True:
+        if pos >= len(data):
+            msg = "varint runs past the end of the data"
+            raise ValueError(msg)
         byte = data[pos]
         pos += 1
         result |= (byte & 0x7F) << shift
@@ -80,7 +83,23 @@ def snappy_decompress(data: bytes) -> bytes:
 
     >>> snappy_decompress(b"\x06\x04ab\x01\x02")
     b'ababab'
+
+    A truncated block raises :class:`ValueError`:
+
+    >>> snappy_decompress(b"")
+    Traceback (most recent call last):
+    ...
+    ValueError: varint runs past the end of the data
     """
+    try:
+        return _snappy_decompress(data)
+    except IndexError as exc:
+        msg = "snappy block is truncated"
+        raise ValueError(msg) from exc
+
+
+def _snappy_decompress(data: bytes) -> bytes:
+    """Decompress a Snappy block; :func:`snappy_decompress` maps truncation to ``ValueError``."""
     length, pos = _varint(data, 0)
     out = bytearray()
     end = len(data)
@@ -223,9 +242,13 @@ def _table_entries(raw: bytes) -> cabc.Iterator[_Entry]:
     index_offset, pos = _varint(footer, pos)
     index_size, _ = _varint(footer, pos)
     for _last_key, handle in _block_entries(_read_block(raw, index_offset, index_size)):
-        block_offset, pos = _varint(handle, 0)
-        block_size, _ = _varint(handle, pos)
-        for internal_key, value in _block_entries(_read_block(raw, block_offset, block_size)):
+        try:
+            block_offset, pos = _varint(handle, 0)
+            block_size, _ = _varint(handle, pos)
+            entries = list(_block_entries(_read_block(raw, block_offset, block_size)))
+        except ValueError, IndexError:
+            continue
+        for internal_key, value in entries:
             if len(internal_key) < 8:
                 continue
             trailer = int.from_bytes(internal_key[-8:], "little")
@@ -233,16 +256,19 @@ def _table_entries(raw: bytes) -> cabc.Iterator[_Entry]:
             yield internal_key[:-8], value if is_put else None, trailer >> 8
 
 
-def read_leveldb(directory: pathlib.Path) -> dict[bytes, bytes]:
+def read_leveldb(directory: pathlib.Path, *, key_prefix: bytes = b"") -> dict[bytes, bytes]:
     """Return the live key/value pairs of a LevelDB directory, read-only.
 
     Every ``*.log`` and ``*.ldb`` file is read and the newest entry per key
-    (by sequence number) wins; deleted keys are left out.
+    (by sequence number) wins; deleted keys are left out. Only keys starting
+    with ``key_prefix`` are kept, so memory holds just the entries asked for.
 
     Parameters
     ----------
     directory : pathlib.Path
         A LevelDB directory, such as Chromium's ``Local Storage/leveldb``.
+    key_prefix : bytes
+        Keep only keys with this prefix; empty keeps every key.
 
     Returns
     -------
@@ -270,20 +296,32 @@ def read_leveldb(directory: pathlib.Path) -> dict[bytes, bytes]:
             continue
         try:
             raw = path.read_bytes()
-            entries = list(reader(raw))
-        except OSError, ValueError, IndexError:
+        except OSError:
             continue
-        for key, value, sequence in entries:
-            current = latest.get(key)
-            if current is None or sequence >= current[0]:
-                latest[key] = (sequence, value)
+        try:
+            for key, value, sequence in reader(raw):
+                if not key.startswith(key_prefix):
+                    continue
+                current = latest.get(key)
+                if current is None or sequence >= current[0]:
+                    latest[key] = (sequence, value)
+        except ValueError, IndexError:
+            continue
     return {key: value for key, (_, value) in latest.items() if value is not None}
 
 
 def _log_entries(raw: bytes) -> cabc.Iterator[_Entry]:
-    """Yield every entry of every complete write batch in a LevelDB log."""
+    """Yield the entries of each intact write batch in a LevelDB log.
+
+    A batch is applied whole or not at all, as LevelDB applies it: one that
+    does not parse is skipped and the batches after it are still read.
+    """
     for payload in _log_payloads(raw):
-        yield from _batch_entries(payload)
+        try:
+            entries = list(_batch_entries(payload))
+        except ValueError, IndexError:
+            continue
+        yield from entries
 
 
 def _decode_storage_string(raw: bytes) -> str | None:
@@ -331,9 +369,7 @@ def local_storage_values(
     """
     prefix = b"_" + origin.encode() + b"\x00"
     values: dict[str, str] = {}
-    for raw_key, raw_value in read_leveldb(directory).items():
-        if not raw_key.startswith(prefix):
-            continue
+    for raw_key, raw_value in read_leveldb(directory, key_prefix=prefix).items():
         key = _decode_storage_string(raw_key[len(prefix) :])
         if key is None or not keep(key):
             continue
