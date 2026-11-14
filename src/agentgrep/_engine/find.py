@@ -20,12 +20,13 @@ the new stream agree on which sources qualify.
 from __future__ import annotations
 
 import collections.abc as cabc
+import contextlib
 import pathlib
 import time
 import typing as t
 
 from agentgrep.adapters import find_store_roles_for_type_filter
-from agentgrep.discovery import discover_listed_sources
+from agentgrep.discovery import discover_listed_sources, discovery_without_mtimes
 from agentgrep.readers import select_backends
 from agentgrep.records import AgentName, BackendSelection, FindRecord, FindSourceTypeFilter
 from agentgrep.stores import StoreCoverage
@@ -97,13 +98,17 @@ def iter_find_events(
     active_backends = select_backends() if backends is None else backends
     start_time = time.monotonic()
 
-    sources = discover_listed_sources(
-        home,
-        agents,
-        active_backends,
-        version_detail="none",
-        store_roles=find_store_roles_for_type_filter(type_filter),
-    )
+    # find never shows a modification time, so skip the stat that reads one
+    # unless a source predicate (such as ``mtime:``) may filter on it.
+    skip_mtimes = compiled is None or compiled.source_predicate is None
+    with discovery_without_mtimes() if skip_mtimes else contextlib.nullcontext():
+        sources = discover_listed_sources(
+            home,
+            agents,
+            active_backends,
+            version_detail="none",
+            store_roles=find_store_roles_for_type_filter(type_filter),
+        )
     yield _events.FindStarted(source_count=len(sources))
 
     query = pattern.casefold() if pattern is not None else None

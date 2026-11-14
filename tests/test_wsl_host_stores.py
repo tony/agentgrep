@@ -789,3 +789,62 @@ async def test_cancelled_discovery_thread_stops_the_windows_walk(
     release.set()
     assert await asyncio.to_thread(finished.wait, 5), "the cancelled walk never returned"
     assert len(calls) <= discovery._SLOW_MOUNT_STAT_WORKERS
+
+
+class FindStatCase(t.NamedTuple):
+    """A find query and whether discovery must stat Windows-side files for it."""
+
+    test_id: str
+    query: str | None
+    stats_windows: bool
+
+
+FIND_STAT_CASES: tuple[FindStatCase, ...] = (
+    FindStatCase(test_id="no-source-predicate", query=None, stats_windows=False),
+    FindStatCase(test_id="mtime-predicate", query="mtime:>2000-01-01", stats_windows=True),
+)
+
+
+@pytest.mark.parametrize(
+    list(FindStatCase._fields),
+    FIND_STAT_CASES,
+    ids=[case.test_id for case in FIND_STAT_CASES],
+)
+def test_find_skips_mtime_stats_it_never_uses(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+    test_id: str,
+    query: str | None,
+    stats_windows: bool,
+) -> None:
+    """Find skips the per-file stat on the Windows mount unless a predicate needs mtime."""
+    from agentgrep import discovery
+    from agentgrep._engine.find import iter_find_events
+    from agentgrep.events import FindRecordEmitted
+    from agentgrep.query import compile_query, default_registry, parse_query
+
+    calls: list[pathlib.Path] = []
+    real_mtime = discovery.file_mtime_ns
+
+    def counted(path: pathlib.Path) -> int:
+        if wsl.is_host_path(path):
+            calls.append(path)
+        return real_mtime(path)
+
+    monkeypatch.setattr(discovery, "file_mtime_ns", counted)
+    registry = default_registry()
+    compiled = None if query is None else compile_query(parse_query(query, registry), registry)
+    found = [
+        event
+        for event in iter_find_events(
+            host_tree.home,
+            ("claude",),
+            pattern=None,
+            limit=None,
+            backends=_NO_BACKENDS,
+            compiled=compiled,
+        )
+        if isinstance(event, FindRecordEmitted)
+    ]
+    assert found
+    assert bool(calls) is stats_windows

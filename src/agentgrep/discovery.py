@@ -938,7 +938,7 @@ def handles_from_discovery(
                     path_kind=spec.path_kind,
                     source_kind=spec.source_kind,
                     search_root=None,
-                    mtime_ns=file_mtime_ns(candidate),
+                    mtime_ns=_source_mtime(candidate),
                     coverage=coverage,
                     origin_summary=_source_origin_summary(
                         spec,
@@ -1002,7 +1002,7 @@ def handles_from_discovery(
                     path_kind=spec.path_kind,
                     source_kind=spec.source_kind,
                     search_root=None,
-                    mtime_ns=file_mtime_ns(candidate),
+                    mtime_ns=_source_mtime(candidate),
                     coverage=coverage,
                     origin_summary=_source_origin_summary(
                         spec,
@@ -1175,6 +1175,48 @@ def _shared_stat_pool() -> concurrent.futures.ThreadPoolExecutor:
         return _stat_pool
 
 
+_SKIP_MTIMES: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "agentgrep_discovery_skip_mtimes",
+    default=False,
+)
+
+
+@contextlib.contextmanager
+def discovery_without_mtimes() -> cabc.Generator[None]:
+    """Leave each source's ``mtime_ns`` at 0 inside this context.
+
+    A listing that neither shows nor filters on a modification time, such as
+    ``find`` without an ``mtime:`` predicate, has no use for the ``stat`` that
+    reads one, and on the WSL 9p mount that ``stat`` is a round trip per
+    Windows-side file. ``0`` already means "unknown" to the query layer.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> from agentgrep.discovery import discover_sources, discovery_without_mtimes
+    >>> from agentgrep.records import BackendSelection
+    >>> home = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (home / ".claude" / "projects" / "p").mkdir(parents=True)
+    >>> _ = (home / ".claude" / "projects" / "p" / "s.jsonl").write_text("{}")
+    >>> none = BackendSelection(find_tool=None, grep_tool=None, json_tool=None)
+    >>> with discovery_without_mtimes():
+    ...     [s.mtime_ns for s in discover_sources(home, ("claude",), none)]
+    [0]
+    >>> [s.mtime_ns > 0 for s in discover_sources(home, ("claude",), none)]
+    [True]
+    """
+    token = _SKIP_MTIMES.set(True)
+    try:
+        yield
+    finally:
+        _SKIP_MTIMES.reset(token)
+
+
+def _source_mtime(path: pathlib.Path) -> int:
+    """Return ``path``'s mtime, or 0 inside :func:`discovery_without_mtimes`."""
+    return 0 if _SKIP_MTIMES.get() else file_mtime_ns(path)
+
+
 def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int] | None:
     """Return each path's mtime, concurrently on the Windows mount.
 
@@ -1185,6 +1227,8 @@ def _file_mtimes(paths: list[pathlib.Path], *, slow_mount: bool) -> list[int] | 
     :func:`discovery_stop` asks to stop: no ``stat`` on the mount starts after
     that, so at most the calls already in flight, one per pool thread, finish.
     """
+    if _SKIP_MTIMES.get():
+        return [0] * len(paths)
     if not slow_mount:
         return [file_mtime_ns(path) for path in paths]
     # Pool threads do not inherit the context variable, so bind the stop here.
