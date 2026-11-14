@@ -1521,10 +1521,15 @@ def discover_claude_sources(
 _CLAUDE_TRANSCRIPT_STORES = frozenset({"claude.projects", "claude.projects_subagents"})
 
 
+def _host_profiles() -> tuple[wsl.WSLHostUserProfile, ...]:
+    """List the Windows profiles on WSL, ending early once discovery is told to stop."""
+    return wsl.host_user_profiles(should_stop=_active_stop())
+
+
 def _host_profile_dirs(name: str) -> tuple[pathlib.Path, ...]:
     """Return ``%USERPROFILE%/<name>`` for each Windows profile on WSL where it exists."""
     found: list[pathlib.Path] = []
-    for profile in wsl.host_user_profiles():
+    for profile in _host_profiles():
         if _discovery_stopped():
             break
         candidate = profile / name
@@ -1577,9 +1582,7 @@ def claude_desktop_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
         home / "AppData" / "Roaming" / "Claude",
         xdg_config / "Claude",
     ]
-    candidates.extend(
-        path for profile in wsl.host_user_profiles() for path in profile.app_dirs("Claude")
-    )
+    candidates.extend(path for profile in _host_profiles() for path in profile.app_dirs("Claude"))
     found: list[pathlib.Path] = []
     for candidate in dict.fromkeys(candidates):
         if _discovery_stopped():
@@ -1734,7 +1737,7 @@ def discover_cursor_cli_sources(
     Cursor running on Windows. Driven entirely by the ``cursor-cli.*``
     catalogue rows.
     """
-    profiles = tuple(profile.path for profile in wsl.host_user_profiles())
+    profiles = tuple(profile.path for profile in _host_profiles())
     return discover_from_catalog(
         home,
         "cursor-cli",
@@ -1782,7 +1785,7 @@ def discover_chatgpt_sources(
         / "ChatGPT",
         *(
             profile.package_appdata(CHATGPT_DESKTOP_PACKAGE) / "ChatGPT"
-            for profile in wsl.host_user_profiles()
+            for profile in _host_profiles()
         ),
     ]
     roots: dict[str, DiscoveryRoot] = {
@@ -1828,7 +1831,7 @@ def _cursor_ide_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     ``/mnt/c/Users``). See :ref:`adr-cross-host-discovery`.
     """
     bases: list[pathlib.Path] = [_cursor_ide_native_user_dir(home)]
-    bases.extend(profile.appdata / "Cursor" / "User" for profile in wsl.host_user_profiles())
+    bases.extend(profile.appdata / "Cursor" / "User" for profile in _host_profiles())
     return tuple(path for path in dict.fromkeys(bases) if path.is_dir())
 
 
@@ -2155,7 +2158,7 @@ def _vscode_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     if override:
         roaming_bases.append(pathlib.Path(os.path.expandvars(override)).expanduser())
     else:
-        roaming_bases.extend(profile.appdata.path for profile in wsl.host_user_profiles())
+        roaming_bases.extend(profile.appdata.path for profile in _host_profiles())
     user_dirs = [base / edition / "User" for base in roaming_bases for edition in _VSCODE_EDITIONS]
     return tuple(path for path in dict.fromkeys(user_dirs) if path.is_dir())
 

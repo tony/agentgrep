@@ -381,12 +381,39 @@ def _cowork_homes(root: pathlib.Path) -> int:
     return len(claude_cowork_roots((root,)))
 
 
+def _windows_profiles(root: pathlib.Path) -> int:
+    """Count the Windows profiles discovery lists under the users root."""
+    from agentgrep import discovery
+
+    return len(discovery._host_profiles())
+
+
+def _profile_claude_homes(root: pathlib.Path) -> int:
+    """Count the Windows profiles whose ``.claude`` home discovery finds."""
+    from agentgrep import discovery
+
+    return len(discovery._host_profile_dirs(".claude"))
+
+
+def _desktop_app_dirs(root: pathlib.Path) -> int:
+    """Count the Claude desktop app directories discovery finds."""
+    from agentgrep.discovery import claude_desktop_dirs
+
+    return len(claude_desktop_dirs(root / "home"))
+
+
 class StopWalkCase(t.NamedTuple):
-    """A walk over many entries that a stop must end partway through."""
+    """A walk over many entries that a stop must end partway through.
+
+    ``stop_after`` is how many stop checks pass before the stop fires. The
+    per-profile walks first list the 40 profiles (one check each), so their
+    stop fires inside the walk under test, not inside the listing.
+    """
 
     test_id: str
     entry: str
     count: cabc.Callable[[pathlib.Path], int]
+    stop_after: int
 
 
 STOP_WALK_CASES: tuple[StopWalkCase, ...] = (
@@ -394,11 +421,31 @@ STOP_WALK_CASES: tuple[StopWalkCase, ...] = (
         test_id="file-listing",
         entry="d{index}/s.jsonl",
         count=_listed_transcripts,
+        stop_after=5,
     ),
     StopWalkCase(
         test_id="cowork-session-scan",
         entry="local-agent-mode-sessions/a/o/local_{index}/.claude/s.jsonl",
         count=_cowork_homes,
+        stop_after=5,
+    ),
+    StopWalkCase(
+        test_id="windows-profile-listing",
+        entry="Users/u{index}/.claude/s.jsonl",
+        count=_windows_profiles,
+        stop_after=5,
+    ),
+    StopWalkCase(
+        test_id="per-profile-claude-home",
+        entry="Users/u{index}/.claude/s.jsonl",
+        count=_profile_claude_homes,
+        stop_after=45,
+    ),
+    StopWalkCase(
+        test_id="per-desktop-candidate",
+        entry="Users/u{index}/AppData/Roaming/Claude/config.json",
+        count=_desktop_app_dirs,
+        stop_after=45,
     ),
 )
 
@@ -410,13 +457,17 @@ STOP_WALK_CASES: tuple[StopWalkCase, ...] = (
 )
 def test_stop_ends_a_walk_partway(
     tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
     test_id: str,
     entry: str,
     count: cabc.Callable[[pathlib.Path], int],
+    stop_after: int,
 ) -> None:
     """Under :func:`discovery_stop`, a walk ends once the predicate fires, and records it."""
     from agentgrep.discovery import discovery_stop
 
+    monkeypatch.setenv(wsl.USERS_ROOT_ENV, str(tmp_path / "Users"))
+    monkeypatch.setattr(wsl, "is_wsl", lambda proc_version=None: True)
     for index in range(40):
         path = tmp_path / entry.format(index=index)
         path.parent.mkdir(parents=True)
@@ -425,7 +476,7 @@ def test_stop_ends_a_walk_partway(
 
     def stop() -> bool:
         checks.append(1)
-        return len(checks) > 5
+        return len(checks) > stop_after
 
     with discovery_stop(stop) as state:
         partial = count(tmp_path)

@@ -60,6 +60,10 @@ import os
 import pathlib
 import re
 import threading
+import typing as t
+
+if t.TYPE_CHECKING:
+    import collections.abc as cabc
 
 USERS_ROOT_ENV = "AGENTGREP_WSL_USERS_ROOT"
 """Environment variable that pins the Windows users directory seen from WSL.
@@ -207,6 +211,7 @@ def host_user_profiles(
     root: str | os.PathLike[str] | None = None,
     *,
     require_wsl: bool = True,
+    should_stop: cabc.Callable[[], bool] | None = None,
 ) -> tuple[WSLHostUserProfile, ...]:
     """Return the Windows user profiles reachable from this distro.
 
@@ -222,6 +227,10 @@ def host_user_profiles(
     require_wsl : bool
         Return nothing unless :func:`is_wsl` is true. Tests and explicit
         callers pass ``False`` together with a ``root``.
+    should_stop : Callable[[], bool] | None
+        Checked before each entry's ``is_dir`` round trip; once it returns
+        true the listing ends with the profiles found so far. Discovery passes
+        its stop check here so an abandoned search stops listing the mount.
 
     Returns
     -------
@@ -243,6 +252,8 @@ def host_user_profiles(
         return ()
     profiles: list[WSLHostUserProfile] = []
     for entry in entries:
+        if should_stop is not None and should_stop():
+            break
         if entry.name.casefold() in _SERVICE_PROFILES:
             continue
         try:
