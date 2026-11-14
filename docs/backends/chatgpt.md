@@ -50,6 +50,10 @@ A result looks like this in `--json` output (values are illustrative):
 }
 ```
 
+The `role` is `assistant` because ChatGPT writes a conversation's title
+itself; the cache does not mark a title the user renamed, so `role:user`
+leaves the titles out.
+
 The printed path works as a `path:` query, so the ChatGPT titles can be
 picked out of a broader search:
 

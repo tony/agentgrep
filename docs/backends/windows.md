@@ -64,6 +64,7 @@ variable that names it, the way a Linux path under your home starts with
 | `/mnt/c/Users/<name>/.codex/sessions/...` | `%USERPROFILE%/.codex/sessions/...` |
 | `/mnt/c/Users/<name>/.claude/projects/C--Users-<name>-work/...` | `%USERPROFILE%/.claude/projects/C--Users-%USERNAME%-work/...` |
 | `C:\Users\<name>\work`, a working directory recorded on Windows | `%USERPROFILE%/work` |
+| `/mnt/d/Users/<name>/work`, one recorded inside WSL, on any drive | `%USERPROFILE%/work` |
 
 Agents also name project folders after the working directory, which can
 carry an account name. Those encoded names are rewritten the same way:
@@ -138,8 +139,10 @@ WSL, none of this runs.
 
 The figures below come from one WSL host where `find` lists 390 Windows-side
 sources (most from a large Claude desktop install) and compare the main branch
-("before") with commit `a12b864` ("now"); later commits change no code that
-`find` or a prompt search runs on these paths. They answer three questions in
+("before") with commit `a12b864` ("now"). Later commits add a string
+comparison per source to search planning and a pattern match per printed path;
+printing a path still costs less than on the main branch (9 to 11 µs against
+14 to 19 µs for the 8,750 paths `find libtmux` prints). They answer three questions in
 turn: how many round trips a discovery pass makes on the mount, whether whole
 commands got slower, and how long an exhaustive search over the Windows side
 takes.
