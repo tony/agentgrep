@@ -266,10 +266,12 @@ def test_display_form_resolves_to_its_own_profile(host_tree: HostTree) -> None:
     assert len({find_record_fingerprint(r) for r in records}) == 2
 
 
-def test_chatgpt_desktop_is_listed_but_never_searched(host_tree: HostTree) -> None:
-    """Inventory lists ChatGPT desktop files as catalog-only; search discovery never does."""
-    from agentgrep.discovery import CHATGPT_DESKTOP_PACKAGE
-    from agentgrep.records import AGENT_CHOICES, INVENTORY_AGENTS
+def test_chatgpt_unreadable_stores_are_listed_never_searched(host_tree: HostTree) -> None:
+    """ChatGPT's encrypted and empty stores are listed as catalog-only; search never opens them."""
+    from agentgrep._engine.find import iter_find_events
+    from agentgrep.discovery import CHATGPT_DESKTOP_PACKAGE, discover_listed_sources
+    from agentgrep.events import FindRecordEmitted
+    from agentgrep.records import AGENT_CHOICES
     from agentgrep.stores import StoreCoverage
 
     files = [
@@ -281,13 +283,26 @@ def test_chatgpt_desktop_is_listed_but_never_searched(host_tree: HostTree) -> No
     for path in files:
         path.parent.mkdir(parents=True)
         path.write_bytes(b"\x00opaque")
-    assert "chatgpt" in INVENTORY_AGENTS
-    assert "chatgpt" not in AGENT_CHOICES
-    listed = discover_sources(host_tree.home, ("chatgpt",), _NO_BACKENDS, include_non_default=True)
+    assert "chatgpt" in AGENT_CHOICES
+    listed = discover_listed_sources(host_tree.home, ("chatgpt",), _NO_BACKENDS)
     assert sorted(s.path for s in listed) == sorted(files)
     assert {s.coverage for s in listed} == {StoreCoverage.CATALOG_ONLY}
     assert not any(_WINDOWS_USER in format_display_path(s.path) for s in listed)
     assert discover_sources(host_tree.home, ("chatgpt",), _NO_BACKENDS) == []
+    found = [
+        event.record
+        for event in iter_find_events(
+            host_tree.home,
+            ("chatgpt",),
+            pattern=None,
+            limit=None,
+            backends=_NO_BACKENDS,
+        )
+        if isinstance(event, FindRecordEmitted)
+    ]
+    assert {t.cast("FindRecordLike", record).metadata.get("coverage") for record in found} == {
+        "catalog_only",
+    }
 
 
 def test_encoded_folder_hides_the_account_and_resolves(host_tree: HostTree) -> None:
@@ -675,6 +690,11 @@ class BoundaryCase(t.NamedTuple):
 
 BOUNDARY_CASES: tuple[BoundaryCase, ...] = (
     BoundaryCase(test_id="wsl-is-a-leaf", module="wsl", forbidden=("agentgrep",)),
+    BoundaryCase(
+        test_id="chromium-storage-is-a-leaf",
+        module="_chromium_storage",
+        forbidden=("agentgrep",),
+    ),
     BoundaryCase(test_id="text-below-frontends", module="_text", forbidden=_FRONTENDS),
     BoundaryCase(test_id="readers-below-frontends", module="readers", forbidden=_FRONTENDS),
     BoundaryCase(test_id="discovery-below-frontends", module="discovery", forbidden=_FRONTENDS),

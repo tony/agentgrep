@@ -43,6 +43,7 @@ from agentgrep.readers import (
     read_json_file,
 )
 from agentgrep.records import (
+    CATALOG_LISTED_AGENTS,
     CONVERSATION_CONTENT_STORES,
     CONVERSATION_STORE_ROLES,
     AgentName,
@@ -249,6 +250,77 @@ def discover_sources(
             )
     discovered.sort(key=lambda item: (item.agent, item.store, str(item.path)))
     return discovered
+
+
+def discover_listed_sources(
+    home: pathlib.Path,
+    agents: tuple[AgentName, ...],
+    backends: BackendSelection,
+    *,
+    version_detail: DiscoveryVersionDetail = "shape",
+    store_roles: DiscoveryStoreRoles = None,
+) -> list[SourceHandle]:
+    """Discover the sources that ``find`` and ``agentgrep://sources`` list.
+
+    These are the default-search sources plus the catalog-only stores of the
+    agents in :data:`~agentgrep.records.CATALOG_LISTED_AGENTS`, so a listing
+    shows that ChatGPT desktop's encrypted history exists, with its
+    ``coverage`` saying search skips it.
+
+    Parameters
+    ----------
+    home : pathlib.Path
+        Home directory to discover under.
+    agents : tuple[AgentName, ...]
+        Agents to list.
+    backends : BackendSelection
+        Selected external tools.
+    version_detail : DiscoveryVersionDetail
+        How eagerly to enrich source handles; see :func:`discover_sources`.
+    store_roles : DiscoveryStoreRoles
+        Roles to list, or ``None`` for every role.
+
+    Returns
+    -------
+    list[SourceHandle]
+        Listed sources, sorted by agent, store, and path.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> from agentgrep.discovery import discover_listed_sources
+    >>> from agentgrep.records import BackendSelection
+    >>> home = pathlib.Path(tempfile.mkdtemp())
+    >>> data = home / "Library/Application Support/com.openai.chat/conversations-v3-x/c.data"
+    >>> _ = data.parent.mkdir(parents=True)
+    >>> _ = data.write_bytes(b"sealed")
+    >>> none = BackendSelection(find_tool=None, grep_tool=None, json_tool=None)
+    >>> [(s.store, s.coverage.value) for s in discover_listed_sources(home, ("chatgpt",), none)]
+    [('chatgpt.conversations', 'catalog_only')]
+    """
+    sources = discover_sources(
+        home,
+        agents,
+        backends,
+        version_detail=version_detail,
+        store_roles=store_roles,
+    )
+    listed = tuple(agent for agent in agents if agent in CATALOG_LISTED_AGENTS)
+    if listed:
+        sources.extend(
+            source
+            for source in discover_sources(
+                home,
+                listed,
+                backends,
+                include_non_default=True,
+                version_detail=version_detail,
+                store_roles=store_roles,
+            )
+            if source.coverage is StoreCoverage.CATALOG_ONLY
+        )
+        sources.sort(key=lambda item: (item.agent, item.store, str(item.path)))
+    return sources
 
 
 def resolve_env_root(env_var: str, default: pathlib.Path) -> pathlib.Path:
@@ -1811,35 +1883,43 @@ def discover_chatgpt_sources(
     store_roles: DiscoveryStoreRoles = None,
     allow_conversation_content_role_fallback: bool = True,
 ) -> list[SourceHandle]:
-    """Discover ChatGPT desktop stores for inventory.
+    """Discover ChatGPT desktop stores.
 
-    Every ``chatgpt.*`` row is catalog-only, so only an inventory pass
-    (``include_non_default``) lists them and no search opens them. The macOS
-    app keeps its files in ``~/Library/Application Support/com.openai.chat``;
-    the Windows app is an MSIX package whose ``%APPDATA%`` lives under its
-    ``LocalCache``, reached natively or, on WSL, through each Windows profile.
+    The Windows app's cached conversation list (``chatgpt.conversation_list``)
+    is searchable; the macOS app's encrypted files and the Windows IndexedDB are
+    catalog-only, so only an inventory pass (``include_non_default``) lists
+    them. The macOS app keeps its files in
+    ``~/Library/Application Support/com.openai.chat``; the Windows app is an
+    MSIX package whose ``%APPDATA%`` lives under its ``LocalCache``, reached
+    natively or, on WSL, through each Windows profile. A root is probed only
+    when an admitted row reads it, so prompt search costs nothing here.
     """
-    if not include_non_default:
-        return []
-    macos = home / "Library" / "Application Support" / "com.openai.chat"
-    windows = [
-        home
-        / "AppData"
-        / "Local"
-        / "Packages"
-        / CHATGPT_DESKTOP_PACKAGE
-        / "LocalCache"
-        / "Roaming"
-        / "ChatGPT",
-        *(
-            profile.package_appdata(CHATGPT_DESKTOP_PACKAGE) / "ChatGPT"
-            for profile in _host_profiles()
-        ),
-    ]
-    roots: dict[str, DiscoveryRoot] = {
-        "chatgpt_macos": (macos,) if macos.is_dir() else (),
-        "chatgpt_windows": tuple(path for path in windows if path.is_dir()),
-    }
+    wanted = admitted_root_keys(
+        "chatgpt",
+        store_roles,
+        include_non_default=include_non_default,
+        allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,
+    )
+    roots: dict[str, DiscoveryRoot] = {"chatgpt_macos": (), "chatgpt_windows": ()}
+    if "chatgpt_macos" in wanted:
+        macos = home / "Library" / "Application Support" / "com.openai.chat"
+        roots["chatgpt_macos"] = (macos,) if macos.is_dir() else ()
+    if "chatgpt_windows" in wanted:
+        windows = [
+            home
+            / "AppData"
+            / "Local"
+            / "Packages"
+            / CHATGPT_DESKTOP_PACKAGE
+            / "LocalCache"
+            / "Roaming"
+            / "ChatGPT",
+            *(
+                profile.package_appdata(CHATGPT_DESKTOP_PACKAGE) / "ChatGPT"
+                for profile in _host_profiles()
+            ),
+        ]
+        roots["chatgpt_windows"] = tuple(path for path in windows if path.is_dir())
     if not any(roots.values()):
         return []
     return discover_from_catalog(
@@ -1847,7 +1927,7 @@ def discover_chatgpt_sources(
         "chatgpt",
         roots,
         backends,
-        include_non_default=True,
+        include_non_default=include_non_default,
         version_detail=version_detail,
         store_roles=store_roles,
         allow_conversation_content_role_fallback=allow_conversation_content_role_fallback,

@@ -1,8 +1,11 @@
 """ChatGPT desktop store descriptors for the agentgrep catalogue.
 
-Every row is catalog-only: the macOS app's conversation files look encrypted
-and the Windows app keeps only a Chromium profile, so agentgrep lists the files
-for inventory (as metadata summaries) and never searches them.
+The Windows app keeps no conversation bodies on disk, but its Local Storage
+caches the conversation list, which ``chatgpt.conversation_list`` searches by
+title. The macOS app's conversation and draft files are encrypted with a key
+only OpenAI-signed code can read, and the Windows IndexedDB holds no
+conversations, so those rows are catalog-only: listed for inventory as metadata
+summaries, never searched.
 """
 
 from __future__ import annotations
@@ -40,11 +43,13 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
         observed_version=_CHATGPT_OBSERVED_VERSION,
         observed_at=_CHATGPT_OBSERVED_AT,
         schema_notes=(
-            "macOS app, one `.data` file per conversation (898 B to 349 KB). None "
-            "of 30 sampled files parsed as JSON, UTF-8, zlib, raw deflate, gzip, "
-            "bzip2, or lzma; entropy of the first 64 KiB was 7.76 to 8.00 bits per "
-            "byte and every file started with different bytes, which fits "
-            "authenticated encryption. Listed for inventory as metadata only; never searched."
+            "macOS app, one `.data` file per conversation (898 B to 349 KB). The "
+            "app (bundle `com.openai.chat`) seals each file with CryptoKit "
+            "AES-GCM under a 256-bit key and stores a property list inside; the "
+            "key is a data protection keychain item in OpenAI's team access "
+            "group, which macOS opens only to code signed with that entitlement, "
+            "so no other program can decrypt the files. Listed for inventory as "
+            "metadata only; never searched."
         ),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
@@ -70,8 +75,8 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
         observed_version=_CHATGPT_OBSERVED_VERSION,
         observed_at=_CHATGPT_OBSERVED_AT,
         schema_notes=(
-            "macOS app, unsent prompt drafts (183 B to 1.8 KB), as opaque as the "
-            "conversation files. Listed for inventory as metadata only; never searched."
+            "macOS app, unsent prompt drafts (183 B to 1.8 KB), encrypted like "
+            "the conversation files. Listed for inventory as metadata only; never searched."
         ),
         distinguishes_from=("chatgpt.conversations",),
         coverage=StoreCoverage.CATALOG_ONLY,
@@ -85,6 +90,48 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
                 source_kind="opaque",
                 root_key="chatgpt_macos",
                 glob="drafts-v2-*/*.data",
+            ),
+        ),
+    ),
+    StoreDescriptor(
+        agent="chatgpt",
+        store_id="chatgpt.conversation_list",
+        role=StoreRole.APP_STATE,
+        format=StoreFormat.LEVELDB,
+        path_pattern=f"{_WINDOWS_ROOT}/Local Storage/leveldb/",
+        platform_variants={"win32": f"{_WINDOWS_ROOT}/Local Storage/leveldb/"},
+        observed_version=_CHATGPT_OBSERVED_VERSION,
+        observed_at=_CHATGPT_OBSERVED_AT,
+        schema_notes=(
+            "Windows app, Chromium Local Storage in LevelDB (`*.log` write-ahead "
+            "logs and Snappy-compressed `*.ldb` tables). Keys "
+            "`cache/user-<account>/<id>/conversation-history` and "
+            "`.../conversation-history-without-projects` hold the cached first "
+            "page of the conversation list as JSON: "
+            "`{timestamp, value: {pages: [{items, total, limit, offset}]}, version}`, "
+            "each item with `id`, `title`, `create_time` and `update_time` (ISO "
+            "8601), `gizmo_id` (project), and archive, star, and temporary flags; "
+            "`mapping` and `snippet` are always null, so the list carries titles, "
+            "not messages. The same store holds session data and secrets under "
+            "other keys, which are never decoded."
+        ),
+        distinguishes_from=("chatgpt.web_profile",),
+        coverage=StoreCoverage.DEFAULT_SEARCH,
+        search_by_default=False,
+        search_notes=(
+            "One title record per conversation, newest snapshot per id; its "
+            "session id is the ChatGPT conversation id. Exhaustive or broad-scope "
+            "search reads it; prompt search does not."
+        ),
+        discovery=(
+            DiscoverySpec(
+                store="chatgpt.conversation_list",
+                adapter_id="chatgpt.local_storage_conversation_list.v1",
+                data_version="chatgpt.local_storage_conversation_list.v1",
+                path_kind="store_file",
+                source_kind="opaque",
+                root_key="chatgpt_windows",
+                files=("Local Storage/leveldb/CURRENT",),
             ),
         ),
     ),
@@ -104,12 +151,15 @@ _CHATGPT_STORES: tuple[StoreDescriptor, ...] = (
             "MSIX package. Windows redirects its `%APPDATA%` writes to the "
             "package's `LocalCache/Roaming`, so from WSL the data is only under "
             "`%LOCALAPPDATA%/Packages`. The directory is a Chromium profile "
-            "(`IndexedDB`, `Local Storage`, `Session Storage`, `Preferences`, a "
-            "two-byte `config.json`); searching the IndexedDB files as bytes for "
-            '`"author"` or `conversation_id` found nothing, so conversations '
-            "are held server-side. Listed for inventory as metadata only; never searched."
+            "(`IndexedDB`, `Local Storage`, `Session Storage`, `Cache`, "
+            "`Preferences`, a two-byte `config.json`). Decoded, the IndexedDB "
+            "`ConversationsDatabase.conversations` store holds no records and no "
+            "conversation body response is cached, so conversation text is held "
+            "server-side; the conversation list is read from Local Storage "
+            "(`chatgpt.conversation_list`). Listed for inventory as metadata only; "
+            "never searched."
         ),
-        distinguishes_from=("chatgpt.conversations",),
+        distinguishes_from=("chatgpt.conversations", "chatgpt.conversation_list"),
         coverage=StoreCoverage.CATALOG_ONLY,
         search_by_default=False,
         discovery=(

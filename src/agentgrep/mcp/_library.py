@@ -25,6 +25,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "vscode",
+    "chatgpt",
 ]
 AgentSelector = t.Literal[
     "codex",
@@ -38,6 +39,7 @@ AgentSelector = t.Literal[
     "pi",
     "opencode",
     "vscode",
+    "chatgpt",
     "all",
 ]
 CatalogAgentSelector = t.Literal[
@@ -107,6 +109,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "claude.settings_json.v1",
     "claude.desktop_session_json.v1",
     "chatgpt.file_metadata_summary.v1",
+    "chatgpt.local_storage_conversation_list.v1",
     "claude.skills_text.v1",
     "claude.commands_text.v1",
     "claude.app_state_json_summary.v1",
@@ -259,6 +262,15 @@ class AgentGrepModule(t.Protocol):
         backends: BackendSelectionLike,
         *,
         include_non_default: bool = False,
+        version_detail: t.Literal["none", "catalog", "shape"] = "shape",
+    ) -> list[SourceHandleLike]: ...
+
+    def discover_listed_sources(
+        self,
+        home: pathlib.Path,
+        agents: tuple[str, ...],
+        backends: BackendSelectionLike,
+        *,
         version_detail: t.Literal["none", "catalog", "shape"] = "shape",
     ) -> list[SourceHandleLike]: ...
 

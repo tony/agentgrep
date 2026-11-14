@@ -25,9 +25,10 @@ import time
 import typing as t
 
 from agentgrep.adapters import find_store_roles_for_type_filter
-from agentgrep.discovery import discover_sources
+from agentgrep.discovery import discover_listed_sources
 from agentgrep.readers import select_backends
 from agentgrep.records import AgentName, BackendSelection, FindRecord, FindSourceTypeFilter
+from agentgrep.stores import StoreCoverage
 
 if t.TYPE_CHECKING:
     from agentgrep import events as _events
@@ -96,7 +97,7 @@ def iter_find_events(
     active_backends = select_backends() if backends is None else backends
     start_time = time.monotonic()
 
-    sources = discover_sources(
+    sources = discover_listed_sources(
         home,
         agents,
         active_backends,
@@ -122,7 +123,11 @@ def iter_find_events(
             adapter_id=source.adapter_id,
             path=source.path,
             path_kind=source.path_kind,
-            metadata={"source_kind": source.source_kind},
+            metadata=(
+                {"source_kind": source.source_kind}
+                if source.coverage is StoreCoverage.DEFAULT_SEARCH
+                else {"source_kind": source.source_kind, "coverage": source.coverage.value}
+            ),
         )
         if query is not None:
             haystack = " ".join(

@@ -54,6 +54,7 @@ _FORMAT_DESCRIPTIONS: dict[str, str] = {
     "text": "Plain text or Markdown file.",
     "md_frontmatter": "Markdown with YAML/JSON frontmatter blocks.",
     "protobuf": "Binary protobuf payload.",
+    "leveldb": "Chromium LevelDB web storage, read without a native library.",
     "opaque": "Format not parsed by agentgrep.",
 }
 
@@ -61,7 +62,7 @@ _FORMAT_DESCRIPTIONS: dict[str, str] = {
 def list_source_models(agent: AgentSelector = "all") -> list[SourceRecordModel]:
     """Return discovered sources as typed MCP payloads."""
     backends = agentgrep.select_backends()
-    sources = agentgrep.discover_sources(
+    sources = agentgrep.discover_listed_sources(
         pathlib.Path.home(),
         normalize_agent_selection(agent),
         backends,
