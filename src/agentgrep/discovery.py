@@ -1007,10 +1007,19 @@ def _active_stop() -> cabc.Callable[[], bool] | None:
 
 
 _SLOW_MOUNT_STAT_WORKERS = 16
-"""Concurrent ``stat`` calls for files on the 9p Windows mount, shared process-wide."""
+"""Concurrent ``stat`` calls for files on the 9p Windows mount, shared process-wide.
+
+Measured on a WSL host over 376 Windows-side files, median of 5 rounds: about
+650 ms serial (1.7 ms per ``stat``), 110-160 ms with 4 threads, and 95-130 ms
+from 8 to 32 threads. Throughput levels off from 8 threads; 16 sits on that
+plateau with room for concurrent searches.
+"""
 
 _SLOW_MOUNT_MIN_BATCH = 16
-"""Smallest batch worth sending to the pool; shorter lists stay serial."""
+"""Smallest batch worth sending to the pool; shorter lists stay serial.
+
+At about 1.7 ms per ``stat`` this caps a serial batch near 25 ms.
+"""
 
 _stat_pool: concurrent.futures.ThreadPoolExecutor | None = None
 _stat_pool_lock = threading.Lock()

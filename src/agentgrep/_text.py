@@ -546,7 +546,9 @@ class PrivatePath(PrivatePathBase):
         """Return the real path.
 
         CPython 3.14's ``PurePath.__fspath__`` returns ``str(self)``, which
-        would hand the collapsed ``~/...`` form to :func:`open`.
+        would hand the collapsed ``~/...`` form to :func:`open`. Later versions
+        bind ``__fspath__`` to the base ``__str__``, which an override does not
+        reach, so this matters on 3.14, the oldest supported version.
         """
         return self._real_str()
 
