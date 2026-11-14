@@ -9,6 +9,7 @@ import typing as t
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from agentgrep.discovery import discover_in_thread
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
@@ -296,7 +297,7 @@ def register(mcp: FastMCP) -> None:
             source_path=source_path,
             sample_size=sample_size,
         )
-        return await asyncio.to_thread(_inspect_record_sample_sync, request)
+        return await discover_in_thread(_inspect_record_sample_sync, request)
 
     _ = inspect_record_sample_tool
 
@@ -322,6 +323,6 @@ def register(mcp: FastMCP) -> None:
         ] = 1,
     ) -> InspectResultResponse:
         request = InspectResultRequest(ref=ref, sample_size=sample_size)
-        return await asyncio.to_thread(_inspect_result_sync, request)
+        return await discover_in_thread(_inspect_result_sync, request)
 
     _ = inspect_result_tool

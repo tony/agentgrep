@@ -1065,7 +1065,11 @@ def _discovery_stopped() -> bool:
 
 
 def _stop_requested(active: _StopBinding | None) -> bool:
-    """Check ``active``'s predicate, recording a stop in its state once it fires."""
+    """Check ``active``'s predicate, recording a stop in its state once it fires.
+
+    Pool threads call this concurrently. The write needs no lock: ``stopped``
+    only ever changes from false to true, so every writer stores the same value.
+    """
     if active is None:
         return False
     should_stop, state = active

@@ -381,7 +381,13 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
         ] = None,
         agent: t.Annotated[
             AgentSelector,
-            Field(description="Limit search to one agent or search all agents."),
+            Field(
+                description=(
+                    "Limit search to one agent or search all agents. 'chatgpt' holds "
+                    "conversation titles only, reached with scope='conversations' or "
+                    "'all' and effort='exhaustive'."
+                ),
+            ),
         ] = "all",
         scope: t.Annotated[
             SearchScopeName,
