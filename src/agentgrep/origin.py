@@ -253,8 +253,9 @@ class OriginPredicate:
         )
 
     def _path_matches(self, value: str) -> bool:
-        # A path inside a Windows profile prints as %USERPROFILE%..., so a
-        # filter copied from output matches the recorded path through that form.
+        # A path inside a Windows profile prints as %USERPROFILE%... whichever
+        # way it was recorded, so both sides are also compared in that form: a
+        # filter copied from output, or written in any spelling, matches.
         display = wsl.display_host_path(value)
         values = (value,) if display is None else (value, display)
         if self.is_glob:
@@ -263,13 +264,16 @@ class OriginPredicate:
                 for candidate in values
                 for variant in self.variants
             )
+        variants = self.variants + tuple(
+            shown for variant in self.variants if (shown := wsl.display_host_path(variant))
+        )
         return any(
             _path_is_equal_or_descendant(
                 _origin_path_boundary_text(candidate),
                 _origin_path_boundary_text(variant),
             )
             for candidate in values
-            for variant in self.variants
+            for variant in variants
         )
 
 

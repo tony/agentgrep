@@ -1094,6 +1094,7 @@ def test_reencoded_account_name_is_hidden_and_resolves(
         origin=origin,
     )
     registry = default_registry()
-    compiled = compile_query(parse_query("cwd:%USERPROFILE%/w", registry), registry)
-    assert compiled.record_predicate is not None
-    assert compiled.record_predicate(record)
+    for value in ("%USERPROFILE%/w", f"/c:/Users/{profile}/w"):
+        compiled = compile_query(parse_query(f'cwd:"{value}"', registry), registry)
+        assert compiled.record_predicate is not None
+        assert compiled.record_predicate(record)
