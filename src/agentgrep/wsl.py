@@ -299,13 +299,27 @@ def known_profile_names() -> tuple[str, ...]:
 
     Path display redacts these names inside encoded folder names. Discovery
     lists the profiles before any of its paths are shown, so this normally
-    costs no file access; only a display that runs before any listing (a
-    ref opened in a fresh process, or a direct library call) lists the users
-    directory once, so the name is hidden there too.
+    costs no file access; only a display that runs before any complete
+    listing (a ref opened in a fresh process, a direct library call, or one
+    after a cancelled pass) reads the users directory once, with no ``stat``
+    per entry, so the name is hidden there too.
     """
     if not _profiles_listed.is_set():
-        host_user_profiles()
+        _read_profile_names()
     return _known_profile_names_sorted
+
+
+def _read_profile_names() -> None:
+    """Record the profile names under the users root in one directory read."""
+    if is_wsl():
+        try:
+            with os.scandir(_users_root_text()) as entries:
+                for entry in entries:
+                    if entry.name.casefold() not in _SERVICE_PROFILES and entry.is_dir():
+                        _remember_profile_name(entry.name)
+        except OSError:
+            pass
+    _profiles_listed.set()
 
 
 def encoded_account_forms(name: str) -> tuple[str, str]:
