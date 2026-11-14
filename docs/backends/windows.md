@@ -154,7 +154,8 @@ $ uv run scripts/benchmark.py run \
 
 A cancelled search stops the walk instead of finishing it in the background:
 a running directory listing ends, no new `stat` starts on the mount, and only
-the calls already in flight, at most 16, finish. To leave the Windows side
+the calls already in flight finish: at most 16, the size of the `stat` pool
+every search in the process shares. To leave the Windows side
 out entirely, point `AGENTGREP_WSL_USERS_ROOT` at a missing directory. A
 `NOT path:%USERPROFILE%` filter drops the Windows-side results but still
 walks the mount.
