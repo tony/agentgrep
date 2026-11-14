@@ -19,6 +19,7 @@ import tomllib
 import typing as t
 import urllib.parse
 
+from agentgrep import wsl
 from agentgrep.origin import (
     PRUNABLE_ORIGIN_FIELDS,
     OriginEncoding,
@@ -1265,13 +1266,7 @@ def _cursor_ide_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     ``/mnt/c/Users``). See :ref:`adr-cross-host-discovery`.
     """
     bases: list[pathlib.Path] = [_cursor_ide_native_user_dir(home)]
-    if _is_wsl():
-        windows_users = pathlib.Path(os.environ.get("AGENTGREP_WSL_USERS_ROOT") or "/mnt/c/Users")
-        if windows_users.is_dir():
-            bases.extend(
-                user_dir / "AppData" / "Roaming" / "Cursor" / "User"
-                for user_dir in sorted(windows_users.glob("*"))
-            )
+    bases.extend(profile.appdata / "Cursor" / "User" for profile in wsl.host_user_profiles())
     return tuple(path for path in dict.fromkeys(bases) if path.is_dir())
 
 
@@ -1569,17 +1564,6 @@ def discover_opencode_sources(
     return [*data_handles, *state_handles]
 
 
-def _is_wsl() -> bool:
-    """Detect WSL so the Windows ``/mnt/c`` VS Code data is only probed there."""
-    try:
-        return (
-            "microsoft"
-            in pathlib.Path("/proc/version").read_text(encoding="utf-8", errors="ignore").casefold()
-        )
-    except OSError:
-        return False
-
-
 _VSCODE_EDITIONS: tuple[str, ...] = (
     "Code",
     "Code - Insiders",
@@ -1608,12 +1592,8 @@ def _vscode_user_dirs(home: pathlib.Path) -> tuple[pathlib.Path, ...]:
     override = os.environ.get("VSCODE_APPDATA")
     if override:
         roaming_bases.append(pathlib.Path(os.path.expandvars(override)).expanduser())
-    elif _is_wsl():
-        windows_users = pathlib.Path(os.environ.get("AGENTGREP_WSL_USERS_ROOT") or "/mnt/c/Users")
-        if windows_users.is_dir():
-            roaming_bases.extend(
-                user_dir / "AppData" / "Roaming" for user_dir in sorted(windows_users.glob("*"))
-            )
+    else:
+        roaming_bases.extend(profile.appdata.path for profile in wsl.host_user_profiles())
     user_dirs = [base / edition / "User" for base in roaming_bases for edition in _VSCODE_EDITIONS]
     return tuple(path for path in dict.fromkeys(user_dirs) if path.is_dir())
 

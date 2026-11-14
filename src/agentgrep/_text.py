@@ -21,6 +21,8 @@ import unicodedata
 
 from rich.text import Text as _RichText
 
+from agentgrep.wsl import display_host_path
+
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -482,7 +484,26 @@ GREP_DESCRIPTION = build_description(
 
 
 class PrivatePath(PrivatePathBase):
-    """Path subclass that hides the user's home directory in textual output."""
+    """Path subclass that hides account names in textual output.
+
+    ``str()`` and ``repr()`` collapse the home directory to ``~`` and, on WSL,
+    a Windows profile to ``%USERPROFILE%``/``%APPDATA%``/``%LOCALAPPDATA%``
+    (see :func:`agentgrep.wsl.display_host_path`). :func:`os.fspath`,
+    equality, and hashing keep using the real path, so a ``PrivatePath`` opens
+    the file it names and compares equal to the plain path of that file.
+
+    Examples
+    --------
+    >>> import os, pathlib
+    >>> from agentgrep import PrivatePath
+    >>> home = pathlib.Path.home()
+    >>> str(PrivatePath(home / "notes.txt"))
+    '~/notes.txt'
+    >>> os.fspath(PrivatePath(home / "notes.txt")) == str(home / "notes.txt")
+    True
+    >>> PrivatePath(home / "notes.txt") == home / "notes.txt"
+    True
+    """
 
     def __new__(cls, *args: t.Any, **kwargs: t.Any) -> t.Self:
         """Create a privacy-aware path."""
@@ -490,7 +511,7 @@ class PrivatePath(PrivatePathBase):
 
     @classmethod
     def _collapse_home(cls, value: str) -> str:
-        """Collapse the user's home directory to ``~`` when ``value`` is inside it."""
+        """Collapse the home directory to ``~`` and a Windows profile to its variable."""
         if value.startswith("~"):
             return value
 
@@ -507,14 +528,36 @@ class PrivatePath(PrivatePathBase):
             if value.startswith(home_with_separator):
                 return "~" + value[len(home) :]
 
-        return value
+        return display_host_path(value) or value
+
+    def _real_str(self) -> str:
+        """Return the uncollapsed path string."""
+        return pathlib.PurePath.__str__(self)
 
     def __str__(self) -> str:
-        """Return string output with the home directory collapsed."""
-        return self._collapse_home(pathlib.Path.__str__(self))
+        """Return string output with account names collapsed."""
+        return self._collapse_home(self._real_str())
+
+    def __fspath__(self) -> str:
+        """Return the real path.
+
+        CPython 3.14's ``PurePath.__fspath__`` returns ``str(self)``, which
+        would hand the collapsed ``~/...`` form to :func:`open`.
+        """
+        return self._real_str()
+
+    def __eq__(self, other: object) -> bool:
+        """Compare by real path, so a ``PrivatePath`` equals the plain path of its file."""
+        if not isinstance(other, pathlib.PurePath):
+            return NotImplemented
+        return other.parser is self.parser and self._real_str() == pathlib.PurePath.__str__(other)
+
+    def __hash__(self) -> int:
+        """Hash the real path, consistent with :meth:`__eq__` and plain paths."""
+        return hash(self._real_str())
 
     def __repr__(self) -> str:
-        """Return repr output with the home directory collapsed."""
+        """Return repr output with account names collapsed."""
         return f"{self.__class__.__name__}({str(self)!r})"
 
 

@@ -221,3 +221,34 @@ explicitly close the async generator, for example with
 
 .. autofunction:: agentgrep.store_catalog.gemini_project_hash
 ```
+
+## Windows host paths (WSL)
+
+{mod}`agentgrep.wsl` locates the Windows-side stores from inside a WSL
+distro.
+
+```{eval-rst}
+.. automodule:: agentgrep.wsl
+   :no-members:
+
+.. autoclass:: agentgrep.wsl.WSLHostPath
+   :members: display, as_windows, from_windows
+
+.. autoclass:: agentgrep.wsl.WSLHost
+   :members:
+
+.. autoclass:: agentgrep.wsl.WSLHostUserProfile
+   :members:
+
+.. autoclass:: agentgrep.wsl.WSLHostAppData
+
+.. autofunction:: agentgrep.wsl.host_user_profiles
+
+.. autofunction:: agentgrep.wsl.display_host_path
+
+.. autofunction:: agentgrep.wsl.users_root
+
+.. autofunction:: agentgrep.wsl.mount_root
+
+.. autofunction:: agentgrep.wsl.is_wsl
+```

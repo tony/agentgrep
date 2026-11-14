@@ -9,6 +9,7 @@ import json
 import pathlib
 import typing as t
 
+from agentgrep import wsl
 from agentgrep.mcp._library import (
     AgentSelector,
     FindRecordLike,
@@ -30,6 +31,8 @@ class _RecordRefPayload(t.TypedDict):
     adapter_id: str
     path: str
     fingerprint: str
+    profile: t.NotRequired[str]
+    """Opaque Windows-profile key (:func:`agentgrep.wsl.host_profile_key`), for WSL paths."""
 
 
 class _FindCursorPayload(t.TypedDict):
@@ -117,7 +120,11 @@ def _decode_token(prefix: str, token: str) -> dict[str, object]:
     return t.cast("dict[str, object]", payload)
 
 
-def _display_path_to_path(value: object, home: pathlib.Path) -> pathlib.Path:
+def _display_path_to_path(
+    value: object,
+    home: pathlib.Path,
+    profile: object = None,
+) -> pathlib.Path:
     if not isinstance(value, str) or not value:
         msg = "token path must be a non-empty string"
         raise McpTokenError(msg)
@@ -125,6 +132,12 @@ def _display_path_to_path(value: object, home: pathlib.Path) -> pathlib.Path:
         return home
     if value.startswith("~/"):
         return home / value[2:]
+    profile_key = profile if isinstance(profile, str) and profile else None
+    candidates = wsl.host_display_candidates(value, profile_key=profile_key)
+    if candidates:
+        # The display form hides the Windows profile; the ref's profile key
+        # names it. A ref without one resolves to the first profile that has the file.
+        return next((path for path in candidates if path.exists()), candidates[0])
     return pathlib.Path(value).expanduser()
 
 
@@ -136,6 +149,17 @@ def _record_fingerprint(payload: dict[str, object]) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _profile_field(path: pathlib.Path) -> dict[str, str]:
+    """Return ``{"profile": key}`` for a path inside a Windows profile, else ``{}``.
+
+    Two profiles' copies of one relative file share a display path; the key
+    keeps their fingerprints and refs apart. Paths outside a Windows profile
+    get no key, so their fingerprints are unchanged.
+    """
+    key = wsl.host_profile_key(path)
+    return {"profile": key} if key else {}
 
 
 def search_record_fingerprint(record: SearchRecordLike) -> str:
@@ -153,6 +177,7 @@ def search_record_fingerprint(record: SearchRecordLike) -> str:
             "session_id": record.session_id,
             "conversation_id": record.conversation_id,
             "text_sha256": hashlib.sha256(record.text.encode("utf-8")).hexdigest(),
+            **_profile_field(record.path),
         },
     )
 
@@ -167,6 +192,7 @@ def find_record_fingerprint(record: FindRecordLike) -> str:
             "adapter_id": record.adapter_id,
             "path": agentgrep.format_display_path(record.path),
             "path_kind": record.path_kind,
+            **_profile_field(record.path),
         },
     )
 
@@ -183,6 +209,7 @@ def make_search_ref(record: SearchRecordLike) -> str:
                 adapter_id=record.adapter_id,
                 path=agentgrep.format_display_path(record.path),
                 fingerprint=search_record_fingerprint(record),
+                **_profile_field(record.path),
             ),
         ),
     )
@@ -200,6 +227,7 @@ def make_find_ref(record: FindRecordLike) -> str:
                 adapter_id=record.adapter_id,
                 path=agentgrep.format_display_path(record.path),
                 fingerprint=find_record_fingerprint(record),
+                **_profile_field(record.path),
             ),
         ),
     )
@@ -226,7 +254,7 @@ def parse_record_ref(ref: str, *, home: pathlib.Path) -> ParsedRecordRef:
     return ParsedRecordRef(
         kind=t.cast("t.Literal['search', 'find']", kind),
         adapter_id=adapter_id,
-        path=_display_path_to_path(payload.get("path"), home),
+        path=_display_path_to_path(payload.get("path"), home, payload.get("profile")),
         fingerprint=fingerprint,
     )
 

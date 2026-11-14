@@ -7,6 +7,7 @@ import fnmatch
 import os
 import pathlib
 
+from agentgrep import wsl
 from agentgrep.origin import _dedupe as _dedupe_preserving_order
 from agentgrep.query.ast import (
     AndNode,
@@ -92,7 +93,9 @@ def _expand_current_user_home_patterns(raw: str) -> tuple[str, ...]:
         return (home + raw[1:],)
     if os.altsep is not None and raw.startswith(f"~{os.altsep}"):
         return (home + raw[1:],)
-    return ()
+    # A Windows path is displayed as %APPDATA%/..., %LOCALAPPDATA%/..., or
+    # %USERPROFILE%/...; expand it to every Windows profile so a copied path matches.
+    return tuple(str(path) for path in wsl.host_display_candidates(raw))
 
 
 def _path_separators() -> tuple[str, ...]:
