@@ -15,12 +15,7 @@ _INSTR_HEADER = (
     "Antigravity CLI, Grok, Pi, OpenCode, and VS Code (GitHub Copilot Chat). "
     "On WSL, the Windows-side Claude, Codex, Cursor, and VS Code stores are "
     "searched too (prompt history by default, transcripts with exhaustive "
-    "effort). Their paths print as %USERPROFILE%/... or %APPDATA%/...: "
-    "path:%USERPROFILE%* keeps only those results and NOT path:%USERPROFILE%* "
-    "NOT path:%APPDATA%* drops them. Filters narrow results, not the walk over "
-    "the Windows mount; AGENTGREP_WSL_USERS_ROOT set to a missing directory in "
-    "the server's environment skips it. All tools are read-only and never spawn "
-    "writes."
+    "effort). All tools are read-only and never spawn writes."
 )
 
 _INSTR_SCOPE = (
@@ -75,6 +70,16 @@ _INSTR_QUERY = (
     "dry-run a query string with validate_query(query=...) before searching."
 )
 
+_INSTR_WSL = (
+    "WSL: Windows-side paths print as %USERPROFILE%/..., %APPDATA%/..., or "
+    "%LOCALAPPDATA%/.... path:%USERPROFILE% keeps only those results (the "
+    "AppData folders sit inside the profile, so it covers all three) and NOT "
+    "path:%USERPROFILE% drops them. Filters narrow results, not the walk over "
+    "the Windows mount: to skip the walk, the server's environment sets "
+    "AGENTGREP_WSL_USERS_ROOT to a missing directory. A Windows-side result's "
+    "ref opens its real file through inspect_result()."
+)
+
 _INSTR_RESULT_LOOP = (
     "Result loop: search() and find() return opaque result refs. Use "
     "inspect_result(ref=...) to drill into a returned result without "
@@ -105,6 +110,7 @@ _BASE_INSTRUCTIONS = (
     f"{_INSTR_SEARCH_VS_DISCOVERY}\n\n"
     f"{_INSTR_DEFAULTS}\n\n"
     f"{_INSTR_QUERY}\n\n"
+    f"{_INSTR_WSL}\n\n"
     f"{_INSTR_RESULT_LOOP}\n\n"
     f"{_INSTR_RESOURCES}\n\n"
     f"{_INSTR_PRIVACY}"
