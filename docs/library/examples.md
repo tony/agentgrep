@@ -177,6 +177,9 @@ with (
     asyncio.run(windows_side_search())
 ```
 
+On a WSL machine, leave out both patches: agentgrep finds the Windows profiles
+under the automount root itself.
+
 Put `NOT path:%USERPROFILE%` in `terms` to drop the Windows side instead.
 
 ## MCP discovery call
