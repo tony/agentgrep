@@ -9,6 +9,7 @@ import re
 import sqlite3
 import typing as t
 
+from agentgrep._text import format_display_path
 from agentgrep.adapters._common import (
     _path_like_str,
     _record_origin,
@@ -339,6 +340,16 @@ def parse_claude_settings_file(
     )
 
 
+def _display_text_path(value: object) -> str | None:
+    """Return a path string from a session file in the privacy-safe display form.
+
+    A WSL-distro session's transcript path names the distro user's home; it is
+    shown the way agentgrep shows every other path, with the home as ``~``.
+    """
+    text = as_optional_str(value)
+    return format_display_path(text) if text else None
+
+
 def parse_claude_desktop_session_file(
     source: SourceHandle,
 ) -> cabc.Iterator[SearchRecord]:
@@ -392,7 +403,7 @@ def parse_claude_desktop_session_file(
             ("title_source", as_optional_str(mapping.get("titleSource"))),
             ("created_at", _unix_millis_to_isoformat(mapping.get("createdAt"))),
             ("wsl_distro", distro),
-            ("transcript_path", as_optional_str(mapping.get("sshRemoteTranscriptPath"))),
+            ("transcript_path", _display_text_path(mapping.get("sshRemoteTranscriptPath"))),
         )
         if value
     }

@@ -97,6 +97,9 @@ def host_tree(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> HostTr
                 "lastActivityAt": 1767225660000,
                 "completedTurns": 3,
                 "wslConfig": {"distro": "Demo-Distro"},
+                "sshRemoteTranscriptPath": str(
+                    home / ".claude/projects/-work-demo/windows-1.jsonl"
+                ),
                 "accountName": "must not be copied",
             },
         ),
@@ -222,12 +225,16 @@ def test_windows_host_store_discovery(
     assert not any(_WINDOWS_USER in format_display_path(s.path) for s in sources)
 
 
-def test_desktop_session_becomes_title_record(host_tree: HostTree) -> None:
+def test_desktop_session_becomes_title_record(
+    host_tree: HostTree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A Code-tab session file yields one title record keyed by its transcript session.
 
     The record text carries earlier titles too, so a renamed session is found by
-    either name.
+    either name. A transcript path in the file prints with the home as ``~``.
     """
+    monkeypatch.setenv("HOME", str(host_tree.home))
     source = next(s for s in _discover(host_tree, "claude") if s.store == "claude.desktop_sessions")
     (record,) = iter_source_records(source)
     assert (record.title, record.text, record.session_id, record.model) == (
@@ -238,6 +245,7 @@ def test_desktop_session_becomes_title_record(host_tree: HostTree) -> None:
     )
     assert record.timestamp == "2026-01-01T00:01:00Z"
     assert record.metadata["wsl_distro"] == "Demo-Distro"
+    assert record.metadata["transcript_path"] == "~/.claude/projects/-work-demo/windows-1.jsonl"
     assert record.origin is not None
     assert record.origin.cwd == "/work/demo"
     assert "must not be copied" not in json.dumps(record.metadata)
