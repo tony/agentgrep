@@ -30,6 +30,7 @@ dependencies = [
   "textual>=3.2.0",
   "fastmcp>=4.0.2,<5.0.0",
   "rapidfuzz>=3.10.0",
+  "brotli>=1.2.1",
 ]
 
 [project.optional-dependencies]
