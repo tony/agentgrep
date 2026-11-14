@@ -90,7 +90,8 @@ VS Code GitHub Copilot Chat JSON transcripts and inline-edit history, including 
 Some agents store their conversations in an obfuscated or encrypted form
 agentgrep cannot read. Their storage is catalogued for inventory, but
 they are excluded from search — see {doc}`unsupported/index`
-(currently {doc}`Windsurf <unsupported/windsurf>`).
+(currently {doc}`Windsurf <unsupported/windsurf>` and
+{doc}`ChatGPT desktop <unsupported/chatgpt>`).
 
 ## Coverage levels
 

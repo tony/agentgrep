@@ -52,6 +52,7 @@ CatalogAgentSelector = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "chatgpt",
     "vscode",
     "all",
 ]

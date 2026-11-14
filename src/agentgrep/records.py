@@ -90,6 +90,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "chatgpt",
     "vscode",
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]

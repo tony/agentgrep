@@ -20,10 +20,19 @@ apparently-encrypted binary with no extractable text; only the storage
 locations are catalogued.
 :::
 
+:::{grid-item-card} ChatGPT desktop
+:link: chatgpt
+:link-type: doc
+OpenAI's desktop app. macOS conversation files look encrypted and the
+Windows app keeps only a Chromium profile; only the storage locations are
+catalogued.
+:::
+
 ::::
 
 ```{toctree}
 :hidden:
 
 windsurf
+chatgpt
 ```

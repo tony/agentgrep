@@ -60,6 +60,7 @@ class SearchRecordModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "chatgpt",
         "vscode",
     ]
     store: str
@@ -103,6 +104,7 @@ class FindRecordModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "chatgpt",
         "vscode",
     ]
     store: str
@@ -152,6 +154,7 @@ class SourceRecordModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "chatgpt",
         "vscode",
     ]
     store: str
@@ -500,6 +503,7 @@ class CapabilitiesModel(AgentGrepModel):
             "pi",
             "opencode",
             "windsurf",
+            "chatgpt",
             "vscode",
         ]
     ]
@@ -531,6 +535,7 @@ class StoreDescriptorModel(AgentGrepModel):
         "pi",
         "opencode",
         "windsurf",
+        "chatgpt",
         "vscode",
     ]
     store_id: str

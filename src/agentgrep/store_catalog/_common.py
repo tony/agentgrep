@@ -31,6 +31,10 @@ _VSCODE_OBSERVED_AT = datetime.date(2026, 10, 25)
 # newest transcript is from 2025, so no stamp can claim that build.
 _WINDSURF_OBSERVED_AT = datetime.date(2026, 8, 8)
 
+# ChatGPT desktop was checked on macOS and Windows on 2026-11-14; both
+# builds write no version into their data (see store_catalog/chatgpt.py).
+_CHATGPT_OBSERVED_AT = datetime.date(2026, 11, 14)
+
 
 def gemini_project_hash(project_root: pathlib.Path) -> str:
     """Reproduce Gemini CLI's project-hash derivation.
