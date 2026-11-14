@@ -8,6 +8,7 @@ names the Windows account.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import json
 import pathlib
 import re
@@ -19,7 +20,10 @@ from agentgrep import wsl
 from agentgrep._text import format_display_path
 from agentgrep.adapters import iter_source_records
 from agentgrep.discovery import discover_sources
-from agentgrep.records import AgentName, BackendSelection, SourceHandle
+from agentgrep.records import AgentName, BackendSelection, DiscoveryVersionDetail, SourceHandle
+
+if t.TYPE_CHECKING:
+    from agentgrep.mcp._library import FindRecordLike
 
 _NO_BACKENDS = BackendSelection(find_tool=None, grep_tool=None, json_tool=None)
 _WINDOWS_USER = "windows-account-name"
@@ -115,34 +119,95 @@ class StoreCase(t.NamedTuple):
 
 STORE_CASES: tuple[StoreCase, ...] = (
     StoreCase(
-        "local-transcript-not-duplicated-by-mirror", "claude", "local-1.jsonl", "claude.projects", 1
-    ),
-    StoreCase("mirror-of-other-host-kept", "claude", "remote-only.jsonl", "claude.projects", 1),
-    StoreCase("windows-claude-code-session", "claude", "windows-1.jsonl", "claude.projects", 1),
-    StoreCase("cowork-on-windows-host", "claude", "cowork-1.jsonl", "claude.projects", 1),
-    StoreCase("cowork-on-macos", "claude", "cowork-mac.jsonl", "claude.projects", 1),
-    StoreCase("cowork-audit-log-skipped", "claude", "audit.jsonl", "claude.projects", 0),
-    StoreCase("service-profile-skipped", "claude", "public-1.jsonl", "claude.projects", 0),
-    StoreCase("desktop-session-index", "claude", "local_d1.json", "claude.desktop_sessions", 1),
-    StoreCase(
-        "windows-codex-rollout",
-        "codex",
-        "rollout-2026-01-01T00-00-00-abc.jsonl",
-        "codex.sessions",
-        1,
+        test_id="local-transcript-not-duplicated-by-mirror",
+        agent="claude",
+        file_name="local-1.jsonl",
+        store="claude.projects",
+        expected_count=1,
     ),
     StoreCase(
-        "windows-cursor-transcript", "cursor-cli", "cursor-1.jsonl", "cursor-cli.transcripts", 1
+        test_id="mirror-of-other-host-kept",
+        agent="claude",
+        file_name="remote-only.jsonl",
+        store="claude.projects",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="windows-claude-code-session",
+        agent="claude",
+        file_name="windows-1.jsonl",
+        store="claude.projects",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="cowork-on-windows-host",
+        agent="claude",
+        file_name="cowork-1.jsonl",
+        store="claude.projects",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="cowork-on-macos",
+        agent="claude",
+        file_name="cowork-mac.jsonl",
+        store="claude.projects",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="cowork-audit-log-skipped",
+        agent="claude",
+        file_name="audit.jsonl",
+        store="claude.projects",
+        expected_count=0,
+    ),
+    StoreCase(
+        test_id="service-profile-skipped",
+        agent="claude",
+        file_name="public-1.jsonl",
+        store="claude.projects",
+        expected_count=0,
+    ),
+    StoreCase(
+        test_id="desktop-session-index",
+        agent="claude",
+        file_name="local_d1.json",
+        store="claude.desktop_sessions",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="windows-codex-rollout",
+        agent="codex",
+        file_name="rollout-2026-01-01T00-00-00-abc.jsonl",
+        store="codex.sessions",
+        expected_count=1,
+    ),
+    StoreCase(
+        test_id="windows-cursor-transcript",
+        agent="cursor-cli",
+        file_name="cursor-1.jsonl",
+        store="cursor-cli.transcripts",
+        expected_count=1,
     ),
 )
 
 
-@pytest.mark.parametrize("case", STORE_CASES, ids=[case.test_id for case in STORE_CASES])
-def test_windows_host_store_discovery(host_tree: HostTree, case: StoreCase) -> None:
+@pytest.mark.parametrize(
+    list(StoreCase._fields),
+    STORE_CASES,
+    ids=[case.test_id for case in STORE_CASES],
+)
+def test_windows_host_store_discovery(
+    host_tree: HostTree,
+    test_id: str,
+    agent: AgentName,
+    file_name: str,
+    store: str,
+    expected_count: int,
+) -> None:
     """Discovery reaches Windows-side and desktop stores and skips copies and service profiles."""
-    sources = _discover(host_tree, case.agent)
-    matches = [s for s in sources if s.path.name == case.file_name and s.store == case.store]
-    assert len(matches) == case.expected_count
+    sources = _discover(host_tree, agent)
+    matches = [s for s in sources if s.path.name == file_name and s.store == store]
+    assert len(matches) == expected_count
     assert not any(_WINDOWS_USER in format_display_path(s.path) for s in sources)
 
 
@@ -166,7 +231,6 @@ def test_display_form_resolves_to_its_own_profile(host_tree: HostTree) -> None:
     """Two profiles' copies of one file share a display path but not a ref or fingerprint."""
     from agentgrep._engine.find import iter_find_events
     from agentgrep.events import FindRecordEmitted
-    from agentgrep.mcp._library import FindRecordLike
     from agentgrep.mcp.refs import find_record_fingerprint, make_find_ref, parse_record_ref
     from agentgrep.query import compile_query, default_registry, parse_query
 
@@ -237,7 +301,6 @@ def test_encoded_home_hides_the_linux_account_and_resolves(
     """A project folder named after the home shows ``-~-`` and still resolves."""
     from agentgrep._engine.find import iter_find_events
     from agentgrep.events import FindRecordEmitted
-    from agentgrep.mcp._library import FindRecordLike
     from agentgrep.mcp.refs import make_find_ref, parse_record_ref
     from agentgrep.query import compile_query, default_registry, parse_query
 
@@ -303,21 +366,72 @@ def test_discovery_stop_ends_a_windows_walk_early(
     assert len([path for path in calls if path.name.startswith("bulk-")]) < 40
 
 
-def test_file_listing_stops_mid_walk(tmp_path: pathlib.Path) -> None:
-    """A stop predicate ends a listing walk partway through the tree."""
+def _listed_transcripts(root: pathlib.Path) -> int:
+    """Count ``*.jsonl`` files the way discovery lists them, stop check included."""
+    from agentgrep import discovery
     from agentgrep.readers import list_files_matching
 
-    for index in range(50):
-        (tmp_path / f"d{index}").mkdir()
-        (tmp_path / f"d{index}" / "s.jsonl").write_text("{}", encoding="utf-8")
+    return len(list_files_matching(root, "*.jsonl", None, should_stop=discovery._active_stop()))
+
+
+def _cowork_homes(root: pathlib.Path) -> int:
+    """Count the Cowork session homes under a desktop app directory at ``root``."""
+    from agentgrep.discovery import claude_cowork_roots
+
+    return len(claude_cowork_roots((root,)))
+
+
+class StopWalkCase(t.NamedTuple):
+    """A walk over many entries that a stop must end partway through."""
+
+    test_id: str
+    entry: str
+    count: cabc.Callable[[pathlib.Path], int]
+
+
+STOP_WALK_CASES: tuple[StopWalkCase, ...] = (
+    StopWalkCase(
+        test_id="file-listing",
+        entry="d{index}/s.jsonl",
+        count=_listed_transcripts,
+    ),
+    StopWalkCase(
+        test_id="cowork-session-scan",
+        entry="local-agent-mode-sessions/a/o/local_{index}/.claude/s.jsonl",
+        count=_cowork_homes,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    list(StopWalkCase._fields),
+    STOP_WALK_CASES,
+    ids=[case.test_id for case in STOP_WALK_CASES],
+)
+def test_stop_ends_a_walk_partway(
+    tmp_path: pathlib.Path,
+    test_id: str,
+    entry: str,
+    count: cabc.Callable[[pathlib.Path], int],
+) -> None:
+    """Under :func:`discovery_stop`, a walk ends once the predicate fires, and records it."""
+    from agentgrep.discovery import discovery_stop
+
+    for index in range(40):
+        path = tmp_path / entry.format(index=index)
+        path.parent.mkdir(parents=True)
+        path.write_text("{}", encoding="utf-8")
     checks: list[int] = []
 
     def stop() -> bool:
         checks.append(1)
         return len(checks) > 5
 
-    assert len(list_files_matching(tmp_path, "*.jsonl", None, should_stop=stop)) < 50
-    assert len(list_files_matching(tmp_path, "*.jsonl", None)) == 50
+    with discovery_stop(stop) as state:
+        partial = count(tmp_path)
+    assert state.stopped
+    assert partial < 40
+    assert count(tmp_path) == 40
 
 
 def test_abandoned_search_stops_the_windows_walk(
@@ -350,9 +464,15 @@ def test_abandoned_search_stops_the_windows_walk(
 
     real_discover = engine_search.discover_sources_for_search
 
-    def tracked(*args: t.Any, **kwargs: t.Any) -> list[SourceHandle]:
+    def tracked(
+        home: pathlib.Path,
+        query: SearchQuery,
+        backends: BackendSelection,
+        *,
+        version_detail: DiscoveryVersionDetail = "none",
+    ) -> list[SourceHandle]:
         try:
-            return real_discover(*args, **kwargs)
+            return real_discover(home, query, backends, version_detail=version_detail)
         finally:
             finished.set()
 
@@ -434,12 +554,20 @@ class ProfileFilterCase(t.NamedTuple):
 
 _WINDOWS_SIDE = frozenset({"remote-only.jsonl", "windows-1.jsonl", "cowork-1.jsonl"})
 PROFILE_FILTER_CASES = (
-    ProfileFilterCase("glob-after-variable", "path:%USERPROFILE%*", _WINDOWS_SIDE),
-    ProfileFilterCase("bare-variable", "path:%USERPROFILE%", _WINDOWS_SIDE),
     ProfileFilterCase(
-        "negated",
-        "NOT path:%USERPROFILE%",
-        frozenset({"local-1.jsonl", "cowork-mac.jsonl"}),
+        test_id="glob-after-variable",
+        query="path:%USERPROFILE%*",
+        expected=_WINDOWS_SIDE,
+    ),
+    ProfileFilterCase(
+        test_id="bare-variable",
+        query="path:%USERPROFILE%",
+        expected=_WINDOWS_SIDE,
+    ),
+    ProfileFilterCase(
+        test_id="negated",
+        query="NOT path:%USERPROFILE%",
+        expected=frozenset({"local-1.jsonl", "cowork-mac.jsonl"}),
     ),
 )
 
@@ -458,7 +586,6 @@ def test_profile_filter_selects_the_windows_side(
     """``path:%USERPROFILE%`` covers %APPDATA% paths too, and NOT drops them all."""
     from agentgrep._engine.find import iter_find_events
     from agentgrep.events import FindRecordEmitted
-    from agentgrep.mcp._library import FindRecordLike
     from agentgrep.query import compile_query, default_registry, parse_query
 
     registry = default_registry()
@@ -476,22 +603,3 @@ def test_profile_filter_selects_the_windows_side(
         if isinstance(event, FindRecordEmitted)
     }
     assert names & (_WINDOWS_SIDE | {"local-1.jsonl", "cowork-mac.jsonl"}) == expected
-
-
-def test_cowork_root_scan_stops_early(tmp_path: pathlib.Path) -> None:
-    """A stop ends the Cowork session scan, one round trip per session, partway through."""
-    from agentgrep.discovery import claude_cowork_roots, discovery_stop
-
-    for index in range(40):
-        (tmp_path / f"local-agent-mode-sessions/a/o/local_{index}/.claude").mkdir(parents=True)
-    checks: list[int] = []
-
-    def stop() -> bool:
-        checks.append(1)
-        return len(checks) > 5
-
-    with discovery_stop(stop) as state:
-        roots = claude_cowork_roots((tmp_path,))
-    assert state.stopped
-    assert len(roots) < 40
-    assert len(claude_cowork_roots((tmp_path,))) == 40
