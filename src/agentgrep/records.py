@@ -28,10 +28,12 @@ if t.TYPE_CHECKING:
 
 __all__ = [
     "AGENT_CHOICES",
+    "CATALOG_LISTED_AGENTS",
     "CONVERSATION_CONTENT_STORES",
     "CONVERSATION_STORE_ROLES",
     "CURSOR_STATE_TOKENS",
     "DEFAULT_TARGETED_CONVERSATION_LIMIT",
+    "INVENTORY_AGENTS",
     "ITER_SOURCE_RECORD_ADAPTERS",
     "JSON_FILE_SUFFIXES",
     "OFFICIAL_CURSOR_STATE_PATHS",
@@ -90,6 +92,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "chatgpt",
     "vscode",
 ]
 OutputMode = t.Literal["text", "json", "ndjson", "ui"]
@@ -132,7 +135,23 @@ AGENT_CHOICES: tuple[AgentName, ...] = (
     "pi",
     "opencode",
     "vscode",
+    "chatgpt",
 )
+CATALOG_LISTED_AGENTS: frozenset[AgentName] = frozenset({"chatgpt"})
+"""Agents whose catalog-only stores ``find`` and ``agentgrep://sources`` list.
+
+ChatGPT desktop's macOS conversation and draft files are encrypted and its
+Windows IndexedDB holds no conversations. Listing those stores, marked
+``catalog_only``, lets a user see that the app's history exists on disk and why
+search skips it. Other agents' catalog-only rows (config files, logs, shell
+snapshots) stay out of those listings.
+"""
+INVENTORY_AGENTS: tuple[AgentName, ...] = AGENT_CHOICES
+"""Every agent with discoverable stores, for inventory surfaces.
+
+Equal to :data:`AGENT_CHOICES` now that every inventory agent has a searchable
+store; inventory surfaces keep iterating this name.
+"""
 JSON_FILE_SUFFIXES: frozenset[str] = frozenset({".json", ".jsonl"})
 SCHEMA_VERSION: str = "agentgrep.v1"
 USER_ROLES: frozenset[str] = frozenset({"human", "user"})
@@ -155,7 +174,11 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "antigravity_ide.brain_resolved_text.v1",
         "antigravity_ide.skills_text.v1",
         "claude.app_state_json_summary.v1",
+        "chatgpt.file_metadata_summary.v1",
+        "chatgpt.http_cache_json.v1",
+        "chatgpt.local_storage_conversation_list.v1",
         "claude.commands_text.v1",
+        "claude.desktop_session_json.v1",
         "claude.file_metadata_summary.v1",
         "claude.memory_text.v1",
         "claude.plans_text.v1",
@@ -175,6 +198,7 @@ ITER_SOURCE_RECORD_ADAPTERS: frozenset[str] = frozenset(
         "claude.todos_json.v1",
         "claude.workflow_scripts_text.v1",
         "codex.app_state_json_summary.v1",
+        "codex.attachments_text.v1",
         "codex.config_backup_toml.v1",
         "codex.config_toml.v1",
         "codex.external_imports_json.v1",
@@ -876,16 +900,20 @@ CONVERSATION_STORE_ROLES: frozenset[StoreRole] = frozenset(
 
 CONVERSATION_CONTENT_STORES: frozenset[str] = frozenset(
     {
+        "chatgpt.conversation_list",
+        "chatgpt.http_cache",
         "codex.state_db",
         "pi.context_mode_db",
     },
 )
 """Stores admitted at conversation scope despite carrying an app-state role.
 
-Role describes what a store *is*: both of these are agent-owned SQLite state,
-and reclassifying them would misdescribe them and drag every other app-state row
-along with them. But both hold conversation content — Codex's ``threads`` table
-indexes every Codex thread, Pi's context-mode events are session turns — so
+Role describes what a store *is*: these are agent-owned app state, and
+reclassifying them would misdescribe them and drag every other app-state row
+along with them. But each holds conversation content — Codex's ``threads`` table
+indexes every Codex thread, Pi's context-mode events are session turns, and
+ChatGPT desktop's cached conversation list is the only ChatGPT conversation
+content on disk — so
 ``--scope conversations`` has to be able to reach them. An explicit allowlist
 keeps each admission reviewable per store instead of implied by a role, and
 keeps config files, shell snapshots, and debug logs out.

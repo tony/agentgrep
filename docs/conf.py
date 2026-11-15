@@ -157,8 +157,12 @@ conf["fastmcp_section_badge_map"] = {
     "Diagnostic": "diagnostic",
 }
 conf["fastmcp_section_badge_pages"] = ("mcp/tools", "mcp/index", "index")
+# Keep autodoc examples off a WSL dev box's real /mnt/c, as the root
+# conftest's _isolate_wsl_host_probes fixture does for pytest doctests.
 conf["doctest_global_setup"] = (
+    "import os\n"
     "import pathlib\n"
+    "os.environ['AGENTGREP_WSL_USERS_ROOT'] = '/nonexistent/agentgrep-doctest-users'\n"
     "from agentgrep import format_timestamp_tig\n"
     "from agentgrep.store_catalog import gemini_project_hash"
 )

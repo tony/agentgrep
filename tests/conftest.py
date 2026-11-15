@@ -15,31 +15,6 @@ import pytest
 SAMPLES_ROOT = pathlib.Path(__file__).parent / "samples"
 
 
-@pytest.fixture(scope="session")
-def _wsl_users_root_sentinel(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> pathlib.Path:
-    """Return one absent Windows-users root shared by the test session."""
-    return tmp_path_factory.mktemp("wsl-users-root") / "missing"
-
-
-@pytest.fixture(autouse=True)
-def _isolate_vscode_wsl_bridge(
-    monkeypatch: pytest.MonkeyPatch,
-    _wsl_users_root_sentinel: pathlib.Path,
-) -> None:
-    """Keep the WSL cross-host probes off the developer's real ``/mnt/c``.
-
-    ``discover_vscode_sources`` and ``discover_cursor_ide_sources`` auto-probe
-    the Windows-host data under ``/mnt/c/Users`` when they detect WSL. That path
-    is independent of ``$HOME``, so on a WSL dev box it would leak real chat
-    history into hermetic ``find --agent all`` tests. Point the users-mount root
-    at a nonexistent path by default; tests that exercise a bridge override
-    ``AGENTGREP_WSL_USERS_ROOT`` explicitly.
-    """
-    monkeypatch.setenv("AGENTGREP_WSL_USERS_ROOT", str(_wsl_users_root_sentinel))
-
-
 def fixture_path(store_id: str, name: str) -> pathlib.Path:
     """Return the path to a fixture file for one ``store_id``.
 

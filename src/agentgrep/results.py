@@ -370,10 +370,19 @@ def apply_search_request_patch(
     )
 
 
+_TARGETED_UNREACHABLE_AGENTS: frozenset[str] = frozenset({"chatgpt"})
+"""Agents with no prompt history, which targeted search selects conversations from.
+
+ChatGPT desktop's only searchable store is its cached conversation list, so a
+targeted search never reaches it and only an exhaustive one does.
+"""
+
+
 def _depth_actions(
     from_effort: SearchEffort,
     *,
     scope_provenance: SearchScopeProvenance,
+    agents: tuple[str, ...] = (),
 ) -> tuple[NextAction, ...]:
     """Return the depth escalations reachable from one effort rung.
 
@@ -384,6 +393,9 @@ def _depth_actions(
     scope_provenance : SearchScopeProvenance
         Whether the request's scope was inferred or explicitly selected. An
         explicit scope makes a broadening escalation require confirmation.
+    agents : tuple[str, ...]
+        Agents the request searches. When every one is out of targeted
+        search's reach, the targeted escalation is left out.
 
     Returns
     -------
@@ -394,28 +406,29 @@ def _depth_actions(
         requires_confirmation = scope_provenance == "explicit"
         kind = "search.broaden_scope" if requires_confirmation else "search.escalate_effort"
         reason = "Prompt search does not read conversation bodies."
-        return (
-            NextAction(
-                action_id="search.targeted",
-                kind=kind,
-                label="Deep search",
-                reason=reason,
-                patch=SearchRequestPatch(
-                    effort="targeted",
-                    scope="all",
-                    conversation_limit=DEFAULT_TARGETED_CONVERSATION_LIMIT,
-                ),
-                requires_confirmation=requires_confirmation,
-            ),
-            NextAction(
-                action_id="search.exhaustive",
-                kind=kind,
-                label="Search all conversations",
-                reason=reason,
-                patch=SearchRequestPatch(effort="exhaustive", scope="all"),
-                requires_confirmation=requires_confirmation,
-            ),
+        exhaustive = NextAction(
+            action_id="search.exhaustive",
+            kind=kind,
+            label="Search all conversations",
+            reason=reason,
+            patch=SearchRequestPatch(effort="exhaustive", scope="all"),
+            requires_confirmation=requires_confirmation,
         )
+        if agents and set(agents) <= _TARGETED_UNREACHABLE_AGENTS:
+            return (exhaustive,)
+        targeted = NextAction(
+            action_id="search.targeted",
+            kind=kind,
+            label="Deep search",
+            reason=reason,
+            patch=SearchRequestPatch(
+                effort="targeted",
+                scope="all",
+                conversation_limit=DEFAULT_TARGETED_CONVERSATION_LIMIT,
+            ),
+            requires_confirmation=requires_confirmation,
+        )
+        return (targeted, exhaustive)
     if from_effort == "targeted":
         return (
             NextAction(
@@ -462,11 +475,13 @@ def offered_depth_actions(query: SearchQuery) -> tuple[NextAction, ...]:
     ... )
     >>> [action.action_id for action in offered_depth_actions(query)]
     ['search.targeted', 'search.exhaustive']
+    >>> [a.action_id for a in offered_depth_actions(replace(query, agents=("chatgpt",)))]
+    ['search.exhaustive']
     >>> offered_depth_actions(replace(query, scope="all", effort="exhaustive"))
     ()
     """
     effort = query.effort or ("prompt" if query.scope == "prompts" else "exhaustive")
-    return _depth_actions(effort, scope_provenance=query.scope_provenance)
+    return _depth_actions(effort, scope_provenance=query.scope_provenance, agents=query.agents)
 
 
 def normalize_search_request(
@@ -649,6 +664,7 @@ def build_search_summary(
         next_actions = _depth_actions(
             "prompt",
             scope_provenance=query.scope_provenance,
+            agents=query.agents,
         )
     elif effort == "targeted" and completed_effort == "targeted":
         next_actions = _depth_actions(

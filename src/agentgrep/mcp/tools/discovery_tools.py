@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import collections
 import pathlib
 import typing as t
@@ -11,6 +10,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from agentgrep import events as ag_events
+from agentgrep.discovery import discover_in_thread
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
@@ -19,6 +19,7 @@ from agentgrep.mcp._library import (
     FindRecordLike,
     agentgrep,
     normalize_agent_selection,
+    normalize_inventory_selection,
 )
 from agentgrep.mcp.models import (
     DiagnosticModel,
@@ -144,7 +145,7 @@ def _list_sources_sync(request: ListSourcesRequest) -> ListSourcesResponse:
     backends = agentgrep.select_backends()
     sources = agentgrep.discover_sources(
         pathlib.Path.home(),
-        normalize_agent_selection(request.agent),
+        normalize_inventory_selection(request.agent),
         backends,
         include_non_default=request.include_non_default or request.coverage_filter is not None,
     )
@@ -211,7 +212,11 @@ def register(mcp: FastMCP) -> None:
         name="find",
         tags=READONLY_TAGS | {"discovery"},
         annotations=TOOL_ANNOTATIONS,
-        description="Find known agent stores, session files, and SQLite databases.",
+        description=(
+            "Find known agent stores, session files, and SQLite databases. Rows "
+            "search never reads, such as ChatGPT desktop's encrypted macOS files, "
+            "carry metadata.coverage='catalog_only'."
+        ),
     )
     async def find_tool(
         pattern: t.Annotated[
@@ -242,7 +247,7 @@ def register(mcp: FastMCP) -> None:
         ] = None,
     ) -> FindToolResponse:
         request = FindRequestModel(pattern=pattern, agent=agent, limit=limit, cursor=cursor)
-        return await asyncio.to_thread(_find_sync, request)
+        return await discover_in_thread(_find_sync, request)
 
     _ = find_tool
 
@@ -289,7 +294,7 @@ def register(mcp: FastMCP) -> None:
             include_non_default=include_non_default,
             limit=limit,
         )
-        return await asyncio.to_thread(_list_sources_sync, request)
+        return await discover_in_thread(_list_sources_sync, request)
 
     _ = list_sources_tool
 
@@ -330,7 +335,7 @@ def register(mcp: FastMCP) -> None:
             limit=limit,
             cursor=cursor,
         )
-        return await asyncio.to_thread(_filter_sources_sync, request)
+        return await discover_in_thread(_filter_sources_sync, request)
 
     _ = filter_sources_tool
 
@@ -347,6 +352,6 @@ def register(mcp: FastMCP) -> None:
         ] = "all",
     ) -> DiscoverySummaryResponse:
         request = DiscoverySummaryRequest(agent=agent)
-        return await asyncio.to_thread(_summarize_discovery_sync, request)
+        return await discover_in_thread(_summarize_discovery_sync, request)
 
     _ = summarize_discovery_tool

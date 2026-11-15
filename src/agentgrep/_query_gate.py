@@ -119,7 +119,7 @@ Kept in sync with :func:`agentgrep.query.registry.default_registry` by
 ``test_cli_query_field_names_mirror_the_registry``.
 """
 
-_WORD_RE = re.compile(r"[\w\-./~*?@:+]+", re.UNICODE)
+_WORD_RE = re.compile(r"[\w\-./~*?@:+%]+", re.UNICODE)
 """Characters allowed in a bare term or identifier.
 
 Duplicated, character-for-character, from

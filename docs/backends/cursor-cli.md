@@ -9,7 +9,9 @@ data spans two home directories: the original `~/.cursor/` tree
 `~/.config/cursor/` tree (prompt history and chat `store.db` blobs).
 The prompt-history adapter does not yet provide a proof-bound
 prompt-to-conversation locator, so `--deep` cannot select Cursor CLI
-transcripts; use `--exhaustive` for conversation coverage.
+transcripts; use `--exhaustive` for conversation coverage. On WSL, each
+Windows profile is searched as a second home, which reaches the agent
+transcripts Cursor writes on Windows; see {doc}`windows`.
 
 ## Stores
 

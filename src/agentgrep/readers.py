@@ -10,6 +10,7 @@ accelerator, and record type aliases.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import json
 import os
@@ -32,7 +33,6 @@ except ImportError:
 if t.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from agentgrep.progress import SearchControl
     from agentgrep.records import JSONScalar, JSONValue, RawJsonlSkipLine, SummaryRow
 
 __all__ = [
@@ -857,12 +857,35 @@ def which_first(names: tuple[str, ...]) -> str | None:
     return None
 
 
+class StopSignal(t.Protocol):
+    """Anything that can ask a running command to stop, such as ``SearchControl``."""
+
+    def answer_now_requested(self) -> bool:
+        """Return whether the caller wants the work cut short."""
+        ...
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PredicateStop:
+    """Adapt a zero-argument predicate to :class:`StopSignal`."""
+
+    should_stop: cabc.Callable[[], bool]
+
+    def answer_now_requested(self) -> bool:
+        """Return the predicate's answer."""
+        return self.should_stop()
+
+
 def run_readonly_command(
     command: list[str],
     *,
-    control: SearchControl | None = None,
+    control: StopSignal | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a command without a shell and capture text output."""
+    """Run a command without a shell and capture text output.
+
+    With ``control``, the command is polled and terminated once
+    ``control.answer_now_requested()`` turns true.
+    """
     started_at = time.perf_counter()
     if control is None:
         completed = subprocess.run(
@@ -941,12 +964,20 @@ def list_files_matching(
     root: pathlib.Path,
     glob_pattern: str,
     fd_program: str | None,
+    *,
+    should_stop: cabc.Callable[[], bool] | None = None,
 ) -> list[pathlib.Path]:
-    """List files under ``root`` that match a glob."""
+    """List files under ``root`` that match a glob.
+
+    ``should_stop`` ends a walk early: it terminates a running ``fd`` and is
+    checked between entries of the Python fallback, so an abandoned discovery
+    pass stops walking a slow mount mid-tree. A stopped walk returns ``[]``
+    from either path, never a partial listing.
+    """
     if not root.exists():
         return []
     if "/" in glob_pattern or "\\" in glob_pattern:
-        return sorted(path for path in root.glob(glob_pattern) if path.is_file())
+        return _collect_files(root.glob(glob_pattern), should_stop)
     if fd_program is not None:
         command = [
             fd_program,
@@ -958,7 +989,26 @@ def list_files_matching(
             glob_pattern,
             str(root),
         ]
-        completed = run_readonly_command(command)
+        completed = run_readonly_command(
+            command,
+            control=_PredicateStop(should_stop) if should_stop is not None else None,
+        )
+        if should_stop is not None and should_stop():
+            return []
         if completed.returncode == 0:
             return [pathlib.Path(line) for line in completed.stdout.splitlines() if line.strip()]
-    return sorted(path for path in root.rglob(glob_pattern) if path.is_file())
+    return _collect_files(root.rglob(glob_pattern), should_stop)
+
+
+def _collect_files(
+    paths: cabc.Iterable[pathlib.Path],
+    should_stop: cabc.Callable[[], bool] | None,
+) -> list[pathlib.Path]:
+    """Return the files among ``paths``, sorted, or ``[]`` once ``should_stop()`` is true."""
+    found: list[pathlib.Path] = []
+    for path in paths:
+        if should_stop is not None and should_stop():
+            return []
+        if path.is_file():
+            found.append(path)
+    return sorted(found)

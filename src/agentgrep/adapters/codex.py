@@ -721,6 +721,7 @@ _CODEX_PARSERS: tuple[AnyParserSpec, ...] = (
     ParserSpec("codex.session_index_jsonl.v1", parse_codex_session_index_file),
     ParserSpec("codex.instructions_text.v1", parse_text_store_file),
     ParserSpec("codex.memories_text.v1", parse_text_store_file),
+    ParserSpec("codex.attachments_text.v1", parse_text_store_file),
     ParserSpec("codex.plugin_instruction_text.v1", parse_text_store_file),
     ParserSpec("codex.project_skill_text.v1", parse_text_store_file),
     ParserSpec("codex.rules_text.v1", parse_text_store_file),

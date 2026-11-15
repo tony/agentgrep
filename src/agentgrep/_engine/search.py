@@ -47,6 +47,7 @@ import time
 import typing as t
 
 from agentgrep._engine.orchestration import discover_sources_for_search
+from agentgrep.discovery import discovery_stop
 from agentgrep.progress import SearchControl, SearchProgress, noop_search_progress
 from agentgrep.readers import select_backends
 from agentgrep.records import BackendSelection, SearchQuery
@@ -83,13 +84,17 @@ def _discover_sources_abandoning_if_cancelled(
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     abandoned = False
     try:
-        future = executor.submit(
-            discover_sources_for_search,
-            home,
-            query,
-            backends,
-            version_detail="none",
-        )
+
+        def discover() -> list[SourceHandle]:
+            # Lets the pass end early once abandoned, instead of walking on; a
+            # pass that was cut short is abandoned, never returned as complete.
+            with discovery_stop(control.answer_now_requested) as state:
+                sources = discover_sources_for_search(home, query, backends, version_detail="none")
+            if state.stopped:
+                raise _DiscoveryAbandonedError
+            return sources
+
+        future = executor.submit(discover)
         while True:
             done, _pending = concurrent.futures.wait(
                 (future,),

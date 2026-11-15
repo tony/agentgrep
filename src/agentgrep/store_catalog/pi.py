@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _PI_OBSERVED_AT
+from agentgrep.store_catalog._common import _PI_OBSERVED_AT, with_windows_home_variants
 from agentgrep.stores import (
     DiscoverySpec,
     StoreCoverage,
@@ -323,3 +323,8 @@ _PI_STORES: tuple[StoreDescriptor, ...] = (
         search_by_default=False,
     ),
 )
+
+# Pi resolves `PI_CODING_AGENT_DIR` or `~/.pi/agent` from the user's home on every
+# platform: https://github.com/earendil-works/pi/blob/v1.5.2/packages/coding-agent/src/config.ts#L609-L636
+# The context-mode extension's directory is assumed to follow the same rule.
+_PI_STORES = with_windows_home_variants(_PI_STORES)

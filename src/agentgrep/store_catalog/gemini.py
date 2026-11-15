@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentgrep.store_catalog._common import _GEMINI_OBSERVED_AT
+from agentgrep.store_catalog._common import _GEMINI_OBSERVED_AT, with_windows_home_variants
 from agentgrep.stores import (
     DiscoverySpec,
     StoreCoverage,
@@ -332,3 +332,9 @@ _GEMINI_STORES: tuple[StoreDescriptor, ...] = (
         ),
     ),
 )
+
+# Gemini CLI resolves its home as `GEMINI_CLI_HOME` or the user's home on every
+# platform, so on Windows the stores sit under `%USERPROFILE%/.gemini`:
+# https://github.com/google-gemini/gemini-cli/blob/v0.68.0/packages/core/src/utils/paths.ts#L22-L28
+# and https://github.com/google-gemini/gemini-cli/blob/v0.68.0/packages/core/src/config/storage.ts#L54-L60
+_GEMINI_STORES = with_windows_home_variants(_GEMINI_STORES)

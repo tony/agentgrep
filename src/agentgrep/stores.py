@@ -31,6 +31,8 @@ class StoreFormat(enum.StrEnum):
     TEXT = "text"
     MARKDOWN_FRONTMATTER = "md_frontmatter"
     PROTOBUF = "protobuf"
+    LEVELDB = "leveldb"
+    CHROMIUM_CACHE = "chromium_cache"
     OPAQUE = "opaque"
 
 
@@ -99,6 +101,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "chatgpt",
     "vscode",
 ]
 PathKind = t.Literal["history_file", "session_file", "sqlite_db", "store_file"]

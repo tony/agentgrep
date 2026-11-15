@@ -147,6 +147,7 @@ _ANTIGRAVITY_IDE_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.APP_STATE,
         format=StoreFormat.PROTOBUF,
         path_pattern="${HOME}/.gemini/antigravity/user_settings.pb",
+        platform_variants={"win32": "%USERPROFILE%/.gemini/antigravity/user_settings.pb"},
         observed_version=_ANTIGRAVITY_IDE_OBSERVED_VERSION,
         observed_at=_ANTIGRAVITY_IDE_OBSERVED_AT,
         schema_notes="Protobuf user settings. Configuration, not chat content.",

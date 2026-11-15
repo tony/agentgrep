@@ -190,6 +190,7 @@ def default_registry() -> FieldRegistry:
                 "pi",
                 "opencode",
                 "vscode",
+                "chatgpt",
             ),
         ),
         FieldSpec(name="store", kind="string", layer="source"),

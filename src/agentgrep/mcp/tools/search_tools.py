@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import dataclasses
 import datetime
@@ -17,6 +16,7 @@ from pydantic import Field
 
 from agentgrep import events as ag_events
 from agentgrep._query_gate import unregistered_field_predicates_in
+from agentgrep.discovery import discover_in_thread
 from agentgrep.mcp._library import (
     READONLY_TAGS,
     TOOL_ANNOTATIONS,
@@ -381,7 +381,13 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
         ] = None,
         agent: t.Annotated[
             AgentSelector,
-            Field(description="Limit search to one agent or search all agents."),
+            Field(
+                description=(
+                    "Limit search to one agent or search all agents. 'chatgpt' holds "
+                    "conversation titles only, reached with scope='conversations' or "
+                    "'all'; effort='targeted' does not read them."
+                ),
+            ),
         ] = "all",
         scope: t.Annotated[
             SearchScopeName,
@@ -493,6 +499,6 @@ def register(mcp: FastMCP, *, runtime: SearchRuntime | None = None) -> None:
         ] = 10,
     ) -> RecentSessionsResponse:
         request = RecentSessionsRequest(agent=agent, hours=hours, limit=limit)
-        return await asyncio.to_thread(_recent_sessions_sync, request)
+        return await discover_in_thread(_recent_sessions_sync, request)
 
     _ = recent_sessions_tool

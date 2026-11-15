@@ -8,6 +8,7 @@ import typing as t
 
 from mcp.types import ResourceTemplateReference
 
+from agentgrep.discovery import discover_in_thread
 from agentgrep.mcp._library import (
     KNOWN_ADAPTERS,
     READONLY_TAGS,
@@ -53,6 +54,8 @@ _FORMAT_DESCRIPTIONS: dict[str, str] = {
     "text": "Plain text or Markdown file.",
     "md_frontmatter": "Markdown with YAML/JSON frontmatter blocks.",
     "protobuf": "Binary protobuf payload.",
+    "leveldb": "Chromium LevelDB web storage, read without a native library.",
+    "chromium_cache": "Chromium blockfile HTTP cache, read without Chromium.",
     "opaque": "Format not parsed by agentgrep.",
 }
 
@@ -60,7 +63,7 @@ _FORMAT_DESCRIPTIONS: dict[str, str] = {
 def list_source_models(agent: AgentSelector = "all") -> list[SourceRecordModel]:
     """Return discovered sources as typed MCP payloads."""
     backends = agentgrep.select_backends()
-    sources = agentgrep.discover_sources(
+    sources = agentgrep.discover_listed_sources(
         pathlib.Path.home(),
         normalize_agent_selection(agent),
         backends,
@@ -159,8 +162,9 @@ def register_resources(mcp: FastMCP) -> None:
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
     )
-    def sources_resource() -> str:
-        return SourceListAdapter.dump_json(list_source_models()).decode("utf-8")
+    async def sources_resource() -> str:
+        models = await discover_in_thread(list_source_models)
+        return SourceListAdapter.dump_json(models).decode("utf-8")
 
     _ = sources_resource
 
@@ -171,8 +175,9 @@ def register_resources(mcp: FastMCP) -> None:
         mime_type="application/json",
         tags=READONLY_TAGS | {"discovery"},
     )
-    def sources_by_agent_resource(agent: AgentSelector) -> str:
-        return SourceListAdapter.dump_json(list_source_models(agent)).decode("utf-8")
+    async def sources_by_agent_resource(agent: AgentSelector) -> str:
+        models = await discover_in_thread(list_source_models, agent)
+        return SourceListAdapter.dump_json(models).decode("utf-8")
 
     _ = sources_by_agent_resource
 

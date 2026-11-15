@@ -22,6 +22,8 @@ import re
 import typing as t
 import urllib.parse
 
+from agentgrep import wsl
+from agentgrep._text import display_path_text
 from agentgrep.records import RecordOrigin, SearchRecord, SourceOriginSummary
 
 if t.TYPE_CHECKING:
@@ -252,12 +254,28 @@ class OriginPredicate:
         )
 
     def _path_matches(self, value: str) -> bool:
+        # A path inside a Windows profile prints as %USERPROFILE%... whichever
+        # way it was recorded, and another account's home as ~, so both sides
+        # are also compared in that form: a filter copied from output, or
+        # written in any spelling, matches.
+        display = display_path_text(value)
+        values = (value,) if display is None else (value, display)
         if self.is_glob:
-            return any(fnmatch.fnmatchcase(value, variant) for variant in self.variants)
-        path = _origin_path_boundary_text(value)
+            return any(
+                fnmatch.fnmatchcase(candidate, variant)
+                for candidate in values
+                for variant in self.variants
+            )
+        variants = self.variants + tuple(
+            shown for variant in self.variants if (shown := display_path_text(variant))
+        )
         return any(
-            _path_is_equal_or_descendant(path, _origin_path_boundary_text(variant))
-            for variant in self.variants
+            _path_is_equal_or_descendant(
+                _origin_path_boundary_text(candidate),
+                _origin_path_boundary_text(variant),
+            )
+            for candidate in values
+            for variant in variants
         )
 
 
@@ -523,6 +541,9 @@ def normalize_origin_path_text(value: str | None) -> str | None:
     if value is None or not value.strip():
         # A blank value must not resolve to the invoking process's cwd.
         return None
+    if value.startswith((wsl.USERPROFILE, wsl.APPDATA, wsl.LOCALAPPDATA)):
+        # A Windows display form names a profile path, not a relative one.
+        return value
     path = pathlib.Path(value).expanduser()
     if not path.is_absolute():
         path = _logical_cwd() / path

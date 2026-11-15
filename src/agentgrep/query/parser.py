@@ -80,13 +80,14 @@ _KEYWORDS: dict[str, t.Literal["and", "or", "not", "to"]] = {
     "TO": "to",
 }
 
-_WORD_RE = re.compile(r"[\w\-./~*?@:+]+", re.UNICODE)
+_WORD_RE = re.compile(r"[\w\-./~*?@:+%]+", re.UNICODE)
 """Characters allowed in a bare term or identifier.
 
 ``\\w`` matches Unicode word characters (letters/digits/underscore in
 any script), so non-ASCII terms like ``こんにちは`` survive.
 Includes ``.``, ``/``, ``~`` so path-shaped values (``~/.codex``,
-``./foo``) work without quoting. ``:`` is included so a value like
+``./foo``) work without quoting, and ``%`` so a Windows path as displayed
+on WSL (``%APPDATA%/Code``) can be pasted into ``path:`` unquoted. ``:`` is included so a value like
 ``foo:bar`` (rare but legal) survives — the parser disambiguates
 field-syntax from value text by position, not by the colon's
 presence alone.

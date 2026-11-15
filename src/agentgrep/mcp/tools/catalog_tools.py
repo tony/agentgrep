@@ -9,6 +9,7 @@ import typing as t
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from agentgrep.discovery import discover_in_thread
 from agentgrep.mcp import refs
 from agentgrep.mcp._library import (
     READONLY_TAGS,
@@ -27,6 +28,7 @@ from agentgrep.mcp.models import (
     SearchRecordModel,
     StoreDescriptorModel,
 )
+from agentgrep.records import INVENTORY_AGENTS
 from agentgrep.store_catalog import CATALOG
 
 if t.TYPE_CHECKING:
@@ -87,7 +89,7 @@ def _inspect_record_sample_sync(request: InspectSampleRequest) -> InspectSampleR
     backends = agentgrep.select_backends()
     sources = agentgrep.discover_sources(
         pathlib.Path.home(),
-        agentgrep.AGENT_CHOICES,
+        INVENTORY_AGENTS,
         backends,
         include_non_default=True,
         version_detail="none",
@@ -144,7 +146,7 @@ def _inspect_result_sync(request: InspectResultRequest) -> InspectResultResponse
     backends = agentgrep.select_backends()
     sources = agentgrep.discover_sources(
         home,
-        agentgrep.AGENT_CHOICES,
+        INVENTORY_AGENTS,
         backends,
         include_non_default=True,
         version_detail="none",
@@ -295,7 +297,7 @@ def register(mcp: FastMCP) -> None:
             source_path=source_path,
             sample_size=sample_size,
         )
-        return await asyncio.to_thread(_inspect_record_sample_sync, request)
+        return await discover_in_thread(_inspect_record_sample_sync, request)
 
     _ = inspect_record_sample_tool
 
@@ -321,6 +323,6 @@ def register(mcp: FastMCP) -> None:
         ] = 1,
     ) -> InspectResultResponse:
         request = InspectResultRequest(ref=ref, sample_size=sample_size)
-        return await asyncio.to_thread(_inspect_result_sync, request)
+        return await discover_in_thread(_inspect_result_sync, request)
 
     _ = inspect_result_tool

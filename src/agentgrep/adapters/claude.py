@@ -9,6 +9,7 @@ import re
 import sqlite3
 import typing as t
 
+from agentgrep._text import format_display_path
 from agentgrep.adapters._common import (
     _path_like_str,
     _record_origin,
@@ -339,6 +340,137 @@ def parse_claude_settings_file(
     )
 
 
+def _display_text_path(value: object) -> str | None:
+    """Return a path string from a session file in the privacy-safe display form.
+
+    A WSL-distro or SSH session's transcript path names that host's home,
+    which need not be the local one; path display shows any account's home as
+    ``~``, inside the encoded project folder too.
+
+    Examples
+    --------
+    >>> from agentgrep.adapters.claude import _display_text_path
+    >>> _display_text_path("/home/someone/.claude/projects/-home-someone-w/s.jsonl")
+    '~/.claude/projects/-~-w/s.jsonl'
+    """
+    text = as_optional_str(value)
+    return format_display_path(text) if text else None
+
+
+def parse_claude_desktop_session_file(
+    source: SourceHandle,
+) -> cabc.Iterator[SearchRecord]:
+    """Parse one Claude desktop session file as title and prompt records.
+
+    Each ``claude-code-sessions/<account>/<org>/local_<uuid>.json`` describes
+    one Code-tab session, and each
+    ``local-agent-mode-sessions/<account>/<org>/local_<uuid>.json`` one Cowork
+    session. The record carries the session ``title`` as its
+    text, followed by the session's earlier titles (``previousTitles``, which
+    keep a user's own names after the app or the user renames the session), so
+    a session is found by any name it has had. Its ``session_id`` is
+    ``cliSessionId``, the id of the session's Claude Code transcript, so search
+    groups the title with that transcript when both are found. A Cowork
+    session file also yields a ``prompt`` record holding ``initialMessage``,
+    the first message the user typed. Only the keys below are read; the
+    file's other keys (account fields, permission state, tool snapshots,
+    model-written summaries, system prompts) are never copied.
+
+    Parameters
+    ----------
+    source : SourceHandle
+        One ``local_<uuid>.json`` session file.
+
+    Yields
+    ------
+    SearchRecord
+        A ``prompt`` record for a session's first message, when the file
+        keeps one, then a ``history`` record for a titled session.
+    """
+    payload = read_json_file(source.path)
+    if not isinstance(payload, dict):
+        return
+    mapping = t.cast("dict[str, object]", payload)
+    title = as_optional_str(mapping.get("title"))
+    initial_message = as_optional_str(mapping.get("initialMessage"))
+    if not title and not initial_message:
+        return
+    previous_value = mapping.get("previousTitles")
+    previous_titles = [
+        name
+        for name in (
+            as_optional_str(entry)
+            for entry in (previous_value if isinstance(previous_value, list) else [])
+        )
+        if name and name != title
+    ]
+    desktop_session_id = as_optional_str(mapping.get("sessionId"))
+    session_id = as_optional_str(mapping.get("cliSessionId")) or desktop_session_id
+    if initial_message:
+        yield SearchRecord(
+            kind="prompt",
+            agent=source.agent,
+            store=source.store,
+            adapter_id=source.adapter_id,
+            path=source.path,
+            text=initial_message,
+            title=title,
+            role="user",
+            timestamp=_unix_millis_to_isoformat(mapping.get("createdAt"))
+            or isoformat_from_mtime_ns(source.mtime_ns),
+            model=as_optional_str(mapping.get("model")),
+            session_id=session_id,
+            conversation_id=session_id,
+            metadata={"desktop_session_id": desktop_session_id} if desktop_session_id else {},
+            origin=_record_origin(cwd=_path_like_str(mapping.get("cwd"))),
+        )
+    if not title:
+        return
+    wsl_config = mapping.get("wslConfig")
+    distro = as_optional_str(wsl_config.get("distro")) if isinstance(wsl_config, dict) else None
+    completed_turns = mapping.get("completedTurns")
+    metadata: dict[str, object] = {
+        key: value
+        for key, value in (
+            ("desktop_session_id", desktop_session_id),
+            ("title_source", as_optional_str(mapping.get("titleSource"))),
+            ("created_at", _unix_millis_to_isoformat(mapping.get("createdAt"))),
+            ("wsl_distro", distro),
+            ("transcript_path", _display_text_path(mapping.get("sshRemoteTranscriptPath"))),
+        )
+        if value
+    }
+    if isinstance(completed_turns, int) and not isinstance(completed_turns, bool):
+        metadata["completed_turns"] = completed_turns
+    if mapping.get("transcriptUnavailable") is True:
+        metadata["transcript_unavailable"] = True
+    if mapping.get("isArchived") is True:
+        metadata["archived"] = True
+    if previous_titles:
+        metadata["previous_titles"] = previous_titles
+    yield SearchRecord(
+        kind="history",
+        agent=source.agent,
+        store=source.store,
+        adapter_id=source.adapter_id,
+        path=source.path,
+        text="\n".join((title, *previous_titles)),
+        title=title,
+        role="assistant",
+        timestamp=_unix_millis_to_isoformat(mapping.get("lastActivityAt"))
+        or _unix_millis_to_isoformat(mapping.get("createdAt"))
+        or isoformat_from_mtime_ns(source.mtime_ns),
+        model=as_optional_str(mapping.get("model")),
+        session_id=session_id,
+        conversation_id=session_id,
+        metadata=metadata,
+        origin=_record_origin(
+            cwd=_path_like_str(mapping.get("cwd")),
+            branch=as_optional_str(mapping.get("branch")),
+        ),
+    )
+
+
 CLAUDE_PASTE_REF_RE = re.compile(
     r"\[(?:Pasted text|Image|\.\.\.Truncated text) #(?P<id>\d+)(?: \+\d+ lines)?\.*\]",
 )
@@ -592,6 +724,7 @@ _CLAUDE_PARSERS: tuple[AnyParserSpec, ...] = (
     ParserSpec("claude.todos_json.v1", parse_claude_todo_file),
     ParserSpec("claude.teams_json.v1", parse_claude_team_file),
     ParserSpec("claude.settings_json.v1", parse_claude_settings_file),
+    ParserSpec("claude.desktop_session_json.v1", parse_claude_desktop_session_file),
     ParserSpec(
         "claude.app_state_json_summary.v1",
         functools.partial(parse_json_summary_file, label="Claude app state"),

@@ -83,6 +83,18 @@ OpenCode (anomalyco) SQLite session store, config, snapshots, and caches.
 VS Code GitHub Copilot Chat JSON transcripts and inline-edit history, including WSL cross-host stores.
 :::
 
+:::{grid-item-card} ChatGPT desktop
+:link: chatgpt
+:link-type: doc
+Conversation titles cached by the Windows app; the encrypted macOS files are listed, not read.
+:::
+
+:::{grid-item-card} Windows and WSL
+:link: windows
+:link-type: doc
+Windows-side Claude desktop, Codex, Cursor, VS Code, and ChatGPT history searched from a WSL distro.
+:::
+
 ::::
 
 ## Unsupported backends
@@ -290,5 +302,7 @@ grok
 pi
 opencode
 vscode
+chatgpt
+windows
 unsupported/index
 ```

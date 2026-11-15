@@ -426,7 +426,13 @@ def remember_source_scan(
     cache._remember(cache_key, result)
 
 
-_CACHE_EXEMPT_ADAPTERS: frozenset[str] = frozenset({"claude.history_jsonl.v1"})
+_CACHE_EXEMPT_ADAPTERS: frozenset[str] = frozenset(
+    {
+        "claude.history_jsonl.v1",
+        "chatgpt.local_storage_conversation_list.v1",
+        "chatgpt.http_cache_json.v1",
+    },
+)
 """Adapters whose record text depends on files outside ``source.path``.
 
 The cache fingerprint stats only the primary file, so adapters that

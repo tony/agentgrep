@@ -25,6 +25,7 @@ AgentName = t.Literal[
     "pi",
     "opencode",
     "vscode",
+    "chatgpt",
 ]
 AgentSelector = t.Literal[
     "codex",
@@ -38,6 +39,7 @@ AgentSelector = t.Literal[
     "pi",
     "opencode",
     "vscode",
+    "chatgpt",
     "all",
 ]
 CatalogAgentSelector = t.Literal[
@@ -52,6 +54,7 @@ CatalogAgentSelector = t.Literal[
     "pi",
     "opencode",
     "windsurf",
+    "chatgpt",
     "vscode",
     "all",
 ]
@@ -69,6 +72,7 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "codex.logs_sqlite.v1",
     "codex.memories_sqlite.v1",
     "codex.memories_text.v1",
+    "codex.attachments_text.v1",
     "codex.goals_sqlite.v1",
     "codex.external_imports_json.v1",
     "codex.instructions_text.v1",
@@ -104,6 +108,10 @@ KNOWN_ADAPTERS: tuple[str, ...] = (
     "claude.plans_text.v1",
     "claude.session_memory_text.v1",
     "claude.settings_json.v1",
+    "claude.desktop_session_json.v1",
+    "chatgpt.file_metadata_summary.v1",
+    "chatgpt.local_storage_conversation_list.v1",
+    "chatgpt.http_cache_json.v1",
     "claude.skills_text.v1",
     "claude.commands_text.v1",
     "claude.app_state_json_summary.v1",
@@ -259,6 +267,15 @@ class AgentGrepModule(t.Protocol):
         version_detail: t.Literal["none", "catalog", "shape"] = "shape",
     ) -> list[SourceHandleLike]: ...
 
+    def discover_listed_sources(
+        self,
+        home: pathlib.Path,
+        agents: tuple[str, ...],
+        backends: BackendSelectionLike,
+        *,
+        version_detail: t.Literal["none", "catalog", "shape"] = "shape",
+    ) -> list[SourceHandleLike]: ...
+
     def run_search_query(
         self,
         home: pathlib.Path,
@@ -345,3 +362,17 @@ def normalize_agent_selection(agent: AgentSelector) -> tuple[str, ...]:
     """Convert a single MCP agent selector into ``agentgrep`` agents."""
     values: list[str] = [] if agent == "all" else [agent]
     return agentgrep.parse_agents(values)
+
+
+def normalize_inventory_selection(agent: AgentSelector) -> tuple[str, ...]:
+    """Like :func:`normalize_agent_selection`, with catalog-only agents under ``"all"``.
+
+    Inventory tools list catalog-only rows, so ``"all"`` also covers agents
+    such as ChatGPT desktop that no search reads
+    (:data:`agentgrep.records.INVENTORY_AGENTS`).
+    """
+    if agent == "all":
+        from agentgrep.records import INVENTORY_AGENTS
+
+        return INVENTORY_AGENTS
+    return normalize_agent_selection(agent)

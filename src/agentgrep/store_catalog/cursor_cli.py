@@ -30,6 +30,11 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl"
         ),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.cursor/projects/<id>/agent-transcripts/<session_uuid>/<session_uuid>.jsonl"
+            ),
+        },
         observed_version=_CURSOR_CLI_OBSERVED_VERSION,
         observed_at=_CURSOR_CLI_OBSERVED_AT,
         upstream_ref="cursor.com/docs/cli/overview",
@@ -71,6 +76,11 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         path_pattern=(
             "${HOME}/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
         ),
+        platform_variants={
+            "win32": (
+                "%USERPROFILE%/.cursor/projects/<id>/agent-transcripts/<session_uuid>/subagents/<agent>.jsonl"
+            ),
+        },
         observed_version=_CURSOR_CLI_OBSERVED_VERSION,
         observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
@@ -177,14 +187,18 @@ _CURSOR_CLI_STORES: tuple[StoreDescriptor, ...] = (
         role=StoreRole.SUPPLEMENTARY_CHAT,
         format=StoreFormat.SQLITE,
         path_pattern="${HOME}/.cursor/ai-tracking/ai-code-tracking.db",
+        platform_variants={"win32": "%USERPROFILE%/.cursor/ai-tracking/ai-code-tracking.db"},
         observed_version=_CURSOR_CLI_OBSERVED_VERSION,
         observed_at=_CURSOR_CLI_OBSERVED_AT,
         schema_notes=(
-            "SQLite with `conversation_summaries(conversationId, title, tldr, "
-            "overview, summaryBullets, model, mode, updatedAt)` — title and prose "
-            "summaries of CLI agent chats, not raw transcripts. Some installs have "
-            "the table empty even when the CLI agent runs — the tracker may be "
-            "disabled or unused; agentgrep tolerates that silently."
+            "SQLite with seven tables. agentgrep reads "
+            "`conversation_summaries(conversationId, title, tldr, overview, "
+            "summaryBullets, model, mode, updatedAt)`: title and prose summaries "
+            "of CLI agent chats, not raw transcripts. On the Windows host checked "
+            "that table, `ai_code_hashes`, `ai_deleted_files`, and "
+            "`tracked_file_content` were empty and only `scored_commits` (git "
+            "commit metadata and messages, not chat) and `tracking_state` held "
+            "rows; an empty summaries table is tolerated silently."
         ),
         search_by_default=True,
         discovery=(

@@ -20,14 +20,16 @@ the new stream agree on which sources qualify.
 from __future__ import annotations
 
 import collections.abc as cabc
+import contextlib
 import pathlib
 import time
 import typing as t
 
 from agentgrep.adapters import find_store_roles_for_type_filter
-from agentgrep.discovery import discover_sources
+from agentgrep.discovery import discover_listed_sources, discovery_without_mtimes
 from agentgrep.readers import select_backends
 from agentgrep.records import AgentName, BackendSelection, FindRecord, FindSourceTypeFilter
+from agentgrep.stores import StoreCoverage
 
 if t.TYPE_CHECKING:
     from agentgrep import events as _events
@@ -96,13 +98,17 @@ def iter_find_events(
     active_backends = select_backends() if backends is None else backends
     start_time = time.monotonic()
 
-    sources = discover_sources(
-        home,
-        agents,
-        active_backends,
-        version_detail="none",
-        store_roles=find_store_roles_for_type_filter(type_filter),
-    )
+    # find never shows a modification time, so skip the stat that reads one
+    # unless a source predicate (such as ``mtime:``) may filter on it.
+    skip_mtimes = compiled is None or compiled.source_predicate is None
+    with discovery_without_mtimes() if skip_mtimes else contextlib.nullcontext():
+        sources = discover_listed_sources(
+            home,
+            agents,
+            active_backends,
+            version_detail="none",
+            store_roles=find_store_roles_for_type_filter(type_filter),
+        )
     yield _events.FindStarted(source_count=len(sources))
 
     query = pattern.casefold() if pattern is not None else None
@@ -122,7 +128,11 @@ def iter_find_events(
             adapter_id=source.adapter_id,
             path=source.path,
             path_kind=source.path_kind,
-            metadata={"source_kind": source.source_kind},
+            metadata=(
+                {"source_kind": source.source_kind}
+                if source.coverage is StoreCoverage.DEFAULT_SEARCH
+                else {"source_kind": source.source_kind, "coverage": source.coverage.value}
+            ),
         )
         if query is not None:
             haystack = " ".join(
