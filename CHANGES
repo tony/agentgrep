@@ -36,11 +36,18 @@ $ uv add agentgrep --prerelease allow
 $ uvx --from 'agentgrep' --prerelease allow python
 ```
 
-## agentgrep 0.1.0a55 (Yet to be released)
+## agentgrep 0.1.0a56 (Yet to be released)
 
 <!-- KEEP THIS PLACEHOLDER - DO NOT REMOVE OR MODIFY THIS LINE -->
 
 <!-- END PLACEHOLDER - ADD NEW CHANGELOG ENTRIES BELOW THIS LINE -->
+
+## agentgrep 0.1.0a55 (2026-11-14)
+
+agentgrep 0.1.0a55 searches agent history outside the Linux home. From WSL it
+reads the agents installed on Windows, and it now covers Claude desktop's Cowork
+and Code-tab sessions and ChatGPT desktop's cached titles. Windows paths print
+without the account name. See {ref}`backends-windows` for details.
 
 ### Dependencies
 
