@@ -32,3 +32,8 @@ class BrowseWorkflow:
     def on_query(self, host: WorkflowHost, text: str) -> None:
         """Submit: filter the loaded records in-memory — no fresh engine search."""
         host.filter_loaded(text)
+
+    def on_action(self, host: WorkflowHost, action_id: str) -> bool:
+        """Browse owns no extra key actions."""
+        del host, action_id
+        return False
